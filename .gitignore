@@ -1,0 +1,6 @@
+/_build/
+/deps/
+/priv/
+erl_crash.dump
+rebar3.crashdump
+

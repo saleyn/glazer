@@ -1,0 +1,11 @@
+{application, glazejson,
+ [{description, "Erlang NIF JSON encoder/decoder using the glaze C++ library"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, [
+    %% Atom to use for JSON null, e.g. null or nil
+    {null, null}
+  ]},
+  {modules, [glazejson]}
+ ]}.
