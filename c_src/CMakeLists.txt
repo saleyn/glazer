@@ -3,6 +3,7 @@ project(glazejson CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(ENV{MAKEFLAGS} "--no-print-directory")
 
 # ---- Fetch glaze ----
 include(FetchContent)

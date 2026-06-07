@@ -345,12 +345,10 @@ struct Decoder {
     bool is_float = false;
     if (p < end && *p == '.') { is_float = true; ++p; while (p < end && *p >= '0' && *p <= '9') ++p; }
     if (p < end && (*p == 'e' || *p == 'E')) {
-      is_float = true; ++p;
-      if (p < end && (*p == '+' || *p == '-')) ++p;
+      is_float = true;
+      if  (++p < end && (*p == '+' || *p == '-')) ++p;
       while (p < end && *p >= '0' && *p <= '9') ++p;
     }
-
-    size_t len = p - start;
 
     if (is_float) {
       double d;
@@ -455,14 +453,14 @@ struct Decoder {
         if (!read_string_raw(ks, kl, ke)) return 0;
         ERL_NIF_TERM key = make_key_term(ks, kl, ke, scratch);
         skip_ws();
-        if (p >= end || *p != ':') return 0; ++p;
+        if (p >= end || *p != ':') return 0; else ++p;
         ERL_NIF_TERM val = parse_value(scratch);
         if (!val) return 0;
         pairs.push_back(enif_make_tuple2(env, key, val));
         skip_ws();
         if (p >= end) return 0;
         if (*p == '}') { ++p; break; }
-        if (*p != ',') return 0; ++p;
+        if (*p != ',') return 0; else ++p;
         skip_ws();
       }
       ERL_NIF_TERM list = enif_make_list_from_array(env, pairs.data(), (unsigned)pairs.size());
@@ -481,14 +479,14 @@ struct Decoder {
       if (!read_string_raw(kstr, klen, kesc)) return 0;
       ERL_NIF_TERM key = make_key_term(kstr, klen, kesc, scratch);
       skip_ws();
-      if (p >= end || *p != ':') return 0; ++p;
+      if (p >= end || *p != ':') return 0; else ++p;
       ERL_NIF_TERM val = parse_value(scratch);
       if (!val) return 0;
       ks.push_back(key); vs.push_back(val);
       skip_ws();
       if (p >= end) return 0;
       if (*p == '}') { ++p; break; }
-      if (*p != ',') return 0; ++p;
+      if (*p != ',') return 0; else ++p;
       skip_ws();
     }
 

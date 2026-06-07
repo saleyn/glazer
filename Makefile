@@ -16,13 +16,14 @@ nif: $(PRIV_DIR)/glazejson.so
 
 $(PRIV_DIR)/glazejson.so: $(BUILD_DIR)/Makefile
 	cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,)
-	@mkdir -p $(PRIV_DIR)
 
-$(BUILD_DIR)/Makefile:
-	@mkdir -p $(BUILD_DIR)
+$(BUILD_DIR)/Makefile: $(BUILD_DIR) $(PRIV_DIR)
 	cmake -S c_src -B $(BUILD_DIR) \
 	  -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 	  -DPRIV_DIR=$(PRIV_DIR)
+
+$(PRIV_DIR) $(BUILD_DIR):
+	mkdir -p $@
 
 compile: nif
 	rebar3 compile
@@ -31,8 +32,9 @@ clean:
 	rebar3 clean
 	cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
 
-distclean:
-	rm -rf $(BUILD_DIR) priv/glazejson.so
+distclean: clean
+	@rm -rf $(BUILD_DIR) priv/glazejson.so
+	@rm -fr _build
 
 test:
 	rebar3 eunit
