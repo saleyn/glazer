@@ -1,25 +1,43 @@
+REBAR_BUILD_DIR ?= _build/default
+BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/c_src
+PRIV_DIR   := $(abspath priv)
+BUILD_TYPE ?= Release
+NIF_DEBUG  ?= 0
+
+ifeq ($(NIF_DEBUG),1)
+  BUILD_TYPE := Debug
+endif
+
 all: compile
 
 deps: nif
 
-nif:
-	$(MAKE) -C c_src nif
+nif: $(PRIV_DIR)/glazejson.so
+
+$(PRIV_DIR)/glazejson.so: $(BUILD_DIR)/Makefile
+	cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,)
+	@mkdir -p $(PRIV_DIR)
+
+$(BUILD_DIR)/Makefile:
+	@mkdir -p $(BUILD_DIR)
+	cmake -S c_src -B $(BUILD_DIR) \
+	  -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
+	  -DPRIV_DIR=$(PRIV_DIR)
 
 compile: nif
 	rebar3 compile
 
 clean:
 	rebar3 clean
-	$(MAKE) -C c_src clean
+	cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
 
 distclean:
-	$(MAKE) -C c_src distclean
+	rm -rf $(BUILD_DIR) priv/glazejson.so
 
 test:
 	rebar3 eunit
 
 benchmark:
-	erl -noshell -pa _build/test/lib/*/ebin -pa _build/test/lib/glazejson/test \
-    -eval "glazejson_bench:run(), halt()."
+	mix bench
 
 .PHONY: all deps compile clean distclean test nif
