@@ -180,6 +180,36 @@ struct OutBuf {
 };
 
 // ---------------------------------------------------------------------------
+// Key cache — JSON object keys repeat heavily within a document (e.g. a
+// twitter feed has ~13K key occurrences but only ~94 distinct strings).
+// Caching the resulting binary term lets repeated keys reuse the same
+// already-built ERL_NIF_TERM instead of paying enif_make_new_binary + memcpy
+// each time. Linear scan is fine — distinct-key counts are small in practice,
+// and a capped size keeps pathological documents (huge unique-key counts)
+// from paying scan overhead for no benefit.
+// ---------------------------------------------------------------------------
+
+struct KeyCache {
+  static constexpr size_t CAP = 64;
+
+  struct Entry { const char* s; size_t len; ERL_NIF_TERM term; };
+  Entry  entries[CAP];
+  size_t count = 0;
+
+  // Returns 0 if not cached or cache is full/bypassed (has_escape).
+  ERL_NIF_TERM lookup(const char* s, size_t len) const {
+    for (size_t i = 0; i < count; ++i)
+      if (entries[i].len == len && memcmp(entries[i].s, s, len) == 0)
+        return entries[i].term;
+    return 0;
+  }
+
+  void insert(const char* s, size_t len, ERL_NIF_TERM term) {
+    if (count < CAP) entries[count++] = {s, len, term};
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Zero-copy JSON decoder — parses raw bytes, emits Erlang terms directly
 // ---------------------------------------------------------------------------
 
@@ -189,14 +219,27 @@ struct Decoder {
   const char*      beg;  // start of input (for error reporting)
   const char*      p;    // current position
   const char*      end;
+  KeyCache         key_cache;
+  bool             use_key_cache;
+
+  // Below this input size, documents rarely repeat enough keys to amortize
+  // the cache's lookup-scan cost — skip it entirely (helps small payloads
+  // like RPC messages, where glazejson otherwise loses ground to torque).
+  static constexpr size_t KEY_CACHE_MIN_SIZE = 2048;
 
   Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
-    : env(e), opts(o), beg(data), p(data), end(data + size) {}
+    : env(e), opts(o), beg(data), p(data), end(data + size),
+      use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   // ---- whitespace ----
   static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
   void skip_ws() {
+    // Fast path: minified JSON has structural whitespace only rarely (often
+    // none at all). Check the first byte before paying for an 8-byte load
+    // and SWAR bit-twiddling — avoids that cost on the overwhelmingly common
+    // "no whitespace here" case.
+    if (p >= end || !is_ws(*p)) return;
     while (p + 8 <= end) {
       uint64_t w;
       memcpy(&w, p, 8);
@@ -329,6 +372,15 @@ struct Decoder {
         return t;
       return make_binary(env, sv);
     }
+    // Binary keys: reuse cached terms for repeated keys (raw, unescaped only —
+    // escapes are rare for keys and not worth complicating the cache for).
+    // Only worthwhile for larger documents — see KEY_CACHE_MIN_SIZE.
+    if (!has_escape && use_key_cache) {
+      if (ERL_NIF_TERM cached = key_cache.lookup(s, len)) return cached;
+      ERL_NIF_TERM term = make_binary(env, std::string_view(s, len));
+      key_cache.insert(s, len, term);
+      return term;
+    }
     return make_string_term(s, len, has_escape, buf);
   }
 
@@ -367,7 +419,7 @@ struct Decoder {
       uint64_t v;
       auto [ep, ec] = std::from_chars(start, p, v);
       if (ec == std::errc{}) {
-        if (v <= (uint64_t)INT64_MAX) return enif_make_int64(env, (int64_t)v);
+        if (v <= uint64_t(INT64_MAX)) return enif_make_int64(env, int64_t(v));
         return enif_make_uint64(env, v);
       }
     }
