@@ -1,5 +1,5 @@
 name: Release
-run-name: Release ${{ github.ref_name }}
+run-name: Release ${{ github.ref_name }}${{ github.event.forced && ' (re-tagged)' || '' }}
 
 on:
   push:

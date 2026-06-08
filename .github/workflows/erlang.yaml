@@ -171,17 +171,16 @@ jobs:
 
           REMOTE="https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git"
 
+          git tag -f "$VERSION"
+
           if [ "${{ steps.should_create_tag.outputs.create_tag }}" = "recreate" ]; then
-            echo "Deleting existing tag $VERSION (local and remote) before recreating"
-            git tag -d "$VERSION" || true
-            git push "$REMOTE" ":refs/tags/$VERSION" || true
+            echo "Force-pushing tag $VERSION to point at current commit"
+            git push --force "$REMOTE" "$VERSION"
             echo "### :recycle: Recreated tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
           else
+            git push "$REMOTE" "$VERSION"
             echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
           fi
-
-          git tag "$VERSION"
-          git push "$REMOTE" "$VERSION"
 
       - name: Trigger release workflow
         if: steps.should_create_tag.outputs.create_tag != 'false'
