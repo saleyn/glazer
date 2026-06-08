@@ -138,6 +138,26 @@ incomplete value:
 `stream_decoder/1` accepts the same options as `decode/2` (e.g.
 `{keys, atom}`, `use_nil`) and applies them to every decoded value.
 
+#### Efficiency
+
+`stream_feed/2` only scans for value *boundaries* incrementally —
+the scanner carries a small resumable cursor (`scan_state()`) that
+remembers how far it has already looked (nesting depth, whether it's
+inside a string, escape state, …), so each call to `scan/2` resumes
+from where the previous one left off rather than re-walking the whole
+buffer from byte zero. Once a complete value's end offset is known,
+that slice is decoded exactly once via the same NIF-backed decoder
+used by `decode/2` — there's no intermediate tokenization or tree
+representation, and no byte is ever scanned or decoded twice. The only
+buffering cost is concatenating newly-arrived chunks onto the
+not-yet-complete tail of the input.
+
+This makes `stream_feed/2` well suited to byte-at-a-time or
+small-chunk feeding (e.g. consuming a `gen_tcp`/`gen_statem` socket
+buffer as it fills) without the quadratic-rescan cost a naive
+"concatenate and retry full decode" loop would incur on large or
+slow-arriving documents.
+
 Under the hood, `stream_feed/2` is built on `scan/1,2` — a low-level
 primitive that scans a buffer for the byte offset where the next JSON
 value ends (or reports that more input is needed) without doing a full
