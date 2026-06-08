@@ -24,12 +24,12 @@ jobs:
         compiler:
           - { compiler: GNU-14,  CC: gcc-14,      CXX: g++-14 }
           - { compiler: GNU-12,  CC: gcc-12,      CXX: g++-12 }
-          - { compiler: LLVM-18, CC: clang-18,    CXX: clang++-18 }
+          - { compiler: LLVM-19, CC: clang-19,    CXX: clang++-19 }
         otp: [27, 28, 29]
         exclude:
-          # GCC 14 and clang 18 are only available in OTP 28 (Debian Bookworm+)
+          # GCC 14 and clang 19 are only available in OTP 28 (Debian Bookworm+)
           - { otp: 27, compiler: { compiler: GNU-14 } }
-          - { otp: 27, compiler: { compiler: LLVM-18 } }
+          - { otp: 27, compiler: { compiler: LLVM-19 } }
           # GCC 12 is available in OTP 27 (Debian Bookworm)
           - { otp: 28, compiler: { compiler: GNU-12 } }
           - { otp: 29, compiler: { compiler: GNU-12 } }
@@ -43,7 +43,15 @@ jobs:
       - name: Install build tools
         run:  |
           apt-get update -qq
-          apt-get install -y --no-install-recommends ${{ matrix.compiler.CC }} ${{ matrix.compiler.CXX }} cmake
+          apt-get install -y --no-install-recommends curl gnupg lsb-release software-properties-common cmake
+          # Debian's default repos only ship clang up to ~16; pull newer LLVM
+          # releases from the official apt.llvm.org repo when needed.
+          if ! apt-cache show ${{ matrix.compiler.CC }} >/dev/null 2>&1; then
+            LLVM_VER=$(echo "${{ matrix.compiler.compiler }}" | sed -E 's/^LLVM-//')
+            curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+            bash /tmp/llvm.sh "$LLVM_VER"
+          fi
+          apt-get install -y --no-install-recommends ${{ matrix.compiler.CC }} ${{ matrix.compiler.CXX }}
       - name: Build
         env:
           CC:  ${{ matrix.compiler.CC }}
