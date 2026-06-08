@@ -182,21 +182,3 @@ jobs:
             echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Trigger release workflow
-        if: steps.should_create_tag.outputs.create_tag != 'false'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.RELEASE_PAT }}
-          script: |
-            // Explicitly trigger the release workflow via the GitHub API.
-            // GitHub Actions has a limitation: workflows triggered by other workflows don't
-            // automatically trigger additional workflows, even with a PAT. The release.yaml
-            // workflow has workflow_dispatch enabled to allow manual triggering via the API.
-            const version = "${{ steps.project_version.outputs.version }}";
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'release.yaml',
-              ref: version,
-              inputs: {}
-            });

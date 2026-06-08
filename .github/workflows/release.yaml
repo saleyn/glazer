@@ -5,9 +5,7 @@ on:
   push:
     tags:
       - "*.*.*"
-  # Allow manual triggering of the release workflow via GitHub API.
-  # The CI workflow uses this to explicitly dispatch the release when a new tag is created,
-  # since workflows triggered by other workflows don't automatically trigger downstream workflows.
+  # Allow manual triggering via the GitHub UI or API.
   workflow_dispatch:
     inputs:
       tag:
@@ -92,8 +90,7 @@ jobs:
       - name: Check if tag is greater than max remote tag
         id: should_publish
         run: |
-          # If triggered via workflow_dispatch by the ci.yaml action, always
-          # publish (already verified by CI)
+          # If triggered manually via workflow_dispatch, always publish
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "publish=true" >> $GITHUB_OUTPUT
             echo "Triggered via workflow_dispatch, publishing"
