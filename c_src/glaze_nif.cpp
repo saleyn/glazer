@@ -19,7 +19,7 @@
 
 #include <erl_nif.h>
 
-#include "glaze/glaze.hpp"
+#include "glaze/json.hpp"
 #include "glaze_atoms.hpp"
 #include "glaze_bigint.hpp"
 #include "glaze_lltoa.hpp"
