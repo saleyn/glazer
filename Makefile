@@ -1,11 +1,10 @@
 REBAR_BUILD_DIR ?= _build/default
-BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/c_src
+BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/.build
 PRIV_DIR   := $(abspath priv)
 BUILD_TYPE ?= Release
 NIF_DEBUG  ?= 0
 REBAR			 ?= rebar3
 APP        := $(shell sed -n '/application,/{s/^.*, //; s/,.*$$//; p; q}' src/*.app.src)
-
 
 ifeq ($(NIF_DEBUG),1)
   BUILD_TYPE := Debug
