@@ -175,6 +175,9 @@ jobs:
             echo "Deleting existing tag $VERSION (local and remote) before recreating"
             git tag -d "$VERSION" || true
             git push "$REMOTE" ":refs/tags/$VERSION" || true
+            echo "### :recycle: Recreated tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
           fi
 
           git tag "$VERSION"
