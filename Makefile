@@ -1,3 +1,7 @@
+ifndef VERBOSE
+MAKEFLAGS += --no-print-directory
+endif
+
 REBAR_BUILD_DIR ?= _build/default
 BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/.build
 PRIV_DIR   := $(abspath priv)
@@ -17,22 +21,23 @@ deps: nif
 nif: $(PRIV_DIR)/glazejson.so
 
 $(PRIV_DIR)/glazejson.so: $(BUILD_DIR)/Makefile
-	cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,)
+	@cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,) -- --no-print-directory
 
 $(BUILD_DIR)/Makefile: $(BUILD_DIR) $(PRIV_DIR)
-	cmake -S c_src -B $(BUILD_DIR) \
+	@cmake -S c_src -B $(BUILD_DIR) \
 	  -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-	  -DPRIV_DIR=$(PRIV_DIR)
+	  -DPRIV_DIR=$(PRIV_DIR) \
+	  $(if $(VERBOSE),,>/dev/null)
 
 $(PRIV_DIR) $(BUILD_DIR):
-	mkdir -p $@
+	@mkdir -p $@
 
 compile: nif
 	$(REBAR) compile
 
 clean:
 	$(REBAR) clean
-	cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
+	@cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
 
 distclean: clean
 	@rm -rf $(BUILD_DIR) priv/glazejson.so
