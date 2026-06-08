@@ -39,8 +39,11 @@ distclean: clean
 test:
 	rebar3 eunit
 
+doc docs:
+	rebar3 ex_doc
+
 benchmark bench:
 	@echo "Running benchmarks..."
 	@mix bench
 
-.PHONY: all deps compile clean distclean test nif
+.PHONY: all deps doc compile clean distclean test nif

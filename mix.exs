@@ -92,15 +92,15 @@ defmodule Mix.Tasks.Bench do
     ]
 
     optional_candidates = [
-      {"simdjsone",
-       &:simdjson.decode/1,
-       fn t -> :simdjson.encode(t) end,
-       :simdjson},
-
       {"torque",
        fn b -> {:ok, r} = apply(Torque, :decode, [b]); r end,
        fn t -> {:ok, r} = apply(Torque, :encode, [t]); r end,
        Torque},
+
+      {"simdjsone",
+       &:simdjson.decode/1,
+       fn t -> :simdjson.encode(t) end,
+       :simdjson},
 
       {"jiffy",
        fn b -> :jiffy.decode(b, [:return_maps]) end,

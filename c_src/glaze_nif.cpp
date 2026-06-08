@@ -37,8 +37,10 @@ struct DecodeOpts {
 };
 
 struct EncodeOpts {
-  bool         pretty    = false;
-  ERL_NIF_TERM null_term = 0;
+  bool         pretty      = false;
+  bool         uescape     = false;
+  bool         force_utf8  = false;
+  ERL_NIF_TERM null_term   = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -57,9 +59,10 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
         if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
           opts.null_term = tp[1];
-        else if (enif_is_identical(tp[0], AM_LABEL_ATOM)) {
+        else if (enif_is_identical(tp[0], AM_KEYS) || enif_is_identical(tp[0], AM_LABEL_ATOM)) {
           if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
           else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
+          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.label_atom = false; opts.label_existing_atom = false; }
         }
       }
     }
@@ -71,8 +74,10 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, EncodeOpts& opt
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_PRETTY))   opts.pretty = true;
-    else if (enif_is_identical(head, AM_USE_NIL))  opts.null_term = AM_NIL;
+    if      (enif_is_identical(head, AM_PRETTY))     opts.pretty     = true;
+    else if (enif_is_identical(head, AM_USE_NIL))    opts.null_term  = AM_NIL;
+    else if (enif_is_identical(head, AM_UESCAPE))    opts.uescape    = true;
+    else if (enif_is_identical(head, AM_FORCE_UTF8)) opts.force_utf8 = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2)
@@ -591,6 +596,19 @@ static constexpr std::array<bool, 256> build_needs_escape_tab() {
 }
 static constexpr std::array<bool, 256> NEEDS_ESCAPE_TAB = build_needs_escape_tab();
 
+// Write a JSON "\uXXXX" escape (6 bytes, lowercase hex) for a code unit
+// cu <= 0xFFFF directly into dst, without going through snprintf.
+static inline void write_uescape(char* dst, uint32_t cu)
+{
+  static constexpr char HEX[] = "0123456789abcdef";
+  dst[0] = '\\';
+  dst[1] = 'u';
+  dst[2] = HEX[(cu >> 12) & 0xF];
+  dst[3] = HEX[(cu >>  8) & 0xF];
+  dst[4] = HEX[(cu >>  4) & 0xF];
+  dst[5] = HEX[ cu        & 0xF];
+}
+
 // JSON-escape a UTF-8 byte sequence into out.
 // Fast path: scan for runs of bytes that need no escaping and bulk-copy them;
 // only fall into the per-byte switch for the rare escape characters.
@@ -616,12 +634,126 @@ static void json_escape_string(std::string_view sv, OutBuf& out)
       case '\r': out.push("\\r",  2); break;
       case '\t': out.push("\\t",  2); break;
       default: {
-        char esc[7]; snprintf(esc, sizeof(esc), "\\u%04X", c);
+        char esc[6]; write_uescape(esc, c);
         out.push(esc, 6);
         break;
       }
     }
     ++p;
+    run = p;
+  }
+  if (p > run) out.push(run, p - run);
+  out.push('"');
+}
+
+// Emit a single Unicode code point as a JSON \uXXXX escape (or a surrogate
+// pair for code points beyond the BMP).
+static void push_uescape(OutBuf& out, uint32_t cp)
+{
+  char esc[6];
+  if (cp <= 0xFFFF) {
+    write_uescape(esc, cp);
+    out.push(esc, 6);
+  } else {
+    cp -= 0x10000;
+    uint32_t hi = 0xD800 + (cp >> 10);
+    uint32_t lo = 0xDC00 + (cp & 0x3FF);
+    write_uescape(esc, hi); out.push(esc, 6);
+    write_uescape(esc, lo); out.push(esc, 6);
+  }
+}
+
+// Decode one UTF-8 sequence starting at p (p < end). Returns the code point
+// and advances p past the sequence. On invalid/truncated input, returns the
+// Unicode replacement character (U+FFFD) and advances p by one byte.
+static uint32_t decode_utf8(const char*& p, const char* end)
+{
+  unsigned char c = (unsigned char)*p;
+  auto cont = [&](const char* q) {
+    return q < end && ((unsigned char)*q & 0xC0) == 0x80;
+  };
+
+  if (c < 0x80) { ++p; return c; }
+
+  if ((c & 0xE0) == 0xC0 && cont(p+1)) {
+    uint32_t cp = (uint32_t(c & 0x1F) << 6) | (uint32_t((unsigned char)p[1]) & 0x3F);
+    p += 2;
+    return cp >= 0x80 ? cp : 0xFFFD;
+  }
+  if ((c & 0xF0) == 0xE0 && cont(p+1) && cont(p+2)) {
+    uint32_t cp = (uint32_t(c & 0x0F) << 12)
+                | (uint32_t((unsigned char)p[1] & 0x3F) << 6)
+                |  uint32_t((unsigned char)p[2] & 0x3F);
+    p += 3;
+    return (cp >= 0x800 && (cp < 0xD800 || cp > 0xDFFF)) ? cp : 0xFFFD;
+  }
+  if ((c & 0xF8) == 0xF0 && cont(p+1) && cont(p+2) && cont(p+3)) {
+    uint32_t cp = (uint32_t(c & 0x07) << 18)
+                | (uint32_t((unsigned char)p[1] & 0x3F) << 12)
+                | (uint32_t((unsigned char)p[2] & 0x3F) << 6)
+                |  uint32_t((unsigned char)p[3] & 0x3F);
+    p += 4;
+    return (cp >= 0x10000 && cp <= 0x10FFFF) ? cp : 0xFFFD;
+  }
+
+  ++p;
+  return 0xFFFD;
+}
+
+// JSON-escape a UTF-8 byte sequence, additionally escaping every non-ASCII
+// code point as \uXXXX (uescape), and/or replacing invalid UTF-8 byte
+// sequences with U+FFFD before escaping (force_utf8).
+static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
+                                       bool uescape, bool force_utf8)
+{
+  out.push('"');
+  const char* p   = sv.data();
+  const char* end = p + sv.size();
+  const char* run = p;
+
+  while (p < end) {
+    unsigned char c = (unsigned char)*p;
+
+    if (c < 0x80) {
+      if (NEEDS_ESCAPE_TAB[c]) {
+        if (p > run) out.push(run, p - run);
+        switch (c) {
+          case '"':  out.push("\\\"", 2); break;
+          case '\\': out.push("\\\\", 2); break;
+          case '\b': out.push("\\b",  2); break;
+          case '\f': out.push("\\f",  2); break;
+          case '\n': out.push("\\n",  2); break;
+          case '\r': out.push("\\r",  2); break;
+          case '\t': out.push("\\t",  2); break;
+          default:   push_uescape(out, c); break;
+        }
+        ++p;
+        run = p;
+      } else {
+        ++p;
+      }
+      continue;
+    }
+
+    // Non-ASCII: decode the code point (sanitizing invalid sequences when
+    // force_utf8 is set; otherwise pass invalid bytes through verbatim).
+    if (p > run) out.push(run, p - run);
+
+    const char* seq_start = p;
+    uint32_t cp = decode_utf8(p, end);
+
+    if (uescape) {
+      push_uescape(out, cp);
+    } else if (force_utf8 && cp == 0xFFFD && !(p - seq_start == 3 &&
+               (unsigned char)seq_start[0] == 0xEF &&
+               (unsigned char)seq_start[1] == 0xBF &&
+               (unsigned char)seq_start[2] == 0xBD)) {
+      // Invalid sequence sanitized to U+FFFD (and it wasn't already a
+      // literal U+FFFD in the input) — emit the replacement character.
+      out.push("\xEF\xBF\xBD", 3);
+    } else {
+      out.push(seq_start, p - seq_start);
+    }
     run = p;
   }
   if (p > run) out.push(run, p - run);
@@ -634,6 +766,14 @@ struct Encoder {
   OutBuf&           out;
   char              atom_buf[256]; // scratch for atom → string_view
 
+  void escape_string(std::string_view sv)
+  {
+    if (opts.uescape || opts.force_utf8)
+      json_escape_string_unicode(sv, out, opts.uescape, opts.force_utf8);
+    else
+      json_escape_string(sv, out);
+  }
+
   bool encode(ERL_NIF_TERM term)
   {
     // Dispatch on the term's runtime type once — avoids the cascade of
@@ -643,7 +783,7 @@ struct Encoder {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(env, term, &bin)) return false;
-        json_escape_string({reinterpret_cast<const char*>(bin.data), bin.size}, out);
+        escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
         return true;
       }
 
@@ -651,12 +791,14 @@ struct Encoder {
         ErlNifSInt64 i;
         if (enif_get_int64(env, term, &i)) {
           char buf[22]; char* e = lltoa_impl::i64toa(buf, i);
-          out.push(buf, e - buf); return true;
+          out.push(buf, e - buf);
+          return true;
         }
         ErlNifUInt64 u;
         if (enif_get_uint64(env, term, &u)) {
           char buf[21]; char* e = util::lltoa(buf, u);
-          out.push(buf, e - buf); return true;
+          out.push(buf, e - buf);
+          return true;
         }
         // bigint — doesn't fit in 64 bits
         auto s = glazejson::BigInt::encode(env, term);
@@ -705,7 +847,7 @@ struct Encoder {
         if (enif_is_identical(term, AM_NIL))   { out.push("null",  4); return true; }
         std::string_view sv;
         if (!atom_to_sv(env, term, atom_buf, sizeof(atom_buf), sv)) return false;
-        json_escape_string(sv, out);
+        escape_string(sv);
         return true;
       }
 
@@ -759,13 +901,13 @@ struct Encoder {
   {
     ErlNifBinary bin;
     if (enif_inspect_binary(env, k, &bin)) {
-      json_escape_string({reinterpret_cast<const char*>(bin.data), bin.size}, out);
+      escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
       return true;
     }
     if (enif_is_atom(env, k)) {
       std::string_view sv;
       if (!atom_to_sv(env, k, atom_buf, sizeof(atom_buf), sv)) return false;
-      json_escape_string(sv, out);
+      escape_string(sv);
       return true;
     }
     return false;

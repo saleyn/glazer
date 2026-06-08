@@ -174,4 +174,40 @@ prettify_test_() ->
     ?_assertMatch({ok, <<"{\n", _/binary>>},  prettify(<<"{\"a\":1}">>))
   ].
 
+keys_test_() ->
+  [
+    ?_assertEqual(#{<<"a">> => 1},  decode(<<"{\"a\":1}">>)),
+    ?_assertEqual(#{<<"a">> => 1},  decode(<<"{\"a\":1}">>, [{keys, binary}])),
+    ?_assertEqual(#{a => 1},        decode(<<"{\"a\":1}">>, [{keys, atom}])),
+    ?_assertEqual(#{a => 1},        decode(<<"{\"a\":1}">>, [{keys, existing_atom}])),
+    %% existing_atom falls back to a binary for keys with no matching atom
+    ?_assertEqual(#{<<"no_such_atom_in_glazejson_test_suite_xyz">> => 1},
+                  decode(<<"{\"no_such_atom_in_glazejson_test_suite_xyz\":1}">>,
+                         [{keys, existing_atom}]))
+  ].
+
+uescape_test_() ->
+  [
+    %% U+00E9 (é), UTF-8: 0xC3 0xA9
+    ?_assertEqual(<<"\"\\u00e9\"">>,        encode(<<16#C3, 16#A9>>, [uescape])),
+    %% Without uescape, UTF-8 bytes pass through unescaped
+    ?_assertEqual(<<"\"", 16#C3, 16#A9, "\"">>, encode(<<16#C3, 16#A9>>)),
+    %% U+1F600 (emoji, outside the BMP) encodes as a surrogate pair
+    ?_assertEqual(<<"\"\\ud83d\\ude00\"">>, encode(<<16#F0,16#9F,16#98,16#80>>, [uescape])),
+    %% Round-trips back to the original UTF-8 binary
+    ?_assertEqual(<<16#C3, 16#A9>>,
+                  decode(encode(<<16#C3, 16#A9>>, [uescape])))
+  ].
+
+force_utf8_test_() ->
+  [
+    %% Invalid byte sequences are sanitized to U+FFFD (UTF-8: EF BF BD)
+    ?_assertEqual(<<"\"", 16#EF, 16#BF, 16#BD, 16#EF, 16#BF, 16#BD, "a\"">>,
+                  encode(<<16#FF, 16#FE, $a>>, [force_utf8])),
+    %% Without force_utf8, invalid bytes pass through verbatim
+    ?_assertEqual(<<"\"", 16#FF, 16#FE, "a\"">>, encode(<<16#FF, 16#FE, $a>>)),
+    %% Valid UTF-8 is left untouched
+    ?_assertEqual(<<"\"", 16#C3, 16#A9, "\"">>, encode(<<16#C3, 16#A9>>, [force_utf8]))
+  ].
+
 -endif.

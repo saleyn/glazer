@@ -17,6 +17,7 @@ static ERL_NIF_TERM AM_RETURN_MAPS;
 static ERL_NIF_TERM AM_OBJECT_AS_TUPLE;
 static ERL_NIF_TERM AM_USE_NIL;
 static ERL_NIF_TERM AM_NULL_TERM;
+static ERL_NIF_TERM AM_KEYS;
 static ERL_NIF_TERM AM_LABEL_ATOM;
 static ERL_NIF_TERM AM_LABEL_EXISTING_ATOM;
 static ERL_NIF_TERM AM_LABEL_BINARY;
@@ -50,6 +51,7 @@ inline void init_atoms(ErlNifEnv* env)
   AM_OBJECT_AS_TUPLE      = enif_make_atom(env, "object_as_tuple");
   AM_USE_NIL              = enif_make_atom(env, "use_nil");
   AM_NULL_TERM            = enif_make_atom(env, "null_term");
+  AM_KEYS                 = enif_make_atom(env, "keys");
   AM_LABEL_ATOM           = enif_make_atom(env, "atom");
   AM_LABEL_EXISTING_ATOM  = enif_make_atom(env, "existing_atom");
   AM_LABEL_BINARY         = enif_make_atom(env, "binary");
