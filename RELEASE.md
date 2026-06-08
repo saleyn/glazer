@@ -4,21 +4,21 @@ This project uses automated workflows to manage releases. Follow these steps to 
 
 ## Process
 
-1. **Update the version** in `erlexec.app.src`:
+1. **Update the version** in `glazejson.app.src`:
    ```elixir
    {vsn,"2.3.1"}
    ```
 
 2. **Commit the version bump**:
    ```bash
-   git add src/erlexec.app.src
+   git add src/glazejson.app.src
    git commit -m "Bump version to 2.3.1"
    git push origin master
    ```
 
 3. **Automatic tag creation**: The CI workflow automatically creates a git tag based on the project version when:
    - A push is made to the `master` branch
-   - The version in `src/erlexec.app.src` is greater than the max existing git tag
+   - The version in `src/glazejson.app.src` is greater than the max existing git tag
 
 4. **Automatic release publishing**: Once the tag is created, the release workflow automatically:
    - Creates a GitHub release
@@ -29,7 +29,7 @@ This project uses automated workflows to manage releases. Follow these steps to 
 
 - **Version comparison**: Tags are compared using semantic versioning, so `1.10.0` is correctly recognized as greater than `1.9.0`
 - **Idempotent publishing**: The release workflow won't publish if the tag is not greater than the max existing tag, preventing accidental downgrades
-- **No manual tagging needed**: The CI workflow handles tag creation automatically based on the `src/erlexec.app.src` version
+- **No manual tagging needed**: The CI workflow handles tag creation automatically based on the `src/glazejson.app.src` version
 
 ## Manual Tag Creation (if needed)
 
@@ -76,7 +76,9 @@ For publishing to Hex.pm, configure your API key:
 
 ## Troubleshooting
 
-- **Tag not created**: Check that the version in `src/erlexec.app.src` is greater than the max existing git tag
+- **Tag not created**: Check that the version in `src/glazejson.app.src` is greater than the max existing git tag
 - **Release workflow not triggered**: Ensure a PAT with `workflow` scope is configured (default `GITHUB_TOKEN` cannot trigger workflows)
 - **Release not published**: Verify the Hex API key is configured in repository secrets (`HEX_API_KEY`)
-- **Version mismatch**: Ensure the version in `src/erlexec.app.src` matches the intended release version (without the `v` prefix)
+- **Version mismatch**: Ensure the version in `src/glazejson.app.src` matches the intended release version (without the `v` prefix)
+- **API key revoked**: Getting `Failed to publish package glazejson - 0.1.0 : API key revoked`
+error. Ensure to call `rebar3 hex user deauth` and `rebar3 hex user auth` before `rebar3 hex publish`
