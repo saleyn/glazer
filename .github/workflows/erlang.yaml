@@ -43,7 +43,7 @@ jobs:
       - name: Install build tools
         run:  |
           apt-get update -qq
-          apt-get install -y --no-install-recommends curl gnupg lsb-release software-properties-common cmake
+          apt-get install -y --no-install-recommends curl gnupg lsb-release cmake
           # Debian's default repos only ship clang up to ~16; pull newer LLVM
           # releases from the official apt.llvm.org repo when needed.
           if ! apt-cache show ${{ matrix.compiler.CC }} >/dev/null 2>&1; then
