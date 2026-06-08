@@ -152,11 +152,11 @@ jobs:
               echo "create_tag=recreate" >> $GITHUB_OUTPUT
               echo "Tag $PROJECT_VERSION's commit is ${AGE}s old (< 1h), recreating tag at current commit"
             else
-              echo "create_tag=false"   >> $GITHUB_OUTPUT
+              echo "create_tag=false" >> $GITHUB_OUTPUT
               echo "Tag $PROJECT_VERSION already exists and its commit is ${AGE}s old (>= 1h), skipping"
             fi
           else
-            echo "create_tag=false"   >> $GITHUB_OUTPUT
+            echo "create_tag=false" >> $GITHUB_OUTPUT
             echo "Project version $PROJECT_VERSION is not greater than max tag $MAX_TAG, skipping tag creation"
           fi
 

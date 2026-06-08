@@ -49,9 +49,12 @@ test:
 doc docs:
 	$(REBAR) ex_doc
 
-benchmark bench:
+benchmark bench: deps
 	@echo "Running benchmarks..."
 	@mix bench
+
+deps:
+	@mix deps.get
 
 publish: docs
 	$(REBAR) hex publish$(if $(replace), --replace)

@@ -154,7 +154,7 @@ jobs:
             echo "Publishing $APP $VERSION"
             rebar3 hex publish --repo hexpm --yes
           else
-            echo "Package $APP $VERSION was already published and cannot be replaced!" && exit 1
+            echo "Package $APP $VERSION was already published and cannot be replaced!"
           fi
 
       - name: Retire prior version
