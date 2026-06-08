@@ -9,5 +9,9 @@
   ]},
   {modules, [glazejson]},
   {licenses, ["MIT"]},
-  {links, [{"GitHub", "https://github.com/saleyn/glazejson"}]}
+  {links, [{"GitHub", "https://github.com/saleyn/glazejson"}]},
+  {files, [
+    "src", "c_src", "Makefile", "rebar.config", "rebar.lock",
+    "README.md", "LICENSE"
+  ]}
  ]}.
