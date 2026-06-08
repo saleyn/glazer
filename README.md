@@ -37,7 +37,8 @@ rebar3 compile
 ```
 
 is enough — it builds `priv/glazejson.so` and compiles the Erlang
-sources.
+sources.  Make sure you have a relatively recent C++ compiler version
+installed.
 
 ## Usage
 
