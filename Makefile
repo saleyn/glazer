@@ -3,6 +3,7 @@ BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/c_src
 PRIV_DIR   := $(abspath priv)
 BUILD_TYPE ?= Release
 NIF_DEBUG  ?= 0
+REBAR			 ?= rebar3
 
 ifeq ($(NIF_DEBUG),1)
   BUILD_TYPE := Debug
@@ -26,10 +27,10 @@ $(PRIV_DIR) $(BUILD_DIR):
 	mkdir -p $@
 
 compile: nif
-	rebar3 compile
+	$(REBAR) compile
 
 clean:
-	rebar3 clean
+	$(REBAR) clean
 	cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
 
 distclean: clean
@@ -37,13 +38,16 @@ distclean: clean
 	@rm -fr _build
 
 test:
-	rebar3 eunit
+	$(REBAR) eunit
 
 doc docs:
-	rebar3 ex_doc
+	$(REBAR) ex_doc
 
 benchmark bench:
 	@echo "Running benchmarks..."
 	@mix bench
+
+publish: docs
+	$(REBAR) hex publish$(if $(replace), --replace)
 
 .PHONY: all deps doc compile clean distclean test nif

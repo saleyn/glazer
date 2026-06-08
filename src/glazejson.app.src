@@ -7,5 +7,7 @@
     %% Atom to use for JSON null, e.g. null or nil
     {null, null}
   ]},
-  {modules, [glazejson]}
+  {modules, [glazejson]},
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/saleyn/glazejson"}]}
  ]}.
