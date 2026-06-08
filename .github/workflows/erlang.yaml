@@ -115,6 +115,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Don't let checkout persist its own GITHUB_TOKEN credential helper —
+          # it conflicts with (and wins over) the RELEASE_PAT we embed in the
+          # push URL below, causing the push to authenticate as
+          # github-actions[bot] (which lacks permission) instead of RELEASE_PAT.
+          persist-credentials: false
 
       - name: Get project version
         id: project_version
@@ -141,19 +146,6 @@ jobs:
               echo "Project version $PROJECT_VERSION is not greater than max tag $MAX_TAG, skipping tag creation"
             fi
           fi
-
-      - name: Check RELEASE_PAT
-        if: steps.should_create_tag.outputs.create_tag == 'true'
-        env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
-        run: |
-          echo "RELEASE_PAT length: ${#RELEASE_PAT}"
-          if [ -z "$RELEASE_PAT" ]; then
-            echo "::error::RELEASE_PAT secret is empty or not set on this repository"
-            exit 1
-          fi
-          curl -s -H "Authorization: token $RELEASE_PAT" https://api.github.com/user \
-            | grep -E '"login"|"message"'
 
       - name: Create and push tag
         if: steps.should_create_tag.outputs.create_tag == 'true'
