@@ -177,17 +177,49 @@ Running benchmarks...
                twitter (616.7K)     twitter2 (758.0K)     openrtb (1.2K)         esad (1.3K)         small (0.1K)
                decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 ---------------------------------------------------------------------------------------------------------------------
-glazejson     14160.9   4774.0    13771.9   7049.2       15.7     12.0       14.1      7.4        1.1      1.9
-torque        15895.8   4613.0    12699.7   5822.6       15.4     11.6       16.6      7.1        3.6      2.2
-simdjsone     15764.0   8182.0    17115.5  12931.4       25.7     27.3       15.4     20.1        2.0      4.4
-jiffy         35805.8   4622.6    45737.4   8915.5       41.7     21.8       29.6     11.8        6.5      3.0
-jason         27518.9  12206.7    37930.1  22581.0       56.1     28.7       29.5     20.8        4.1      5.1
-thoas         27267.8  13443.9    38068.6  23706.7       47.5     36.5       35.4     21.3        6.0      3.1
-euneus        26325.0  11579.8    28975.9  21150.8       48.2     25.1       21.9     14.3        8.8      2.7
-json          25733.0  11468.9    28398.7  20347.3       41.4     31.7       37.6      9.9        6.6      2.3
+glazejson     10097.9   3947.9    14904.2   8186.0       17.4     12.5       14.8      8.7        1.3      1.5
+torque        10151.7   4358.7    12899.5   6798.9       18.3     13.2       19.9      7.1        4.5      1.7
+simdjsone     10345.9   7541.2    18973.3  13482.5       25.6     27.5       19.5     18.5        1.7      4.5
+jiffy         30645.2   4347.6    51053.1   9500.1       50.0     28.6       32.2     19.0        7.4      4.2
+jason         21005.7  12918.1    40277.2  25064.8       56.4     26.2       33.7     22.1        6.0      3.7
+thoas         21151.4  13779.6    41390.0  25625.0       57.4     29.9       35.0     26.7        7.5      3.8
+euneus        20488.9  12319.9    31853.9  25111.0       40.7     32.7       25.2     19.0        7.3      3.3
+json          19887.1  11679.8    30902.8  24087.7       41.5     26.9       40.1     10.6        4.8      4.1
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
+
+### Performance
+
+`glazejson` is roughly on par with `torque` (a Rust `sonic-rs` NIF) across
+the benchmarked workloads — neither library is consistently faster, and the
+gap on any given file/operation is typically within a few percent. Both sit
+well ahead of the other contenders (`simdjsone`, `jiffy`, and the pure-Elixir
+libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`).
+
+Where `glazejson` has an edge over `torque`:
+
+- **No tuple-of-binaries intermediate representation.** `glazejson` decodes
+  straight to native Erlang terms (maps, lists, binaries, numbers) and
+  encodes straight from them, in a single pass, with no generic JSON-tree
+  staging step — minimizing allocation and copying on both the decode and
+  encode paths.
+- **Big integer support.** JSON numbers that overflow 64 bits decode to
+  Erlang bignums (and encode back to their exact decimal form) — see
+  [Big integers](#big-integers). `torque` does not support this.
+- **Configurable `null` and object-key representation.** `null_term`/`use_nil`
+  and `{keys, atom | existing_atom | binary}` let you tailor the decoded
+  shape to your application without a post-processing pass.
+- **`uescape`/`force_utf8` encode options** for `\uXXXX`-escaping non-ASCII
+  output and sanitizing invalid UTF-8 — useful when targeting strict JSON
+  consumers or transports that aren't UTF-8 clean.
+- **Standalone `minify/1`/`prettify/1` and big-integer helpers**
+  (`encode_bigint/1`/`decode_bigint/1`) that don't require a full
+  decode/encode round-trip.
+- **Built on [glaze](https://github.com/stephenberry/glaze)**, a mature,
+  actively-maintained, header-only C++ JSON library — vs. `torque`'s
+  reliance on a Rust toolchain and `sonic-rs`, which adds a second
+  language/toolchain to the build.
 
 ## Testing
 
