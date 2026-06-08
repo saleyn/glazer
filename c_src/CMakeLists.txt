@@ -5,6 +5,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(ENV{MAKEFLAGS} "--no-print-directory")
 
+# ---- Detect <format> availability ----
+# Some toolchains (e.g. GCC 12's libstdc++, or Clang against an older system
+# libstdc++) don't ship a working <format> header, which Glaze otherwise
+# includes by default (see glaze/core/write_chars.hpp). Probe for it here and
+# tell Glaze to fall back to <cstdio>-based float formatting when missing.
+include(CheckIncludeFileCXX)
+set(CMAKE_REQUIRED_FLAGS "-std=c++23")
+check_include_file_cxx("format" GLZ_HAVE_STD_FORMAT)
+unset(CMAKE_REQUIRED_FLAGS)
+
 # ---- Fetch glaze ----
 include(FetchContent)
 FetchContent_Declare(
@@ -46,6 +56,10 @@ target_include_directories(glazejson PRIVATE
 
 target_link_directories(glazejson PRIVATE ${ERL_EI_LIB})
 target_link_libraries(glazejson PRIVATE glaze::glaze ei)
+
+if(NOT GLZ_HAVE_STD_FORMAT)
+  target_compile_definitions(glazejson PRIVATE GLZ_USE_STD_FORMAT_FLOAT=0)
+endif()
 
 target_compile_options(glazejson PRIVATE
   -fPIC
