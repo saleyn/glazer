@@ -57,15 +57,36 @@ target_include_directories(glazejson PRIVATE
 target_link_directories(glazejson PRIVATE ${ERL_EI_LIB})
 target_link_libraries(glazejson PRIVATE glaze::glaze ei)
 
+# NIF symbols (enif_*) are resolved at load time by the BEAM, not at link
+# time. On Linux this is fine by default (lazy symbol binding), but macOS's
+# linker rejects undefined symbols in shared libraries unless told otherwise.
+if(APPLE)
+  target_link_options(glazejson PRIVATE -undefined dynamic_lookup)
+endif()
+
 if(NOT GLZ_HAVE_STD_FORMAT)
   target_compile_definitions(glazejson PRIVATE GLZ_USE_STD_FORMAT_FLOAT=0)
+endif()
+
+include(CheckCXXCompilerFlag)
+set(CMAKE_REQUIRED_FLAGS "-std=c++23")
+check_cxx_compiler_flag("-march=native" GLZ_HAVE_MARCH_NATIVE)
+check_cxx_compiler_flag("-mtune=native" GLZ_HAVE_MTUNE_NATIVE)
+unset(CMAKE_REQUIRED_FLAGS)
+
+set(GLZ_NATIVE_FLAGS "")
+if(GLZ_HAVE_MARCH_NATIVE)
+  list(APPEND GLZ_NATIVE_FLAGS -march=native)
+endif()
+if(GLZ_HAVE_MTUNE_NATIVE)
+  list(APPEND GLZ_NATIVE_FLAGS -mtune=native)
 endif()
 
 target_compile_options(glazejson PRIVATE
   -fPIC
   -Wall
   -finline-functions
-  $<$<CONFIG:Release>:-O3 -DNDEBUG -flto=auto -fno-fat-lto-objects -march=native -mtune=native>
+  $<$<CONFIG:Release>:-O3 -DNDEBUG -flto=auto -fno-fat-lto-objects ${GLZ_NATIVE_FLAGS}>
   $<$<CONFIG:Debug>:-O0 -g>
 )
 
