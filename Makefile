@@ -4,6 +4,8 @@ PRIV_DIR   := $(abspath priv)
 BUILD_TYPE ?= Release
 NIF_DEBUG  ?= 0
 REBAR			 ?= rebar3
+APP        := $(shell sed -n '/application,/{s/^.*, //; s/,.*$$//; p; q}' src/*.app.src)
+
 
 ifeq ($(NIF_DEBUG),1)
   BUILD_TYPE := Debug
@@ -49,5 +51,13 @@ benchmark bench:
 
 publish: docs
 	$(REBAR) hex publish$(if $(replace), --replace)
+
+deprecate:
+	@if [ -z $(vsn) ]; then \
+    echo "Usage: $(MAKE) $@ vsn=X.Y.Z      - Deprecate version X.Y.Z"; \
+    exit 1; \
+  fi
+	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
+
 
 .PHONY: all deps doc compile clean distclean test nif

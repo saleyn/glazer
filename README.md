@@ -21,6 +21,8 @@ that produce/consume native Erlang terms in a single pass.
 
 ## Installation
 
+### Erlang
+
 Add `glazejson` to your `rebar.config` deps:
 
 ```erlang
@@ -36,9 +38,44 @@ build into `rebar3 compile`, so a plain
 rebar3 compile
 ```
 
-is enough — it builds `priv/glazejson.so` and compiles the Erlang
+This builds `priv/glazejson.so` and compiles the Erlang
 sources.  Make sure you have a relatively recent C++ compiler version
 installed.
+
+### Elixir
+
+Add `glazejson` to your `mix.exs` deps:
+
+```elixir
+def deps do
+  [
+    {:glazejson, "~> 0.1"}
+  ]
+end
+```
+
+Then fetch and compile as usual:
+
+```sh
+mix deps.get
+mix compile
+```
+
+`glazejson` is an Erlang application with a Rebar-based C++ NIF build;
+`mix` invokes the same top-level `Makefile`/`rebar3 compile` path
+described above, so the same C++23 compiler and CMake requirements
+apply. Once compiled, call it via the `:glazejson` module from Elixir:
+
+```elixir
+iex> :glazejson.decode(~s({"a":1,"b":[true,null,3.5]}))
+%{"a" => 1, "b" => [true, :null, 3.5]}
+
+iex> :glazejson.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
+"{\"a\":1,\"b\":[true,null,3.5]}"
+```
+
+Use the `use_nil`/`{null_term, nil}` option (see [JSON `null`](#json-null)
+below) to get idiomatic Elixir `nil` instead of the atom `:null`.
 
 ## Usage
 
