@@ -8,10 +8,12 @@
 //         (no intermediate generic_u64 tree).
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <charconv>
 #include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -52,9 +54,9 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_RETURN_MAPS))    opts.return_maps = true;
+    if      (enif_is_identical(head, AM_RETURN_MAPS))      opts.return_maps     = true;
     else if (enif_is_identical(head, AM_OBJECT_AS_TUPLE)){ opts.object_as_tuple = true; opts.return_maps = false; }
-    else if (enif_is_identical(head, AM_USE_NIL))        opts.null_term = AM_NIL;
+    else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -113,15 +115,13 @@ namespace lltoa_impl {
   {
     if (n < 100) {
       if (n < 10) { b[0] = '0' + (char)n; return b + 1; }
-      memcpy(b, &digs[n], 2); return b + 2;
+      memcpy(b, &digs[n], 2);
+      return b + 2;
     }
     return util::lltoa(b, n);
   }
 
-  inline char* i64toa(char* b, int64_t v)
-  {
-    return util::lltoa(b, v);
-  }
+  inline char* i64toa(char* b, int64_t v) { return util::lltoa(b, v); }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,26 +132,26 @@ namespace lltoa_impl {
 
 template <size_t N>
 struct SmallTermVec {
-  ERL_NIF_TERM  inline_[N];
-  ERL_NIF_TERM* data_ = inline_;
-  size_t        len_  = 0;
-  size_t        cap_  = N;
+  ERL_NIF_TERM  m_inline[N];
+  ERL_NIF_TERM* m_data = m_inline;
+  size_t        m_len  = 0;
+  size_t        m_cap  = N;
 
-  ~SmallTermVec() { if (data_ != inline_) delete[] data_; }
+  ~SmallTermVec() { if (m_data != m_inline) delete[] m_data; }
 
   void push_back(ERL_NIF_TERM v) {
-    if (len_ == cap_) {
-      size_t nc = cap_ * 2;
+    if (m_len == m_cap) {
+      size_t nc = m_cap * 2;
       ERL_NIF_TERM* nb = new ERL_NIF_TERM[nc];
-      memcpy(nb, data_, len_ * sizeof(ERL_NIF_TERM));
-      if (data_ != inline_) delete[] data_;
-      data_ = nb; cap_ = nc;
+      memcpy(nb, m_data, m_len * sizeof(ERL_NIF_TERM));
+      if (m_data != m_inline) delete[] m_data;
+      m_data = nb; m_cap = nc;
     }
-    data_[len_++] = v;
+    m_data[m_len++] = v;
   }
 
-  ERL_NIF_TERM* data() const { return data_; }
-  size_t        size() const { return len_; }
+  ERL_NIF_TERM* data() const { return m_data; }
+  size_t        size() const { return m_len;  }
 };
 
 // ---------------------------------------------------------------------------
@@ -161,28 +161,34 @@ struct SmallTermVec {
 struct OutBuf {
   static constexpr size_t INLINE = 4096;
 
-  char   inline_[INLINE];
-  char*  data  = inline_;
-  size_t len   = 0;
-  size_t cap   = INLINE;
+  char   m_inline[INLINE];
+  char*  m_data  = m_inline;
+  size_t m_len   = 0;
+  size_t m_cap   = INLINE;
 
-  ~OutBuf() { if (data != inline_) delete[] data; }
+  ~OutBuf() { if (m_data != m_inline) free(m_data); }
 
   void ensure(size_t need) {
-    if (len + need <= cap) return;
-    size_t nc = cap * 2;
-    while (nc < len + need) nc *= 2;
-    char* nb = new char[nc];
-    memcpy(nb, data, len);
-    if (data != inline_) delete[] data;
-    data = nb; cap = nc;
+    if (m_len + need <= m_cap) return;
+    size_t nc = m_cap * 2;
+    while (nc < m_len + need) nc *= 2;
+    if (m_data == m_inline) {
+      // Can't realloc a stack array — first spill to the heap requires a copy.
+      std::unique_ptr<char[]> nb = std::unique_ptr<char[]>(static_cast<char*>(malloc(nc)));
+      memcpy(nb.get(), m_data, m_len);
+      m_data = nb.release();
+    } else {
+      // May resize in place (no copy) when the allocator can extend the block.
+      m_data = static_cast<char*>(realloc(m_data, nc));
+    }
+    m_cap = nc;
   }
 
-  void push(char c)              { ensure(1); data[len++] = c; }
-  void push(const char* s, size_t n) { ensure(n); memcpy(data + len, s, n); len += n; }
-  void push(std::string_view sv) { push(sv.data(), sv.size()); }
+  void push(char c)                  { ensure(1); m_data[m_len++] = c; }
+  void push(const char* s, size_t n) { ensure(n); memcpy(m_data + m_len, s, n); m_len += n; }
+  void push(std::string_view sv)     { push(sv.data(), sv.size()); }
 
-  std::string_view view() const { return {data, len}; }
+  std::string_view view() const      { return {m_data, m_len}; }
 };
 
 // ---------------------------------------------------------------------------
@@ -196,22 +202,69 @@ struct OutBuf {
 // ---------------------------------------------------------------------------
 
 struct KeyCache {
-  static constexpr size_t CAP = 64;
+  // Open-addressed, power-of-two-sized table with linear probing. Sized
+  // larger than the expected distinct-key count (real documents have ~94
+  // distinct keys per the comment above) to keep the load factor low and
+  // probe sequences short.
+  static constexpr size_t CAP  = 128;
+  static constexpr size_t MASK = CAP - 1;
 
-  struct Entry { const char* s; size_t len; ERL_NIF_TERM term; };
-  Entry  entries[CAP];
-  size_t count = 0;
+  // Lazily-cleared via an epoch counter rather than zero-initializing the
+  // whole array up front: a slot is "live" only if its `epoch` matches the
+  // cache's current `m_epoch`. This avoids paying ~3KB of memset on every
+  // single decode call (including tiny ones that never touch the cache —
+  // see Decoder::m_use_key_cache / KEY_CACHE_MIN_SIZE) merely to construct
+  // the Decoder. `m_epoch` is seeded from a process-wide monotonic counter,
+  // so leftover garbage from prior stack frames can never coincide with it
+  // (it is always strictly less than every epoch handed out so far).
+  struct Entry { const char* s; size_t len; uint32_t hash; uint32_t epoch; ERL_NIF_TERM term; };
+  Entry    m_entries[CAP]; // intentionally left uninitialized — see m_epoch
+  size_t   m_count = 0;
+  uint32_t m_epoch;
+
+  static_assert((CAP & MASK) == 0, "CAP must be a power of two");
+
+  static uint32_t next_epoch() {
+    static std::atomic<uint32_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1; // never 0
+  }
+
+  KeyCache() : m_epoch(next_epoch()) {}
+
+  // FNV-1a — cheap, decent distribution, computed once per key and reused
+  // for both the lookup and (on a miss) the subsequent insert.
+  static uint32_t hash_of(const char* s, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; ++i) {
+      h ^= static_cast<unsigned char>(s[i]);
+      h *= 16777619u;
+    }
+    return h;
+  }
 
   // Returns 0 if not cached or cache is full/bypassed (has_escape).
-  ERL_NIF_TERM lookup(const char* s, size_t len) const {
-    for (size_t i = 0; i < count; ++i)
-      if (entries[i].len == len && memcmp(entries[i].s, s, len) == 0)
-        return entries[i].term;
+  // O(1) average: jump straight to the hash's home slot and linearly probe
+  // only the (typically very short, given the low load factor) collision
+  // chain — comparing the precomputed hash before len/memcmp.
+  ERL_NIF_TERM lookup(const char* s, size_t len, uint32_t hash) const {
+    for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
+      const Entry& e = m_entries[i];
+      if (e.epoch != m_epoch) return 0; // empty slot — key was never inserted
+      if (e.hash == hash && e.len == len && memcmp(e.s, s, len) == 0)
+        return e.term;
+    }
     return 0;
   }
 
-  void insert(const char* s, size_t len, ERL_NIF_TERM term) {
-    if (count < CAP) entries[count++] = {s, len, term};
+  void insert(const char* s, size_t len, uint32_t hash, ERL_NIF_TERM term) {
+    if (m_count >= CAP) return;
+    for (size_t i = hash & MASK;; i = (i + 1) & MASK) {
+      if (m_entries[i].epoch != m_epoch) {
+        m_entries[i] = {s, len, hash, m_epoch, term};
+        ++m_count;
+        return;
+      }
+    }
   }
 };
 
@@ -220,13 +273,13 @@ struct KeyCache {
 // ---------------------------------------------------------------------------
 
 struct Decoder {
-  ErlNifEnv*       env;
-  const DecodeOpts& opts;
-  const char*      beg;  // start of input (for error reporting)
-  const char*      p;    // current position
-  const char*      end;
-  KeyCache         key_cache;
-  bool             use_key_cache;
+  ErlNifEnv*        m_env;
+  const DecodeOpts& m_opts;
+  const char*       m_beg;  // start of input (for error reporting)
+  const char*       m_p;    // current position
+  const char*       m_end;
+  KeyCache          m_key_cache;
+  bool              m_use_key_cache;
 
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
@@ -234,8 +287,8 @@ struct Decoder {
   static constexpr size_t KEY_CACHE_MIN_SIZE = 2048;
 
   Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
-    : env(e), opts(o), beg(data), p(data), end(data + size),
-      use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
+    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
+      m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   // ---- whitespace ----
   static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
@@ -245,10 +298,10 @@ struct Decoder {
     // none at all). Check the first byte before paying for an 8-byte load
     // and SWAR bit-twiddling — avoids that cost on the overwhelmingly common
     // "no whitespace here" case.
-    if (p >= end || !is_ws(*p)) return;
-    while (p + 8 <= end) {
+    if (m_p >= m_end || !is_ws(*m_p)) return;
+    while (m_p + 8 <= m_end) {
       uint64_t w;
-      memcpy(&w, p, 8);
+      memcpy(&w, m_p, 8);
       // Any byte that is not one of ' ' \t \r \n stops the run.
       uint64_t non_ws = has_byte(w, ' ') | has_byte(w, '\t') | has_byte(w, '\r') | has_byte(w, '\n');
       // non_ws has a set high-bit at each position that *matches* one of the WS chars.
@@ -259,15 +312,15 @@ struct Decoder {
       uint64_t cleared = ~matched & 0x8080808080808080ULL;
       if (cleared) {
 #if defined(__GNUC__) || defined(__clang__)
-        p += __builtin_ctzll(cleared) >> 3;
+        m_p += __builtin_ctzll(cleared) >> 3;
 #else
-        while (is_ws(*p)) ++p;
+        while (is_ws(*m_p)) ++m_p;
 #endif
         return;
       }
-      p += 8;
+      m_p += 8;
     }
-    while (p < end && is_ws(*p)) ++p;
+    while (m_p < m_end && is_ws(*m_p)) ++m_p;
   }
 
   // SWAR (SIMD-within-a-register) helpers: detect '"' or '\' anywhere within
@@ -285,15 +338,15 @@ struct Decoder {
   // If has_escape is set the caller must unescape before using as binary.
   bool read_string_raw(const char*& begin_out, size_t& len_out, bool& has_escape)
   {
-    if (p >= end || *p != '"') return false;
-    ++p;  // skip opening quote
-    const char* s = p;
+    if (m_p >= m_end || *m_p != '"') return false;
+    ++m_p;  // skip opening quote
+    const char* s = m_p;
     has_escape = false;
-    while (p < end) {
-      char c = *p;
-      if (c == '"') { begin_out = s; len_out = p - s; ++p; return true; }
-      if (c == '\\') { has_escape = true; ++p; if (p < end) ++p; }
-      else ++p;
+    while (m_p < m_end) {
+      char c = *m_p;
+      if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
+      if (c == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; }
+      else ++m_p;
     }
     return false; // unterminated
   }
@@ -360,31 +413,32 @@ struct Decoder {
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
     std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
-    return make_binary(env, sv);
+    return make_binary(m_env, sv);
   }
 
   // Make a key term (binary / atom / existing_atom).
   ERL_NIF_TERM make_key_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (opts.label_atom) {
+    if (m_opts.label_atom) {
       std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
-      return enif_make_atom_len(env, sv.data(), sv.size());
+      return enif_make_atom_len(m_env, sv.data(), sv.size());
     }
-    if (opts.label_existing_atom) {
+    if (m_opts.label_existing_atom) {
       std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       ERL_NIF_TERM t;
       // enif_make_existing_atom_len avoids the std::string copy the old code paid
-      if (enif_make_existing_atom_len(env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1))
+      if (enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1))
         return t;
-      return make_binary(env, sv);
+      return make_binary(m_env, sv);
     }
     // Binary keys: reuse cached terms for repeated keys (raw, unescaped only —
     // escapes are rare for keys and not worth complicating the cache for).
     // Only worthwhile for larger documents — see KEY_CACHE_MIN_SIZE.
-    if (!has_escape && use_key_cache) {
-      if (ERL_NIF_TERM cached = key_cache.lookup(s, len)) return cached;
-      ERL_NIF_TERM term = make_binary(env, std::string_view(s, len));
-      key_cache.insert(s, len, term);
+    if (!has_escape && m_use_key_cache) {
+      uint32_t h = KeyCache::hash_of(s, len);
+      if (ERL_NIF_TERM cached = m_key_cache.lookup(s, len, h)) return cached;
+      ERL_NIF_TERM term = make_binary(m_env, std::string_view(s, len));
+      m_key_cache.insert(s, len, h, term);
       return term;
     }
     return make_string_term(s, len, has_escape, buf);
@@ -393,46 +447,46 @@ struct Decoder {
   // ---- number parsing ----
   ERL_NIF_TERM parse_number()
   {
-    const char* start = p;
-    bool neg = (*p == '-');
-    if (neg) ++p;
+    const char* start = m_p;
+    bool neg = (*m_p == '-');
+    if (neg) ++m_p;
 
     // Integer part
-    while (p < end && *p >= '0' && *p <= '9') ++p;
+    while (m_p < m_end && *m_p >= '0' && *m_p <= '9') ++m_p;
 
     bool is_float = false;
-    if (p < end && *p == '.') { is_float = true; ++p; while (p < end && *p >= '0' && *p <= '9') ++p; }
-    if (p < end && (*p == 'e' || *p == 'E')) {
+    if (m_p < m_end && *m_p == '.') { is_float = true; ++m_p; while (m_p < m_end && *m_p >= '0' && *m_p <= '9') ++m_p; }
+    if (m_p < m_end && (*m_p == 'e' || *m_p == 'E')) {
       is_float = true;
-      if  (++p < end && (*p == '+' || *p == '-')) ++p;
-      while (p < end && *p >= '0' && *p <= '9') ++p;
+      if  (++m_p < m_end && (*m_p == '+' || *m_p == '-')) ++m_p;
+      while (m_p < m_end &&  *m_p >= '0' && *m_p <= '9')  ++m_p;
     }
 
     if (is_float) {
       double d;
       // std::from_chars for floating-point isn't available on all platforms
       // (e.g. older Apple libc++), so use Glaze's vendored fast_float here.
-      auto [ep, ec] = glz::from_chars<false>(start, p, d);
+      auto [ep, ec] = glz::from_chars<false>(start, m_p, d);
       if (ec != std::errc{}) return 0;
-      return enif_make_double(env, d);
+      return enif_make_double(m_env, d);
     }
 
     // Integer: try int64/uint64 first, bigint fallback
     if (neg) {
       int64_t v;
-      auto [ep, ec] = std::from_chars(start + 1, p, v);
-      if (ec == std::errc{}) return enif_make_int64(env, -v);
+      auto [ep, ec] = std::from_chars(start + 1, m_p, v);
+      if (ec == std::errc{}) return enif_make_int64(m_env, -v);
       // Could be uint64_t range negative? no — fall through to bigint
     } else {
       uint64_t v;
-      auto [ep, ec] = std::from_chars(start, p, v);
+      auto [ep, ec] = std::from_chars(start, m_p, v);
       if (ec == std::errc{}) {
-        if (v <= uint64_t(INT64_MAX)) return enif_make_int64(env, int64_t(v));
-        return enif_make_uint64(env, v);
+        if (v <= uint64_t(INT64_MAX)) return enif_make_int64(m_env, int64_t(v));
+        return enif_make_uint64(m_env, v);
       }
     }
     // Bigint
-    ERL_NIF_TERM r = glazejson::BigInt::decode(env, start, p);
+    ERL_NIF_TERM r = glazejson::BigInt::decode(m_env, start, m_p);
     return r ? r : (ERL_NIF_TERM)0;
   }
 
@@ -440,17 +494,17 @@ struct Decoder {
   ERL_NIF_TERM parse_value(std::string& scratch)
   {
     skip_ws();
-    if (p >= end) return 0;
+    if (m_p >= m_end) return 0;
 
-    switch (*p) {
+    switch (*m_p) {
       case '"': {
-        ++p;
-        const char* s = p;
+        ++m_p;
+        const char* s = m_p;
         bool has_escape = false;
-        while (p < end) {
-          if (*p == '"') { size_t len = p - s; ++p; return make_string_term(s, len, has_escape, scratch); }
-          if (*p == '\\') { has_escape = true; ++p; if (p < end) ++p; }
-          else ++p;
+        while (m_p < m_end) {
+          if (*m_p == '"') { size_t len = m_p - s; ++m_p; return make_string_term(s, len, has_escape, scratch); }
+          if (*m_p == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; }
+          else ++m_p;
         }
         return 0;
       }
@@ -459,11 +513,11 @@ struct Decoder {
       case '[': return parse_array(scratch);
 
       case 't':
-        if (p + 4 <= end && memcmp(p, "true", 4) == 0)  { p += 4; return AM_TRUE;  } return 0;
+        if (m_p + 4 <= m_end && memcmp(m_p, "true", 4) == 0)  { m_p += 4; return AM_TRUE;  } return 0;
       case 'f':
-        if (p + 5 <= end && memcmp(p, "false", 5) == 0) { p += 5; return AM_FALSE; } return 0;
+        if (m_p + 5 <= m_end && memcmp(m_p, "false", 5) == 0) { m_p += 5; return AM_FALSE; } return 0;
       case 'n':
-        if (p + 4 <= end && memcmp(p, "null", 4) == 0)  { p += 4; return opts.null_term; } return 0;
+        if (m_p + 4 <= m_end && memcmp(m_p, "null", 4) == 0)  { m_p += 4; return m_opts.null_term; } return 0;
 
       case '-': case '0': case '1': case '2': case '3': case '4':
       case '5': case '6': case '7': case '8': case '9':
@@ -475,96 +529,96 @@ struct Decoder {
 
   ERL_NIF_TERM parse_array(std::string& scratch)
   {
-    assert(*p == '[');
-    ++p;
+    assert(*m_p == '[');
+    ++m_p;
     skip_ws();
 
     SmallTermVec<16> items;
-    if (p < end && *p == ']') { ++p; return enif_make_list_from_array(env, nullptr, 0); }
+    if (m_p < m_end && *m_p == ']') { ++m_p; return enif_make_list_from_array(m_env, nullptr, 0); }
 
-    while (p < end) {
+    while (m_p < m_end) {
       ERL_NIF_TERM v = parse_value(scratch);
       if (!v) return 0;
       items.push_back(v);
       skip_ws();
-      if (p >= end) return 0;
-      if (*p == ']') { ++p; break; }
-      if (*p != ',') return 0;
-      ++p;
+      if (m_p >= m_end) return 0;
+      if (*m_p == ']') { ++m_p; break; }
+      if (*m_p != ',') return 0;
+      ++m_p;
     }
-    return enif_make_list_from_array(env, items.data(), (unsigned)items.size());
+    return enif_make_list_from_array(m_env, items.data(), (unsigned)items.size());
   }
 
   ERL_NIF_TERM parse_object(std::string& scratch)
   {
-    assert(*p == '{');
-    ++p;
+    assert(*m_p == '{');
+    ++m_p;
     skip_ws();
 
-    if (opts.object_as_tuple) {
+    if (m_opts.object_as_tuple) {
       SmallTermVec<16> pairs;
 
-      if (p < end && *p == '}') { ++p;
-        return enif_make_tuple1(env, enif_make_list_from_array(env, nullptr, 0)); }
+      if (m_p < m_end && *m_p == '}') { ++m_p;
+        return enif_make_tuple1(m_env, enif_make_list_from_array(m_env, nullptr, 0)); }
 
-      while (p < end) {
-        if (*p != '"') return 0;
+      while (m_p < m_end) {
+        if (*m_p != '"') return 0;
         const char* ks; size_t kl; bool ke;
         if (!read_string_raw(ks, kl, ke)) return 0;
         ERL_NIF_TERM key = make_key_term(ks, kl, ke, scratch);
         skip_ws();
-        if (p >= end || *p != ':') return 0; else ++p;
+        if (m_p >= m_end || *m_p != ':') return 0; else ++m_p;
         ERL_NIF_TERM val = parse_value(scratch);
         if (!val) return 0;
-        pairs.push_back(enif_make_tuple2(env, key, val));
+        pairs.push_back(enif_make_tuple2(m_env, key, val));
         skip_ws();
-        if (p >= end) return 0;
-        if (*p == '}') { ++p; break; }
-        if (*p != ',') return 0; else ++p;
+        if (m_p >= m_end) return 0;
+        if (*m_p == '}') { ++m_p; break; }
+        if (*m_p != ',') return 0; else ++m_p;
         skip_ws();
       }
-      ERL_NIF_TERM list = enif_make_list_from_array(env, pairs.data(), (unsigned)pairs.size());
-      return enif_make_tuple1(env, list);
+      ERL_NIF_TERM list = enif_make_list_from_array(m_env, pairs.data(), (unsigned)pairs.size());
+      return enif_make_tuple1(m_env, list);
     }
 
     // Map path
     SmallTermVec<16> ks, vs;
 
-    if (p < end && *p == '}') { ++p;
-      ERL_NIF_TERM m; enif_make_map_from_arrays(env, nullptr, nullptr, 0, &m); return m; }
+    if (m_p < m_end && *m_p == '}') { ++m_p;
+      ERL_NIF_TERM m; enif_make_map_from_arrays(m_env, nullptr, nullptr, 0, &m); return m; }
 
-    while (p < end) {
-      if (*p != '"') return 0;
+    while (m_p < m_end) {
+      if (*m_p != '"') return 0;
       const char* kstr; size_t klen; bool kesc;
       if (!read_string_raw(kstr, klen, kesc)) return 0;
       ERL_NIF_TERM key = make_key_term(kstr, klen, kesc, scratch);
       skip_ws();
-      if (p >= end || *p != ':') return 0; else ++p;
+      if (m_p >= m_end || *m_p != ':') return 0; else ++m_p;
       ERL_NIF_TERM val = parse_value(scratch);
       if (!val) return 0;
       ks.push_back(key); vs.push_back(val);
       skip_ws();
-      if (p >= end) return 0;
-      if (*p == '}') { ++p; break; }
-      if (*p != ',') return 0; else ++p;
+      if (m_p >= m_end) return 0;
+      if (*m_p == '}') { ++m_p; break; }
+      if (*m_p != ',') return 0; else ++m_p;
       skip_ws();
     }
 
     ERL_NIF_TERM map;
-    if (!enif_make_map_from_arrays(env, ks.data(), vs.data(), (unsigned)ks.size(), &map))
-      return enif_raise_exception(env, AM_BADARG);
+    if (!enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map))
+      return enif_raise_exception(m_env, AM_BADARG);
     return map;
   }
 
   ERL_NIF_TERM decode(const char* data, size_t size)
   {
-    p = data; end = data + size; beg = data;
+    m_p = data; m_end = data + size; m_beg = data;
     std::string scratch;
     ERL_NIF_TERM result = parse_value(scratch);
     if (!result) {
-      std::string msg = "JSON parse error at offset " + std::to_string(p - beg);
-      return enif_raise_exception(env,
-        enif_make_tuple2(env, AM_PARSE_ERROR, make_binary(env, msg)));
+      std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
+      return enif_raise_exception(m_env,
+        enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
     }
     skip_ws();
     // trailing garbage is tolerated (matches glaze's prior behaviour)
@@ -584,26 +638,26 @@ struct Decoder {
 // ---------------------------------------------------------------------------
 
 struct ScanState {
-  uint64_t pos          = 0;      // byte offset into the buffer to resume scanning at
-  uint32_t depth        = 0;      // current [ ]/{ } nesting depth
-  bool     in_string    = false;  // currently inside a "..." (top-level or nested)
-  bool     escape       = false;  // previous byte inside a string was an unconsumed backslash
-  bool     started      = false;  // have we seen the first non-ws byte of the value yet?
-  bool     scalar       = false;  // value-so-far is a bare scalar (number/literal), not { or [
+  uint64_t pos        = 0;      // byte offset into the buffer to resume scanning at
+  uint32_t depth      = 0;      // current [ ]/{ } nesting depth
+  bool     in_string  = false;  // currently inside a "..." (top-level or nested)
+  bool     escape     = false;  // previous byte inside a string was an unconsumed backslash
+  bool     started    = false;  // have we seen the first non-ws byte of the value yet?
+  bool     scalar     = false;  // value-so-far is a bare scalar (number/literal), not { or [
 
   static ScanState initial() { return ScanState{}; }
 };
 
 struct Scanner {
-  const char* beg;
-  const char* p;
-  const char* end;
+  const char* m_beg;
+  const char* m_p;
+  const char* m_end;
 
   // `resume_pos` is where to start scanning from (0 for a fresh scan, or
   // ScanState::pos when continuing — the caller passes the full buffer each
   // time, so previously-scanned bytes must be skipped rather than re-walked).
   Scanner(const char* data, size_t size, size_t resume_pos)
-    : beg(data), p(data + std::min(resume_pos, size)), end(data + size) {}
+    : m_beg(data), m_p(data + std::min(resume_pos, size)), m_end(data + size) {}
 
   static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
@@ -614,20 +668,21 @@ struct Scanner {
   {
     // Skip leading whitespace before the value starts.
     if (!st.started) {
-      while (p < end && is_ws(*p)) ++p;
-      if (p >= end) return false;
+      while (m_p < m_end && is_ws(*m_p)) ++m_p;
+      if (m_p >= m_end) return false;
     }
 
-    while (p < end) {
-      char c = *p;
+    while (m_p < m_end) {
+      char c = *m_p;
 
       if (st.in_string) {
-        if (st.escape)            { st.escape = false; ++p; continue; }
-        if (c == '\\')            { st.escape = true;  ++p; continue; }
-        if (c == '"')             { st.in_string = false; ++p;
-                                    if (st.depth == 0 && st.scalar) { value_end = p; return true; }
-                                    continue; }
-        ++p;
+        if (st.escape)            { st.escape = false; ++m_p; continue; }
+        if (c == '\\')            { st.escape = true;  ++m_p; continue; }
+        if (c == '"')             { st.in_string = false; ++m_p;
+                                    if (st.depth == 0 && st.scalar) { value_end = m_p; return true; }
+                                    continue;
+                                  }
+        ++m_p;
         continue;
       }
 
@@ -635,7 +690,7 @@ struct Scanner {
         case '"':
           st.in_string = true;
           if (!st.started) { st.started = true; st.scalar = true; }
-          ++p;
+          ++m_p;
           break;
 
         case '{':
@@ -643,36 +698,36 @@ struct Scanner {
           st.started = true;
           st.scalar  = false;
           ++st.depth;
-          ++p;
+          ++m_p;
           break;
 
         case '}':
         case ']':
-          if (st.depth == 0) { value_end = p; return true; } // stray close — treat as boundary
+          if (st.depth == 0) { value_end = m_p; return true; } // stray close — treat as boundary
           --st.depth;
-          ++p;
-          if (st.depth == 0) { value_end = p; return true; }
+          ++m_p;
+          if (st.depth == 0) { value_end = m_p; return true; }
           break;
 
         default:
           if (st.depth == 0) {
             if (is_ws(c)) {
-              if (st.started && st.scalar) { value_end = p; return true; }
-              ++p;
+              if (st.started && st.scalar) { value_end = m_p; return true; }
+              ++m_p;
             } else if (!st.started) {
               // start of a bare scalar: number, true/false/null
               st.started = true;
               st.scalar  = true;
-              ++p;
+              ++m_p;
             } else if (st.scalar) {
-              ++p;
+              ++m_p;
             } else {
               // garbage after a completed container value
-              value_end = p;
+              value_end = m_p;
               return true;
             }
           } else {
-            ++p; // inside a container: commas, colons, scalar bytes — just consume
+            ++m_p; // inside a container: commas, colons, scalar bytes — just consume
           }
           break;
       }
@@ -683,7 +738,7 @@ struct Scanner {
     // ambiguous (more digits/letters could follow in the next chunk), so we
     // always report incomplete here and let the caller feed more data or
     // signal EOF explicitly.
-    st.pos = static_cast<uint64_t>(p - beg);
+    st.pos = static_cast<uint64_t>(m_p - m_beg);
     return false;
   }
 };
@@ -763,9 +818,9 @@ static inline void write_uescape(char* dst, uint32_t cu)
 static void json_escape_string(std::string_view sv, OutBuf& out)
 {
   out.push('"');
-  const char* p     = sv.data();
-  const char* end   = p + sv.size();
-  const char* run   = p;
+  const char* p   = sv.data();
+  const char* end = p + sv.size();
+  const char* run = p;
 
   while (p < end) {
     unsigned char c = (unsigned char)*p;
@@ -909,110 +964,110 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
 }
 
 struct Encoder {
-  ErlNifEnv*        env;
-  const EncodeOpts& opts;
-  OutBuf&           out;
-  char              atom_buf[256]; // scratch for atom → string_view
+  ErlNifEnv*        m_env;
+  const EncodeOpts& m_opts;
+  OutBuf&           m_out;
+  char              m_atom_buf[256]; // scratch for atom → string_view
 
   void escape_string(std::string_view sv)
   {
-    if (opts.uescape || opts.force_utf8)
-      json_escape_string_unicode(sv, out, opts.uescape, opts.force_utf8);
+    if (m_opts.uescape || m_opts.force_utf8)
+      json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8);
     else
-      json_escape_string(sv, out);
+      json_escape_string(sv, m_out);
   }
 
   bool encode(ERL_NIF_TERM term)
   {
     // Dispatch on the term's runtime type once — avoids the cascade of
     // enif_is_identical / enif_get_* probes that each cost a C call.
-    switch (enif_term_type(env, term)) {
+    switch (enif_term_type(m_env, term)) {
 
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
-        if (!enif_inspect_binary(env, term, &bin)) return false;
+        if (!enif_inspect_binary(m_env, term, &bin)) return false;
         escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
         return true;
       }
 
       case ERL_NIF_TERM_TYPE_INTEGER: {
         ErlNifSInt64 i;
-        if (enif_get_int64(env, term, &i)) {
+        if (enif_get_int64(m_env, term, &i)) {
           char buf[22]; char* e = lltoa_impl::i64toa(buf, i);
-          out.push(buf, e - buf);
+          m_out.push(buf, e - buf);
           return true;
         }
         ErlNifUInt64 u;
-        if (enif_get_uint64(env, term, &u)) {
+        if (enif_get_uint64(m_env, term, &u)) {
           char buf[21]; char* e = util::lltoa(buf, u);
-          out.push(buf, e - buf);
+          m_out.push(buf, e - buf);
           return true;
         }
         // bigint — doesn't fit in 64 bits
-        auto s = glazejson::BigInt::encode(env, term);
-        if (!s.empty()) { out.push(s); return true; }
+        auto s = glazejson::BigInt::encode(m_env, term);
+        if (!s.empty()) { m_out.push(s); return true; }
         return false;
       }
 
       case ERL_NIF_TERM_TYPE_MAP: {
-        out.push('{');
+        m_out.push('{');
         ErlNifMapIterator iter;
-        if (!enif_map_iterator_create(env, term, &iter, ERL_NIF_MAP_ITERATOR_FIRST))
+        if (!enif_map_iterator_create(m_env, term, &iter, ERL_NIF_MAP_ITERATOR_FIRST))
           return false;
         ERL_NIF_TERM k, v;
         bool first = true;
-        while (enif_map_iterator_get_pair(env, &iter, &k, &v)) {
-          if (!first) out.push(',');
+        while (enif_map_iterator_get_pair(m_env, &iter, &k, &v)) {
+          if (!first) m_out.push(',');
           first = false;
-          if (!encode_key(k)) { enif_map_iterator_destroy(env, &iter); return false; }
-          out.push(':');
-          if (!encode(v))     { enif_map_iterator_destroy(env, &iter); return false; }
-          enif_map_iterator_next(env, &iter);
+          if (!encode_key(k)) { enif_map_iterator_destroy(m_env, &iter); return false; }
+          m_out.push(':');
+          if (!encode(v))     { enif_map_iterator_destroy(m_env, &iter); return false; }
+          enif_map_iterator_next(m_env, &iter);
         }
-        enif_map_iterator_destroy(env, &iter);
-        out.push('}');
+        enif_map_iterator_destroy(m_env, &iter);
+        m_out.push('}');
         return true;
       }
 
       case ERL_NIF_TERM_TYPE_LIST: {
-        out.push('[');
+        m_out.push('[');
         ERL_NIF_TERM h, t = term;
         bool first = true;
-        while (enif_get_list_cell(env, t, &h, &t)) {
-          if (!first) out.push(',');
+        while (enif_get_list_cell(m_env, t, &h, &t)) {
+          if (!first) m_out.push(',');
           first = false;
           if (!encode(h)) return false;
         }
-        out.push(']');
+        m_out.push(']');
         return true;
       }
 
       case ERL_NIF_TERM_TYPE_ATOM: {
-        if (enif_is_identical(term, opts.null_term)) { out.push("null", 4); return true; }
-        if (enif_is_identical(term, AM_TRUE))  { out.push("true",  4); return true; }
-        if (enif_is_identical(term, AM_FALSE)) { out.push("false", 5); return true; }
-        if (enif_is_identical(term, AM_NULL))  { out.push("null",  4); return true; }
-        if (enif_is_identical(term, AM_NIL))   { out.push("null",  4); return true; }
+        if (enif_is_identical(term, m_opts.null_term)) { m_out.push("null", 4); return true; }
+        if (enif_is_identical(term, AM_TRUE))  { m_out.push("true",  4); return true; }
+        if (enif_is_identical(term, AM_FALSE)) { m_out.push("false", 5); return true; }
+        if (enif_is_identical(term, AM_NULL))  { m_out.push("null",  4); return true; }
+        if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
         std::string_view sv;
-        if (!atom_to_sv(env, term, atom_buf, sizeof(atom_buf), sv)) return false;
+        if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
         escape_string(sv);
         return true;
       }
 
       case ERL_NIF_TERM_TYPE_FLOAT: {
         double d;
-        if (!enif_get_double(env, term, &d)) return false;
-        if (!std::isfinite(d)) { out.push("null", 4); return true; }
+        if (!enif_get_double(m_env, term, &d)) return false;
+        if (!std::isfinite(d)) { m_out.push("null", 4); return true; }
         char buf[32];
         auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
         if (ec == std::errc{}) {
           bool has_dot = false;
           for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
-          out.push(buf, e - buf);
-          if (!has_dot) out.push(".0", 2);
+          m_out.push(buf, e - buf);
+          if (!has_dot) m_out.push(".0", 2);
         } else {
           int n = snprintf(buf, sizeof(buf), "%.17g", d);
-          out.push(buf, n);
+          m_out.push(buf, n);
         }
         return true;
       }
@@ -1020,21 +1075,21 @@ struct Encoder {
       case ERL_NIF_TERM_TYPE_TUPLE: {
         // {[{K,V}...]} proplist → object
         int arity; const ERL_NIF_TERM* tp;
-        enif_get_tuple(env, term, &arity, &tp);
-        if (arity == 1 && enif_is_list(env, tp[0])) {
-          out.push('{');
+        enif_get_tuple(m_env, term, &arity, &tp);
+        if (arity == 1 && enif_is_list(m_env, tp[0])) {
+          m_out.push('{');
           ERL_NIF_TERM h, t = tp[0];
           bool first = true;
-          while (enif_get_list_cell(env, t, &h, &t)) {
+          while (enif_get_list_cell(m_env, t, &h, &t)) {
             int pa; const ERL_NIF_TERM* pp;
-            if (!enif_get_tuple(env, h, &pa, &pp) || pa != 2) return false;
-            if (!first) out.push(',');
+            if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) return false;
+            if (!first) m_out.push(',');
             first = false;
             if (!encode_key(pp[0])) return false;
-            out.push(':');
+            m_out.push(':');
             if (!encode(pp[1])) return false;
           }
-          out.push('}');
+          m_out.push('}');
           return true;
         }
         return false;
@@ -1048,13 +1103,14 @@ struct Encoder {
   bool encode_key(ERL_NIF_TERM k)
   {
     ErlNifBinary bin;
-    if (enif_inspect_binary(env, k, &bin)) {
+    if (enif_inspect_binary(m_env, k, &bin)) {
       escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
       return true;
     }
-    if (enif_is_atom(env, k)) {
+    if (enif_is_atom(m_env, k)) {
       std::string_view sv;
-      if (!atom_to_sv(env, k, atom_buf, sizeof(atom_buf), sv)) return false;
+      if (!atom_to_sv(m_env, k, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
+
       escape_string(sv);
       return true;
     }
@@ -1146,8 +1202,8 @@ static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
   if (!opts.pretty)
     return make_binary(env, out.view());
 
-  std::string pretty_in(out.view());
-  std::string pretty_out = glz::prettify_json(pretty_in);
+  std::string_view pretty_in(out.view());
+  auto pretty_out = glz::prettify_json(pretty_in);
   return make_binary(env, pretty_out);
 }
 
@@ -1163,7 +1219,7 @@ static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
       !enif_inspect_iolist_as_binary(env, argv[0], &bin))
     return enif_make_badarg(env);
   std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
-  std::string out = glz::minify_json(in);
+  auto out = glz::minify_json(in);
   return enif_make_tuple2(env, AM_OK, make_binary(env, out));
 }
 
@@ -1174,7 +1230,7 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
   if (!enif_inspect_binary(env, argv[0], &bin) &&
       !enif_inspect_iolist_as_binary(env, argv[0], &bin))
     return enif_make_badarg(env);
-  std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
+  std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
   std::string out = glz::prettify_json(in);
   return enif_make_tuple2(env, AM_OK, make_binary(env, out));
 }

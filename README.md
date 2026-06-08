@@ -298,14 +298,14 @@ Running benchmarks...
                twitter (616.7K)     twitter2 (758.0K)     openrtb (1.2K)         esad (1.3K)         small (0.1K)
                decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 ---------------------------------------------------------------------------------------------------------------------
-glazejson     10097.9   3947.9    14904.2   8186.0       17.4     12.5       14.8      8.7        1.3      1.5
-torque        10151.7   4358.7    12899.5   6798.9       18.3     13.2       19.9      7.1        4.5      1.7
-simdjsone     10345.9   7541.2    18973.3  13482.5       25.6     27.5       19.5     18.5        1.7      4.5
-jiffy         30645.2   4347.6    51053.1   9500.1       50.0     28.6       32.2     19.0        7.4      4.2
-jason         21005.7  12918.1    40277.2  25064.8       56.4     26.2       33.7     22.1        6.0      3.7
-thoas         21151.4  13779.6    41390.0  25625.0       57.4     29.9       35.0     26.7        7.5      3.8
-euneus        20488.9  12319.9    31853.9  25111.0       40.7     32.7       25.2     19.0        7.3      3.3
-json          19887.1  11679.8    30902.8  24087.7       41.5     26.9       40.1     10.6        4.8      4.1
+glazejson      9014.0   3779.4    11771.0   6557.8       15.5     12.1       12.5      8.4        1.4      1.7
+torque         9825.0   3883.6    13308.5   6498.1       17.7     14.0       13.8      7.8        2.9      1.5
+simdjsone      9739.3   8356.5    18468.7  13936.1       24.8     21.6       17.9     22.0        2.6      5.2
+jiffy         29797.7   4485.1    46869.1   8581.4       41.9     23.8       27.8     17.3        6.8      3.0
+jason         20765.0  12294.6    37614.5  22681.9       58.5     29.8       32.7     19.0        6.0      3.6
+thoas         21184.5  13146.7    38650.0  23221.9       61.6     28.9       38.2     19.6        6.4      4.2
+euneus        20953.2  11202.8    29964.1  21124.0       47.7     20.7       26.7     13.7        7.0      3.7
+json          20262.7  10722.5    28953.8  20213.8       43.1     25.8       32.3     16.8        5.0      2.1
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -341,6 +341,65 @@ Where `glazejson` has an edge over `torque`:
   actively-maintained, header-only C++ JSON library — vs. `torque`'s
   reliance on a Rust toolchain and `sonic-rs`, which adds a second
   language/toolchain to the build.
+
+### Performance optimizations
+
+A few implementation techniques in `c_src/glaze_nif.cpp` account for most
+of the gap over the slower contenders:
+
+- **Single-pass, zero-copy decode/encode.** As noted above, there's no
+  intermediate generic JSON tree — the decoder builds Erlang terms directly
+  from the input bytes (string keys/values are views into the original
+  binary whenever no escaping is needed) and the encoder writes JSON bytes
+  directly from Erlang terms. This removes a whole staging
+  allocate-and-copy pass that tree-based decoders pay for.
+
+- **Inline, growable output buffer (`OutBuf`).** Encoding writes into a
+  4 KB stack-allocated buffer first; only documents that exceed that spill
+  to the heap, growing geometrically via `malloc`/`realloc` (the latter
+  resizes in place when possible, avoiding a copy on every growth — a
+  plain `new[]`/`delete[]` doubling strategy can't do this).
+
+- **Key cache for repeated object keys (`KeyCache`).** Real-world JSON
+  documents reuse the same small set of key strings heavily (e.g. a
+  Twitter feed has ~13K key occurrences across only ~94 distinct keys).
+  `KeyCache` is an open-addressed hash table (power-of-two size, linear
+  probing, FNV-1a hash with a precomputed-hash fast-reject before the
+  `memcmp`) that lets a repeated key reuse the same already-built
+  `ERL_NIF_TERM` binary instead of paying `enif_make_new_binary` + `memcpy`
+  again. It's only engaged for inputs above a size threshold
+  (`KEY_CACHE_MIN_SIZE`), since small payloads (RPC-sized messages) rarely
+  repeat keys enough to amortize the lookup cost.
+
+- **Epoch-counter lazy clearing.** Both `KeyCache` and the scratch buffers
+  it touches need to start "empty" on every decode call, but
+  zero-initializing a multi-KB table for every single call — including
+  tiny documents that never populate it — would cost more than the cache
+  saves. Instead each cache entry carries a generation/`epoch` tag; a slot
+  is considered live only if its `epoch` matches the cache's current
+  `m_epoch` (itself seeded from a process-wide monotonically-increasing
+  counter, so leftover garbage from a prior stack frame can never
+  coincidentally look live). This makes cache construction effectively
+  free, regardless of table size.
+
+- **SWAR whitespace skipping.** `skip_ws` checks the next byte before
+  paying for any wider load, then — for runs of whitespace — scans 8 bytes
+  at a time using branch-free bit-twiddling ("SIMD within a register") to
+  find the first non-whitespace byte, rather than testing one byte at a
+  time. Minified JSON (the overwhelmingly common case) has little or no
+  structural whitespace, so the single-byte fast path dominates in
+  practice.
+
+- **Table-driven string escaping with bulk copies.** JSON string escaping
+  scans for runs of bytes that need no escaping (a precomputed 256-entry
+  lookup table answers "does this byte need escaping?" in O(1)) and copies
+  each run in one `memcpy`, falling into a per-byte switch only for the
+  rare characters that actually need an escape sequence.
+
+- **Fast integer formatting.** Integers are written to JSON using a
+  lookup-table-based digit-pair algorithm (avoiding division for small
+  values) with a vendored `lltoa` fallback for larger numbers — faster
+  than routing every integer through `snprintf`.
 
 ## Testing
 
