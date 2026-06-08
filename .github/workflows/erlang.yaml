@@ -52,6 +52,11 @@ jobs:
             bash /tmp/llvm.sh "$LLVM_VER"
           fi
           apt-get install -y --no-install-recommends ${{ matrix.compiler.CC }} ${{ matrix.compiler.CXX }}
+          # Clang emits LLVM-bitcode objects under LTO; lld is required to link them.
+          if echo "${{ matrix.compiler.compiler }}" | grep -q '^LLVM-'; then
+            LLVM_VER=$(echo "${{ matrix.compiler.compiler }}" | sed -E 's/^LLVM-//')
+            apt-get install -y --no-install-recommends "lld-$LLVM_VER" || apt-get install -y --no-install-recommends lld
+          fi
       - name: Build
         env:
           CC:  ${{ matrix.compiler.CC }}

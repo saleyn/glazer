@@ -82,11 +82,22 @@ if(GLZ_HAVE_MTUNE_NATIVE)
   list(APPEND GLZ_NATIVE_FLAGS -mtune=native)
 endif()
 
+# GCC's "-flto=auto" produces objects with GNU LTO sections that GNU ld/gold
+# can link directly. Clang instead emits LLVM bitcode, which requires lld (or
+# another LLVM-aware linker) to consume — plain GNU ld fails with "file format
+# not recognized". Use Clang's own thin-LTO + lld pairing in that case.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(GLZ_LTO_FLAGS -flto=thin)
+  target_link_options(glazejson PRIVATE -fuse-ld=lld)
+else()
+  set(GLZ_LTO_FLAGS -flto=auto -fno-fat-lto-objects)
+endif()
+
 target_compile_options(glazejson PRIVATE
   -fPIC
   -Wall
   -finline-functions
-  $<$<CONFIG:Release>:-O3 -DNDEBUG -flto=auto -fno-fat-lto-objects ${GLZ_NATIVE_FLAGS}>
+  $<$<CONFIG:Release>:-O3 -DNDEBUG ${GLZ_LTO_FLAGS} ${GLZ_NATIVE_FLAGS}>
   $<$<CONFIG:Debug>:-O0 -g>
 )
 
