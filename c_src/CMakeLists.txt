@@ -83,12 +83,17 @@ if(GLZ_HAVE_MTUNE_NATIVE)
 endif()
 
 # GCC's "-flto=auto" produces objects with GNU LTO sections that GNU ld/gold
-# can link directly. Clang instead emits LLVM bitcode, which requires lld (or
-# another LLVM-aware linker) to consume — plain GNU ld fails with "file format
-# not recognized". Use Clang's own thin-LTO + lld pairing in that case.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+# can link directly. Upstream Clang on Linux instead emits LLVM bitcode, which
+# requires lld (or another LLVM-aware linker) to consume — plain GNU ld fails
+# with "file format not recognized". Use Clang's own thin-LTO + lld pairing
+# there. AppleClang uses Apple's ld64 (which understands its own LTO objects
+# via libLTO), and doesn't ship/accept "-fuse-ld=lld", so leave it on its
+# default LTO handling.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   set(GLZ_LTO_FLAGS -flto=thin)
   target_link_options(glazejson PRIVATE -fuse-ld=lld)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+  set(GLZ_LTO_FLAGS -flto=thin)
 else()
   set(GLZ_LTO_FLAGS -flto=auto -fno-fat-lto-objects)
 endif()
