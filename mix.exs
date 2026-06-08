@@ -49,7 +49,7 @@ defmodule Mix.Tasks.Bench do
   use Mix.Task
 
   @lib_w 12
-  @col_w 10
+  @col_w 7
   @sep    2
 
   @data_files [
@@ -97,6 +97,11 @@ defmodule Mix.Tasks.Bench do
        fn t -> :simdjson.encode(t) end,
        :simdjson},
 
+      {"torque",
+       fn b -> {:ok, r} = apply(Torque, :decode, [b]); r end,
+       fn t -> {:ok, r} = apply(Torque, :encode, [t]); r end,
+       Torque},
+
       {"jiffy",
        fn b -> :jiffy.decode(b, [:return_maps]) end,
        fn t -> IO.iodata_to_binary(:jiffy.encode(t)) end,
@@ -121,11 +126,6 @@ defmodule Mix.Tasks.Bench do
        fn b -> :json.decode(b) end,
        fn t -> IO.iodata_to_binary(:json.encode(t)) end,
        :json},
-
-      {"torque",
-       fn b -> {:ok, r} = apply(Torque, :decode, [b]); r end,
-       fn t -> {:ok, r} = apply(Torque, :encode, [t]); r end,
-       Torque}
     ]
 
     optional = Enum.flat_map(optional_candidates, fn {name, dec, enc, mod} ->
@@ -240,6 +240,7 @@ defmodule Mix.Tasks.Bench do
     group_w = col_w * 2 + 3 + sep
 
     IO.puts("")
+    IO.puts("(numbers in µs)")
 
     # Header line 1: file labels centred over each group
     pad = String.duplicate(" ", lib_w)
@@ -251,9 +252,9 @@ defmodule Mix.Tasks.Bench do
     # Header line 2: decode / encode sub-columns
     sub = Enum.map_join(files_data, "", fn _ ->
       "  " <>
-      String.pad_leading("decode µs", col_w) <>
+      String.pad_leading("decode", col_w) <>
       "  " <>
-      String.pad_leading("encode µs", col_w) <>
+      String.pad_leading("encode", col_w) <>
       String.duplicate(" ", sep)
     end)
     IO.puts(pad <> sub)
@@ -269,9 +270,9 @@ defmodule Mix.Tasks.Bench do
         case List.keyfind(results, name, 0) do
           {_, {:ok, dt, et}} ->
             "  " <>
-            String.pad_leading(:io_lib.format("~.2f", [dt]) |> IO.iodata_to_binary(), col_w) <>
+            String.pad_leading(:io_lib.format("~.1f", [dt]) |> IO.iodata_to_binary(), col_w) <>
             "  " <>
-            String.pad_leading(:io_lib.format("~.2f", [et]) |> IO.iodata_to_binary(), col_w) <>
+            String.pad_leading(:io_lib.format("~.1f", [et]) |> IO.iodata_to_binary(), col_w) <>
             String.duplicate(" ", sep)
 
           {_, {:error, "timeout"}} ->

@@ -39,7 +39,8 @@ distclean: clean
 test:
 	rebar3 eunit
 
-benchmark:
-	mix bench
+benchmark bench:
+	@echo "Running benchmarks..."
+	@mix bench
 
 .PHONY: all deps compile clean distclean test nif
