@@ -135,31 +135,53 @@ jobs:
           MAX_TAG=$(git tag -l "*.*.*" | sed 's/^v//' | sort -V | tail -1)
 
           if [ -z "$MAX_TAG" ]; then
-            echo "create_tag=true" >> $GITHUB_OUTPUT
+            echo "create_tag=true"   >> $GITHUB_OUTPUT
             echo "First tag: $PROJECT_VERSION"
-          else
-            if [ "$(printf '%s\n' "$MAX_TAG" "$PROJECT_VERSION" | sort -V | tail -1)" = "$PROJECT_VERSION" ] && [ "$MAX_TAG" != "$PROJECT_VERSION" ]; then
-              echo "create_tag=true" >> $GITHUB_OUTPUT
-              echo "Project version $PROJECT_VERSION is greater than max tag $MAX_TAG, creating tag"
+          elif [ "$(printf '%s\n' "$MAX_TAG" "$PROJECT_VERSION" | sort -V | tail -1)" = "$PROJECT_VERSION" ] && [ "$MAX_TAG" != "$PROJECT_VERSION" ]; then
+            echo "create_tag=true"   >> $GITHUB_OUTPUT
+            echo "Project version $PROJECT_VERSION is greater than max tag $MAX_TAG, creating tag"
+          elif [ "$MAX_TAG" = "$PROJECT_VERSION" ]; then
+            # Same version as the latest tag: if that tag's commit was created less
+            # than an hour ago, assume this is a quick follow-up fix and re-tag/re-release
+            # rather than silently skipping.
+            TAG_COMMIT_TIME=$(git log -1 --format=%ct "$PROJECT_VERSION")
+            NOW=$(date +%s)
+            AGE=$((NOW - TAG_COMMIT_TIME))
+
+            if [ "$AGE" -lt 3600 ]; then
+              echo "create_tag=recreate" >> $GITHUB_OUTPUT
+              echo "Tag $PROJECT_VERSION's commit is ${AGE}s old (< 1h), recreating tag at current commit"
             else
-              echo "create_tag=false" >> $GITHUB_OUTPUT
-              echo "Project version $PROJECT_VERSION is not greater than max tag $MAX_TAG, skipping tag creation"
+              echo "create_tag=false"   >> $GITHUB_OUTPUT
+              echo "Tag $PROJECT_VERSION already exists and its commit is ${AGE}s old (>= 1h), skipping"
             fi
+          else
+            echo "create_tag=false"   >> $GITHUB_OUTPUT
+            echo "Project version $PROJECT_VERSION is not greater than max tag $MAX_TAG, skipping tag creation"
           fi
 
       - name: Create and push tag
-        if: steps.should_create_tag.outputs.create_tag == 'true'
+        if: steps.should_create_tag.outputs.create_tag != 'false'
         env:
           RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION="${{ steps.project_version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          REMOTE="https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git"
+
+          if [ "${{ steps.should_create_tag.outputs.create_tag }}" = "recreate" ]; then
+            echo "Deleting existing tag $VERSION (local and remote) before recreating"
+            git tag -d "$VERSION" || true
+            git push "$REMOTE" ":refs/tags/$VERSION" || true
+          fi
+
           git tag "$VERSION"
-          git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" "$VERSION"
+          git push "$REMOTE" "$VERSION"
 
       - name: Trigger release workflow
-        if: steps.should_create_tag.outputs.create_tag == 'true'
+        if: steps.should_create_tag.outputs.create_tag != 'false'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.RELEASE_PAT }}
