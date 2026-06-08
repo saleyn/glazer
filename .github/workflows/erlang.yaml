@@ -142,14 +142,29 @@ jobs:
             fi
           fi
 
+      - name: Check RELEASE_PAT
+        if: steps.should_create_tag.outputs.create_tag == 'true'
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          echo "RELEASE_PAT length: ${#RELEASE_PAT}"
+          if [ -z "$RELEASE_PAT" ]; then
+            echo "::error::RELEASE_PAT secret is empty or not set on this repository"
+            exit 1
+          fi
+          curl -s -H "Authorization: token $RELEASE_PAT" https://api.github.com/user \
+            | grep -E '"login"|"message"'
+
       - name: Create and push tag
         if: steps.should_create_tag.outputs.create_tag == 'true'
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION="${{ steps.project_version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$VERSION"
-          git push https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/${{ github.repository }}.git "$VERSION"
+          git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" "$VERSION"
 
       - name: Trigger release workflow
         if: steps.should_create_tag.outputs.create_tag == 'true'
