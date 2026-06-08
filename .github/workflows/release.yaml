@@ -44,7 +44,7 @@ jobs:
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazejson.app.src | head -1)
+            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
@@ -85,7 +85,7 @@ jobs:
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazejson.app.src | head -1)
+            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
@@ -140,8 +140,8 @@ jobs:
           set +e
 
           # Get the version from the app source
-          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazejson.app.src | head -1)
-          APP="glazejson"
+          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
+          APP="glazer"
           TODAY=$(date +%Y-%m-%d)
 
           # Check if the package was already published today
@@ -161,7 +161,7 @@ jobs:
         if: steps.should_publish.outputs.publish == 'true'
         run: |
           set +e
-          APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazejson.app.src)
+          APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)
 
           mix hex.info $APP
 

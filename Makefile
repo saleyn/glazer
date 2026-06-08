@@ -3,7 +3,7 @@ MAKEFLAGS += --no-print-directory
 endif
 
 REBAR_BUILD_DIR ?= _build/default
-BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazejson/.build
+BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazer/.build
 PRIV_DIR   := $(abspath priv)
 BUILD_TYPE ?= Release
 NIF_DEBUG  ?= 0
@@ -18,9 +18,9 @@ all: compile
 
 deps: nif
 
-nif: $(PRIV_DIR)/glazejson.so
+nif: $(PRIV_DIR)/glazer.so
 
-$(PRIV_DIR)/glazejson.so: $(BUILD_DIR)/Makefile
+$(PRIV_DIR)/glazer.so: $(BUILD_DIR)/Makefile
 	@cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,) -- --no-print-directory
 
 $(BUILD_DIR)/Makefile: $(BUILD_DIR) $(PRIV_DIR)
@@ -40,7 +40,7 @@ clean:
 	@cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
 
 distclean: clean
-	@rm -rf $(BUILD_DIR) priv/glazejson.so
+	@rm -rf $(BUILD_DIR) priv/glazer.so
 	@rm -fr _build
 
 test:

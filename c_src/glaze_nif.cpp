@@ -283,7 +283,7 @@ struct Decoder {
 
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
-  // like RPC messages, where glazejson otherwise loses ground to torque).
+  // like RPC messages, where glazer otherwise loses ground to torque).
   static constexpr size_t KEY_CACHE_MIN_SIZE = 2048;
 
   Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
@@ -486,7 +486,7 @@ struct Decoder {
       }
     }
     // Bigint
-    ERL_NIF_TERM r = glazejson::BigInt::decode(m_env, start, m_p);
+    ERL_NIF_TERM r = glazer::BigInt::decode(m_env, start, m_p);
     return r ? r : (ERL_NIF_TERM)0;
   }
 
@@ -1004,7 +1004,7 @@ struct Encoder {
           return true;
         }
         // bigint — doesn't fit in 64 bits
-        auto s = glazejson::BigInt::encode(m_env, term);
+        auto s = glazer::BigInt::encode(m_env, term);
         if (!s.empty()) { m_out.push(s); return true; }
         return false;
       }
@@ -1247,7 +1247,7 @@ static ERL_NIF_TERM nif_encode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TE
     char buf[22]; char* e = lltoa_impl::i64toa(buf, val);
     return enif_make_tuple2(env, AM_OK, make_binary(env, std::string_view(buf, e - buf)));
   }
-  auto s = glazejson::BigInt::encode(env, argv[0]);
+  auto s = glazer::BigInt::encode(env, argv[0]);
   if (s.empty())
     return enif_make_tuple2(env, AM_ERROR, make_binary(env, std::string_view("invalid_bigint")));
   return enif_make_tuple2(env, AM_OK, make_binary(env, s));
@@ -1260,7 +1260,7 @@ static ERL_NIF_TERM nif_decode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TE
   if (!enif_inspect_binary(env, argv[0], &bin) &&
       !enif_inspect_iolist_as_binary(env, argv[0], &bin))
     return enif_make_badarg(env);
-  auto r = glazejson::BigInt::decode(env,
+  auto r = glazer::BigInt::decode(env,
     reinterpret_cast<const char*>(bin.data),
     reinterpret_cast<const char*>(bin.data) + bin.size);
   if (!r)
@@ -1299,4 +1299,4 @@ static ErlNifFunc nif_funcs[] = {
   {"decode_bigint", 1, nif_decode_bigint, 0},
 };
 
-ERL_NIF_INIT(glazejson, nif_funcs, nif_load, NULL, NULL, NULL)
+ERL_NIF_INIT(glazer, nif_funcs, nif_load, NULL, NULL, NULL)

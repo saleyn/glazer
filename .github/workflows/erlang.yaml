@@ -124,7 +124,7 @@ jobs:
       - name: Get project version
         id: project_version
         run: |
-          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazejson.app.src | head -1)
+          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Project version: $VERSION"
 

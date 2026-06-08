@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <erl_nif.h>
 
-namespace glazejson {
+namespace glazer {
 
 struct BigInt {
 
@@ -253,4 +253,4 @@ private:
   }
 };
 
-} // namespace glazejson
+} // namespace glazer

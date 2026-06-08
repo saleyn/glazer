@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(glazejson CXX)
+project(glazer CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,26 +46,26 @@ execute_process(
 )
 
 # ---- NIF shared library ----
-add_library(glazejson SHARED glaze_nif.cpp)
+add_library(glazer SHARED glaze_nif.cpp)
 
-target_include_directories(glazejson PRIVATE
+target_include_directories(glazer PRIVATE
   ${ERL_ERTS_INCLUDE}
   ${ERL_EI_INCLUDE}
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_directories(glazejson PRIVATE ${ERL_EI_LIB})
-target_link_libraries(glazejson PRIVATE glaze::glaze ei)
+target_link_directories(glazer PRIVATE ${ERL_EI_LIB})
+target_link_libraries(glazer PRIVATE glaze::glaze ei)
 
 # NIF symbols (enif_*) are resolved at load time by the BEAM, not at link
 # time. On Linux this is fine by default (lazy symbol binding), but macOS's
 # linker rejects undefined symbols in shared libraries unless told otherwise.
 if(APPLE)
-  target_link_options(glazejson PRIVATE -undefined dynamic_lookup)
+  target_link_options(glazer PRIVATE -undefined dynamic_lookup)
 endif()
 
 if(NOT GLZ_HAVE_STD_FORMAT)
-  target_compile_definitions(glazejson PRIVATE GLZ_USE_STD_FORMAT_FLOAT=0)
+  target_compile_definitions(glazer PRIVATE GLZ_USE_STD_FORMAT_FLOAT=0)
 endif()
 
 include(CheckCXXCompilerFlag)
@@ -91,14 +91,14 @@ endif()
 # default LTO handling.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   set(GLZ_LTO_FLAGS -flto=thin)
-  target_link_options(glazejson PRIVATE -fuse-ld=lld)
+  target_link_options(glazer PRIVATE -fuse-ld=lld)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
   set(GLZ_LTO_FLAGS -flto=thin)
 else()
   set(GLZ_LTO_FLAGS -flto=auto -fno-fat-lto-objects)
 endif()
 
-target_compile_options(glazejson PRIVATE
+target_compile_options(glazer PRIVATE
   -fPIC
   -Wall
   -finline-functions
@@ -106,22 +106,22 @@ target_compile_options(glazejson PRIVATE
   $<$<CONFIG:Debug>:-O0 -g>
 )
 
-# Remove the "lib" prefix so Erlang can load it as "glazejson.so"
+# Remove the "lib" prefix so Erlang can load it as "glazer.so"
 # Erlang loads NIF libraries with a ".so" extension on every platform
 # (including macOS, where CMake's shared-library default is ".dylib").
-set_target_properties(glazejson PROPERTIES
+set_target_properties(glazer PROPERTIES
   PREFIX ""
   SUFFIX ".so"
-  OUTPUT_NAME "glazejson"
+  OUTPUT_NAME "glazer"
 )
 
 # ---- Output to priv/ ----
 if(DEFINED PRIV_DIR)
-  set_target_properties(glazejson PROPERTIES
+  set_target_properties(glazer PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PRIV_DIR}"
   )
 else()
-  set_target_properties(glazejson PROPERTIES
+  set_target_properties(glazer PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../priv"
   )
 endif()

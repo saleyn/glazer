@@ -1,11 +1,11 @@
--module(glazejson).
+-module(glazer).
 -moduledoc """
 Fast JSON encoding and decoding using the glaze C++ library.
 
 By default JSON `null` is represented as the atom `null`. To change it
 application-wide, set the `null` env key in your config:
 ```
-{glazejson, [{null, nil}]}.
+{glazer, [{null, nil}]}.
 ```
 
 See also [https://github.com/stephenberry/glaze]
@@ -17,7 +17,7 @@ See also [https://github.com/stephenberry/glaze]
 
 -on_load(init/0).
 
--define(LIBNAME, glazejson).
+-define(LIBNAME, glazer).
 -define(NOT_LOADED_ERROR,
   erlang:nif_error({not_loaded, [{module, ?MODULE}, {line, ?LINE}]})).
 
@@ -78,7 +78,7 @@ Encode options:
 
 init() ->
   NullVal = application:get_env(?LIBNAME, null, null),
-  is_atom(NullVal) orelse erlang:error("glazejson: option 'null' must be an atom"),
+  is_atom(NullVal) orelse erlang:error("glazer: option 'null' must be an atom"),
   SoName  =
     case code:priv_dir(?LIBNAME) of
       {error, bad_name} ->
@@ -181,11 +181,11 @@ byte-scanner that tracks nesting/string state across chunks.
 ## Example
 
 ```erlang
-1> D0 = glazejson:stream_decoder(),
-2> {Vals1, D1} = glazejson:stream_feed(D0, <<"{\\"a\\":1} {\\"b\\":">>),
+1> D0 = glazer:stream_decoder(),
+2> {Vals1, D1} = glazer:stream_feed(D0, <<"{\\"a\\":1} {\\"b\\":">>),
 3> Vals1.
 [#{<<"a">> => 1}]
-4> {Vals2, _D2} = glazejson:stream_feed(D1, <<"2}">>),
+4> {Vals2, _D2} = glazer:stream_feed(D1, <<"2}">>),
 5> Vals2.
 [#{<<"b">> => 2}]
 ```
@@ -312,8 +312,8 @@ keys_test_() ->
     ?_assertEqual(#{a => 1},        decode(<<"{\"a\":1}">>, [{keys, atom}])),
     ?_assertEqual(#{a => 1},        decode(<<"{\"a\":1}">>, [{keys, existing_atom}])),
     %% existing_atom falls back to a binary for keys with no matching atom
-    ?_assertEqual(#{<<"no_such_atom_in_glazejson_test_suite_xyz">> => 1},
-                  decode(<<"{\"no_such_atom_in_glazejson_test_suite_xyz\":1}">>,
+    ?_assertEqual(#{<<"no_such_atom_in_glazer_test_suite_xyz">> => 1},
+                  decode(<<"{\"no_such_atom_in_glazer_test_suite_xyz\":1}">>,
                          [{keys, existing_atom}]))
   ].
 

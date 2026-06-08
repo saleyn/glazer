@@ -1,8 +1,8 @@
-# glazejson
+# glazer
 
-[![build](https://github.com/saleyn/glazejson/actions/workflows/erlang.yaml/badge.svg)](https://github.com/saleyn/glazejson/actions/workflows/erlang.yaml)
-[![Hex.pm](https://img.shields.io/hexpm/v/glazejson.svg)](https://hex.pm/packages/glazejson)
-[![Hex.pm](https://img.shields.io/hexpm/dt/glazejson.svg)](https://hex.pm/packages/glazejson)
+[![build](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml/badge.svg)](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml)
+[![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
+[![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
 Fast Erlang NIF JSON encoder/decoder backed by the
 [glaze](https://github.com/stephenberry/glaze) C++ library, with a
@@ -25,10 +25,10 @@ that produce/consume native Erlang terms in a single pass.
 
 ### Erlang
 
-Add `glazejson` to your `rebar.config` deps:
+Add `glazer` to your `rebar.config` deps:
 
 ```erlang
-{deps, [glazejson]}.
+{deps, [glazer]}.
 ```
 
 Building the NIF requires a C++23 compiler (GCC 12+ or Clang 16+) and
@@ -40,18 +40,18 @@ build into `rebar3 compile`, so a plain
 rebar3 compile
 ```
 
-This builds `priv/glazejson.so` and compiles the Erlang
+This builds `priv/glazer.so` and compiles the Erlang
 sources.  Make sure you have a relatively recent C++ compiler version
 installed.
 
 ### Elixir
 
-Add `glazejson` to your `mix.exs` deps:
+Add `glazer` to your `mix.exs` deps:
 
 ```elixir
 def deps do
   [
-    {:glazejson, "~> 0.1"}
+    {:glazer, "~> 0.1"}
   ]
 end
 ```
@@ -63,16 +63,16 @@ mix deps.get
 mix compile
 ```
 
-`glazejson` is an Erlang application with a Rebar-based C++ NIF build;
+`glazer` is an Erlang application with a Rebar-based C++ NIF build;
 `mix` invokes the same top-level `Makefile`/`rebar3 compile` path
 described above, so the same C++23 compiler and CMake requirements
-apply. Once compiled, call it via the `:glazejson` module from Elixir:
+apply. Once compiled, call it via the `:glazer` module from Elixir:
 
 ```elixir
-iex> :glazejson.decode(~s({"a":1,"b":[true,null,3.5]}))
+iex> :glazer.decode(~s({"a":1,"b":[true,null,3.5]}))
 %{"a" => 1, "b" => [true, :null, 3.5]}
 
-iex> :glazejson.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
+iex> :glazer.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
@@ -82,19 +82,19 @@ below) to get idiomatic Elixir `nil` instead of the atom `:null`.
 ## Usage
 
 ```erlang
-1> glazejson:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
+1> glazer:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
 #{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
 
-2> glazejson:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
+2> glazer:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
 <<"{\"a\":1,\"b\":[true,null,3.5]}">>
 
-3> glazejson:encode(#{a => 1}, [pretty]).
+3> glazer:encode(#{a => 1}, [pretty]).
 <<"{\n  \"a\": 1\n}">>
 
-4> glazejson:minify(<<" { \"a\" : 1 } ">>).
+4> glazer:minify(<<" { \"a\" : 1 } ">>).
 {ok, <<"{\"a\":1}">>}
 
-5> glazejson:prettify(<<"{\"a\":1}">>).
+5> glazer:prettify(<<"{\"a\":1}">>).
 {ok, <<"{\n  \"a\": 1\n}">>}
 ```
 
@@ -107,16 +107,16 @@ wrapper that buffers partial input and decodes each JSON value as soon
 as it's complete, without re-parsing bytes you've already seen:
 
 ```erlang
-1> D0 = glazejson:stream_decoder(),
-2> {Vals1, D1} = glazejson:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
+1> D0 = glazer:stream_decoder(),
+2> {Vals1, D1} = glazer:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
 3> Vals1.
 [#{<<"a">> => 1}]
 
-4> {Vals2, D2} = glazejson:stream_feed(D1, <<"2}">>),
+4> {Vals2, D2} = glazer:stream_feed(D1, <<"2}">>),
 5> Vals2.
 [#{<<"b">> => 2}]
 
-6> glazejson:stream_eof(D2).
+6> glazer:stream_eof(D2).
 {ok, []}
 ```
 
@@ -129,9 +129,9 @@ delimiter of their own) and surface an error if the buffer holds an
 incomplete value:
 
 ```erlang
-1> D0 = glazejson:stream_decoder(),
-2> {[], D1} = glazejson:stream_feed(D0, <<"   42">>),
-3> glazejson:stream_eof(D1).
+1> D0 = glazer:stream_decoder(),
+2> {[], D1} = glazer:stream_feed(D0, <<"   42">>),
+3> glazer:stream_eof(D1).
 {ok, [42]}
 ```
 
@@ -165,13 +165,13 @@ decode. It's exposed directly for callers that want to implement their
 own framing/buffering strategy:
 
 ```erlang
-1> glazejson:scan(<<"{\"a\":1} {\"b\":2}">>).
+1> glazer:scan(<<"{\"a\":1} {\"b\":2}">>).
 {complete, 7}
 
-2> glazejson:scan(<<"{\"a\":">>).
+2> glazer:scan(<<"{\"a\":">>).
 {incomplete, ScanState}
 
-3> glazejson:scan(<<"{\"a\":1}">>, ScanState).
+3> glazer:scan(<<"{\"a\":1}">>, ScanState).
 {complete, 7}
 ```
 
@@ -185,7 +185,7 @@ By default, JSON `null` decodes to (and `null` encodes from) the atom
   call uses it as the default:
 
   ```erlang
-  {glazejson, [{null, nil}]}
+  {glazer, [{null, nil}]}
   ```
 
 - Per call, with the `use_nil` shorthand or the `{null_term, Atom}`
@@ -199,10 +199,10 @@ Erlang big integers (and big integers are encoded back to their exact
 decimal JSON representation):
 
 ```erlang
-1> glazejson:decode(<<"123456789012345678901234567890">>).
+1> glazer:decode(<<"123456789012345678901234567890">>).
 123456789012345678901234567890
 
-2> glazejson:encode(123456789012345678901234567890).
+2> glazer:encode(123456789012345678901234567890).
 <<"123456789012345678901234567890">>
 ```
 
@@ -210,10 +210,10 @@ decimal JSON representation):
 routines directly, independent of JSON parsing/encoding:
 
 ```erlang
-1> glazejson:encode_bigint(123456789012345678901234567890).
+1> glazer:encode_bigint(123456789012345678901234567890).
 {ok, <<"123456789012345678901234567890">>}
 
-2> glazejson:decode_bigint(<<"123456789012345678901234567890">>).
+2> glazer:decode_bigint(<<"123456789012345678901234567890">>).
 {ok, 123456789012345678901234567890}
 ```
 
@@ -232,16 +232,16 @@ routines directly, independent of JSON parsing/encoding:
 | `{keys, binary}` | Decode object keys as binaries (default) |
 
 ```erlang
-1> glazejson:decode(<<"{\"a\":1}">>, [object_as_tuple]).
+1> glazer:decode(<<"{\"a\":1}">>, [object_as_tuple]).
 {[{<<"a">>, 1}]}
 
-2> glazejson:decode(<<"{\"a\":1}">>, [{keys, atom}]).
+2> glazer:decode(<<"{\"a\":1}">>, [{keys, atom}]).
 #{a => 1}
 
-3> glazejson:decode(<<"null">>, [use_nil]).
+3> glazer:decode(<<"null">>, [use_nil]).
 nil
 
-4> glazejson:decode(<<"null">>, [{null_term, undefined}]).
+4> glazer:decode(<<"null">>, [{null_term, undefined}]).
 undefined
 ```
 
@@ -256,13 +256,13 @@ undefined
 | `{null_term, Atom}` | Encode `Atom` as JSON `null` |
 
 ```erlang
-1> glazejson:encode(#{a => 1}, [pretty]).
+1> glazer:encode(#{a => 1}, [pretty]).
 <<"{\n  \"a\": 1\n}">>
 
-2> glazejson:encode(<<"héllo"/utf8>>, [uescape]).
+2> glazer:encode(<<"héllo"/utf8>>, [uescape]).
 <<"\"h\\u00e9llo\"">>
 
-3> glazejson:encode(nil, [use_nil]).
+3> glazer:encode(nil, [use_nil]).
 <<"null">>
 ```
 
@@ -281,7 +281,7 @@ undefined
 | `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
 | `stream_eof/1` | Flush a stream decoder at end-of-input |
 
-See the module's EDoc comments (`src/glazejson.erl`) for full type
+See the module's EDoc comments (`src/glazer.erl`) for full type
 specs and details.
 
 ## Benchmarks
@@ -298,7 +298,7 @@ Running benchmarks...
                twitter (616.7K)     twitter2 (758.0K)     openrtb (1.2K)         esad (1.3K)         small (0.1K)
                decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 ---------------------------------------------------------------------------------------------------------------------
-glazejson      9014.0   3779.4    11771.0   6557.8       15.5     12.1       12.5      8.4        1.4      1.7
+glazer      9014.0   3779.4    11771.0   6557.8       15.5     12.1       12.5      8.4        1.4      1.7
 torque         9825.0   3883.6    13308.5   6498.1       17.7     14.0       13.8      7.8        2.9      1.5
 simdjsone      9739.3   8356.5    18468.7  13936.1       24.8     21.6       17.9     22.0        2.6      5.2
 jiffy         29797.7   4485.1    46869.1   8581.4       41.9     23.8       27.8     17.3        6.8      3.0
@@ -312,15 +312,15 @@ json          20262.7  10722.5    28953.8  20213.8       43.1     25.8       32.
 
 ### Performance
 
-`glazejson` is roughly on par with `torque` (a Rust `sonic-rs` NIF) across
+`glazer` is roughly on par with `torque` (a Rust `sonic-rs` NIF) across
 the benchmarked workloads — neither library is consistently faster, and the
 gap on any given file/operation is typically within a few percent. Both sit
 well ahead of the other contenders (`simdjsone`, `jiffy`, and the pure-Elixir
 libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`).
 
-Where `glazejson` has an edge over `torque`:
+Where `glazer` has an edge over `torque`:
 
-- **No tuple-of-binaries intermediate representation.** `glazejson` decodes
+- **No tuple-of-binaries intermediate representation.** `glazer` decodes
   straight to native Erlang terms (maps, lists, binaries, numbers) and
   encodes straight from them, in a single pass, with no generic JSON-tree
   staging step — minimizing allocation and copying on both the decode and

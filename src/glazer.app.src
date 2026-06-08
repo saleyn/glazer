@@ -1,4 +1,4 @@
-{application, glazejson,
+{application, glazer,
  [{description, "Erlang NIF JSON encoder/decoder using the glaze C++ library"},
   {vsn, "0.1.4"},
   {registered, []},
@@ -7,9 +7,9 @@
     %% Atom to use for JSON null, e.g. null or nil
     {null, null}
   ]},
-  {modules, [glazejson]},
+  {modules, [glazer]},
   {licenses, ["MIT"]},
-  {links, [{"GitHub", "https://github.com/saleyn/glazejson"}]},
+  {links, [{"GitHub", "https://github.com/saleyn/glazer"}]},
   {files, [
     "src", "c_src", "Makefile", "rebar.config", "rebar.lock",
     "README.md", "LICENSE"

@@ -1,9 +1,9 @@
-defmodule GlazejsonBench.MixProject do
+defmodule GlazerBench.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :glazejson,
+      app: :glazer,
       version: "0.1.0",
       elixir: "~> 1.15",
       deps: deps()
@@ -27,15 +27,15 @@ defmodule GlazejsonBench.MixProject do
 end
 
 defmodule Mix.Tasks.Bench do
-  @shortdoc "Benchmark glazejson against other JSON libraries"
+  @shortdoc "Benchmark glazer against other JSON libraries"
   @moduledoc """
-  Run a pivoted performance benchmark comparing glazejson against all
+  Run a pivoted performance benchmark comparing glazer against all
   available JSON libraries.
 
       mix bench
 
   Libraries benchmarked (when available):
-    - glazejson   (this library — Glaze C++ NIF)
+    - glazer   (this library — Glaze C++ NIF)
     - simdjsone   (simdjson NIF)
     - jiffy       (jiffy NIF)
     - jason       (pure Elixir)
@@ -86,9 +86,9 @@ defmodule Mix.Tasks.Bench do
 
   defp build_suites do
     base = [
-      {"glazejson",
-       &:glazejson.decode/1,
-       fn t -> :glazejson.encode(t) end}
+      {"glazer",
+       &:glazer.decode/1,
+       fn t -> :glazer.encode(t) end}
     ]
 
     optional_candidates = [
