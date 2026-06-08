@@ -14,6 +14,8 @@ that produce/consume native Erlang terms in a single pass.
 - Decoding straight to Erlang terms: maps, lists, binaries, integers
   (including bignums), floats, booleans, and `null`
 - Encoding Erlang terms straight to JSON, including big integers
+- Incremental/streaming decoding of partial input (e.g. NDJSON over a
+  socket) via `stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1`
 - Configurable representation of JSON `null` and JSON object keys
 - `minify/1` and `prettify/1` helpers
 - Standalone big-integer encode/decode helpers
@@ -94,6 +96,63 @@ below) to get idiomatic Elixir `nil` instead of the atom `:null`.
 
 5> glazejson:prettify(<<"{\"a\":1}">>).
 {ok, <<"{\n  \"a\": 1\n}">>}
+```
+
+### Streaming
+
+For input that arrives in chunks — e.g. reading a large document
+incrementally, or consuming newline-delimited JSON (NDJSON) from a
+socket or file — `stream_decoder/0,1` provides a small stateful
+wrapper that buffers partial input and decodes each JSON value as soon
+as it's complete, without re-parsing bytes you've already seen:
+
+```erlang
+1> D0 = glazejson:stream_decoder(),
+2> {Vals1, D1} = glazejson:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
+3> Vals1.
+[#{<<"a">> => 1}]
+
+4> {Vals2, D2} = glazejson:stream_feed(D1, <<"2}">>),
+5> Vals2.
+[#{<<"b">> => 2}]
+
+6> glazejson:stream_eof(D2).
+{ok, []}
+```
+
+`stream_feed/2` returns the list of values completed by the chunk just
+fed (possibly empty, possibly more than one if the chunk completes
+several values) along with the updated decoder state to pass to the
+next call. Once the input is exhausted, call `stream_eof/1` to flush
+any trailing bare scalar (numbers, strings, etc. have no closing
+delimiter of their own) and surface an error if the buffer holds an
+incomplete value:
+
+```erlang
+1> D0 = glazejson:stream_decoder(),
+2> {[], D1} = glazejson:stream_feed(D0, <<"   42">>),
+3> glazejson:stream_eof(D1).
+{ok, [42]}
+```
+
+`stream_decoder/1` accepts the same options as `decode/2` (e.g.
+`{keys, atom}`, `use_nil`) and applies them to every decoded value.
+
+Under the hood, `stream_feed/2` is built on `scan/1,2` — a low-level
+primitive that scans a buffer for the byte offset where the next JSON
+value ends (or reports that more input is needed) without doing a full
+decode. It's exposed directly for callers that want to implement their
+own framing/buffering strategy:
+
+```erlang
+1> glazejson:scan(<<"{\"a\":1} {\"b\":2}">>).
+{complete, 7}
+
+2> glazejson:scan(<<"{\"a\":">>).
+{incomplete, ScanState}
+
+3> glazejson:scan(<<"{\"a\":1}">>, ScanState).
+{complete, 7}
 ```
 
 ### JSON `null`
@@ -197,6 +256,10 @@ undefined
 | `prettify/1` | Pretty-print a JSON document with two-space indentation |
 | `encode_bigint/1` | Encode an integer to its JSON decimal-string representation |
 | `decode_bigint/1` | Decode a JSON number string to an Erlang integer |
+| `scan/1`, `scan/2` | Scan a buffer for the end offset of the next complete JSON value |
+| `stream_decoder/0`, `stream_decoder/1` | Create an incremental-decode state for chunked input |
+| `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
+| `stream_eof/1` | Flush a stream decoder at end-of-input |
 
 See the module's EDoc comments (`src/glazejson.erl`) for full type
 specs and details.

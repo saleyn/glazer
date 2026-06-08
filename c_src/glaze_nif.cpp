@@ -573,6 +573,151 @@ struct Decoder {
 };
 
 // ---------------------------------------------------------------------------
+// Value-boundary scanner — finds where the next complete top-level JSON value
+// ends in a (possibly partial) buffer, without building any Erlang terms.
+//
+// This underpins incremental/streaming decode: callers buffer raw bytes,
+// repeatedly ask the scanner "is there a complete value yet?", and once one
+// is found, slice it off and hand it to the existing whole-buffer `decode`.
+// The scanner never allocates and never inspects string contents beyond
+// quote/escape bytes, so it stays cheap even on huge inputs.
+// ---------------------------------------------------------------------------
+
+struct ScanState {
+  uint64_t pos          = 0;      // byte offset into the buffer to resume scanning at
+  uint32_t depth        = 0;      // current [ ]/{ } nesting depth
+  bool     in_string    = false;  // currently inside a "..." (top-level or nested)
+  bool     escape       = false;  // previous byte inside a string was an unconsumed backslash
+  bool     started      = false;  // have we seen the first non-ws byte of the value yet?
+  bool     scalar       = false;  // value-so-far is a bare scalar (number/literal), not { or [
+
+  static ScanState initial() { return ScanState{}; }
+};
+
+struct Scanner {
+  const char* beg;
+  const char* p;
+  const char* end;
+
+  // `resume_pos` is where to start scanning from (0 for a fresh scan, or
+  // ScanState::pos when continuing — the caller passes the full buffer each
+  // time, so previously-scanned bytes must be skipped rather than re-walked).
+  Scanner(const char* data, size_t size, size_t resume_pos)
+    : beg(data), p(data + std::min(resume_pos, size)), end(data + size) {}
+
+  static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+  // Scans from `p` using/updating `st`.
+  //   returns true  + sets `value_end` to one-past-the-last-byte of the value, if complete
+  //   returns false (value_end untouched) if the buffer ran out mid-value (st updated to resume)
+  bool scan(ScanState& st, const char*& value_end)
+  {
+    // Skip leading whitespace before the value starts.
+    if (!st.started) {
+      while (p < end && is_ws(*p)) ++p;
+      if (p >= end) return false;
+    }
+
+    while (p < end) {
+      char c = *p;
+
+      if (st.in_string) {
+        if (st.escape)            { st.escape = false; ++p; continue; }
+        if (c == '\\')            { st.escape = true;  ++p; continue; }
+        if (c == '"')             { st.in_string = false; ++p;
+                                    if (st.depth == 0 && st.scalar) { value_end = p; return true; }
+                                    continue; }
+        ++p;
+        continue;
+      }
+
+      switch (c) {
+        case '"':
+          st.in_string = true;
+          if (!st.started) { st.started = true; st.scalar = true; }
+          ++p;
+          break;
+
+        case '{':
+        case '[':
+          st.started = true;
+          st.scalar  = false;
+          ++st.depth;
+          ++p;
+          break;
+
+        case '}':
+        case ']':
+          if (st.depth == 0) { value_end = p; return true; } // stray close — treat as boundary
+          --st.depth;
+          ++p;
+          if (st.depth == 0) { value_end = p; return true; }
+          break;
+
+        default:
+          if (st.depth == 0) {
+            if (is_ws(c)) {
+              if (st.started && st.scalar) { value_end = p; return true; }
+              ++p;
+            } else if (!st.started) {
+              // start of a bare scalar: number, true/false/null
+              st.started = true;
+              st.scalar  = true;
+              ++p;
+            } else if (st.scalar) {
+              ++p;
+            } else {
+              // garbage after a completed container value
+              value_end = p;
+              return true;
+            }
+          } else {
+            ++p; // inside a container: commas, colons, scalar bytes — just consume
+          }
+          break;
+      }
+    }
+
+    // Ran out of input — record where to resume from on the next call. Note
+    // that even a "complete-looking" bare scalar at the buffer boundary is
+    // ambiguous (more digits/letters could follow in the next chunk), so we
+    // always report incomplete here and let the caller feed more data or
+    // signal EOF explicitly.
+    st.pos = static_cast<uint64_t>(p - beg);
+    return false;
+  }
+};
+
+inline ERL_NIF_TERM scan_state_to_term(ErlNifEnv* env, const ScanState& st)
+{
+  return enif_make_tuple6(env,
+    enif_make_uint64(env, st.pos),
+    enif_make_uint(env, st.depth),
+    st.in_string ? AM_TRUE : AM_FALSE,
+    st.escape    ? AM_TRUE : AM_FALSE,
+    st.started   ? AM_TRUE : AM_FALSE,
+    st.scalar    ? AM_TRUE : AM_FALSE);
+}
+
+inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& st)
+{
+  int arity; const ERL_NIF_TERM* tp;
+  if (!enif_get_tuple(env, term, &arity, &tp) || arity != 6) return false;
+
+  ErlNifUInt64 pos;
+  unsigned     depth;
+  if (!enif_get_uint64(env, tp[0], &pos))   return false;
+  if (!enif_get_uint(env, tp[1], &depth))   return false;
+  st.pos       = pos;
+  st.depth     = depth;
+  st.in_string = enif_is_identical(tp[2], AM_TRUE);
+  st.escape    = enif_is_identical(tp[3], AM_TRUE);
+  st.started   = enif_is_identical(tp[4], AM_TRUE);
+  st.scalar    = enif_is_identical(tp[5], AM_TRUE);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Direct Erlang-term → JSON encoder (no intermediate generic_u64 tree)
 // ---------------------------------------------------------------------------
 
@@ -940,6 +1085,44 @@ static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 }
 
 // ---------------------------------------------------------------------------
+// NIF: scan — locate the end of the next complete top-level JSON value.
+//
+//   scan(Bin)            -> {complete, EndOffset} | {incomplete, State} | {error, Reason}
+//   scan(Bin, State)     -> resumes scanning Bin (the *unconsumed remainder*
+//                           from a prior {incomplete, State}, with new bytes
+//                           appended) using the given State
+//
+// `EndOffset` is the byte offset, into `Bin`, one past the end of the value —
+// i.e. binary:part(Bin, 0, EndOffset) is the complete value, and the rest is
+// left over for the next call.
+// ---------------------------------------------------------------------------
+
+static ERL_NIF_TERM nif_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+
+  ErlNifBinary bin;
+  if (!enif_inspect_binary(env, argv[0], &bin) &&
+      !enif_inspect_iolist_as_binary(env, argv[0], &bin))
+    return enif_make_badarg(env);
+
+  ScanState st = ScanState::initial();
+  if (argc == 2 && !scan_state_from_term(env, argv[1], st))
+    return enif_make_badarg(env);
+
+  const char* data = reinterpret_cast<const char*>(bin.data);
+  Scanner scanner(data, bin.size, st.pos);
+
+  const char* value_end = nullptr;
+  if (scanner.scan(st, value_end)) {
+    size_t offset = static_cast<size_t>(value_end - data);
+    return enif_make_tuple2(env, AM_COMPLETE, enif_make_uint64(env, offset));
+  }
+
+  return enif_make_tuple2(env, AM_INCOMPLETE, scan_state_to_term(env, st));
+}
+
+// ---------------------------------------------------------------------------
 // NIF: encode
 // ---------------------------------------------------------------------------
 
@@ -1050,6 +1233,8 @@ static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info
 static ErlNifFunc nif_funcs[] = {
   {"decode",        1, nif_decode,        0},
   {"decode",        2, nif_decode,        0},
+  {"scan",          1, nif_scan,          0},
+  {"scan",          2, nif_scan,          0},
   {"encode",        1, nif_encode,        0},
   {"encode",        2, nif_encode,        0},
   {"minify",        1, nif_minify,        0},

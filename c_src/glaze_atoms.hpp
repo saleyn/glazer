@@ -31,6 +31,10 @@ static ERL_NIF_TERM AM_FORCE_UTF8;
 static ERL_NIF_TERM AM_PARSE_ERROR;
 static ERL_NIF_TERM AM_ENCODE_ERROR;
 
+// scan/2 result atoms
+static ERL_NIF_TERM AM_COMPLETE;
+static ERL_NIF_TERM AM_INCOMPLETE;
+
 // The runtime null value (configurable via NIF load)
 static ERL_NIF_TERM am_null;
 
@@ -62,6 +66,9 @@ inline void init_atoms(ErlNifEnv* env)
 
   AM_PARSE_ERROR  = enif_make_atom(env, "parse_error");
   AM_ENCODE_ERROR = enif_make_atom(env, "encode_error");
+
+  AM_COMPLETE     = enif_make_atom(env, "complete");
+  AM_INCOMPLETE   = enif_make_atom(env, "incomplete");
 
   am_null = AM_NULL;
 }
