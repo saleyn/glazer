@@ -91,8 +91,11 @@ target_compile_options(glazejson PRIVATE
 )
 
 # Remove the "lib" prefix so Erlang can load it as "glazejson.so"
+# Erlang loads NIF libraries with a ".so" extension on every platform
+# (including macOS, where CMake's shared-library default is ".dylib").
 set_target_properties(glazejson PROPERTIES
   PREFIX ""
+  SUFFIX ".so"
   OUTPUT_NAME "glazejson"
 )
 
