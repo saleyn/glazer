@@ -1,11 +1,19 @@
 // vim:ts=2:sw=2:et
-// Erlang NIF binding to the glaze C++ JSON library
-// https://github.com/stephenberry/glaze
+// ---------------------------------------------------------------------------
+// Erlang NIF implementation of JSON encoding/decoding with a focus on speed
+// and low overhead.
+// ---------------------------------------------------------------------------
+// Copyright: 2026 Sergey Aleynikov
+//
+// Implementation inspired by the [glaze](https://github.com/igormunkus/glaze)
+// project, but rewritten from scratch to avoid the intermediate generic_u64
+// tree.
 //
 // Decode: hand-rolled recursive-descent parser — zero-copy over raw input,
 //         produces Erlang terms in a single pass (no intermediate generic_u64 tree).
 // Encode: direct Erlang-term → JSON writer with a stack-allocated output buffer
 //         (no intermediate generic_u64 tree).
+// ---------------------------------------------------------------------------
 
 #include <array>
 #include <atomic>
@@ -27,6 +35,16 @@
 #include "glaze_atoms.hpp"
 #include "glaze_bigint.hpp"
 #include "glaze_lltoa.hpp"
+
+// ---------------------------------------------------------------------------
+// Dirty-scheduler threshold — inputs larger than this are offloaded to a
+// dirty CPU scheduler so they don't block normal scheduler threads.
+// Small inputs run inline on a normal scheduler.
+// consume_timeslice is not called: dirty schedulers ignore it, and small
+// inputs on normal schedulers complete fast enough not to need yielding.
+// ---------------------------------------------------------------------------
+
+static constexpr size_t DIRTY_THRESHOLD = 8192;
 
 // ---------------------------------------------------------------------------
 // Options
@@ -163,10 +181,11 @@ struct OutBuf {
   static constexpr size_t INLINE = 4096;
 
   char   m_inline[INLINE];
-  char*  m_data  = m_inline;
-  size_t m_len   = 0;
-  size_t m_cap   = INLINE;
+  char*  m_data;
+  size_t m_len;
+  size_t m_cap;
 
+  OutBuf() : m_data(m_inline), m_len(0), m_cap(INLINE) {}
   ~OutBuf() { if (m_data != m_inline) free(m_data); }
 
   void ensure(size_t need) {
@@ -190,6 +209,8 @@ struct OutBuf {
   void push(std::string_view sv)     { push(sv.data(), sv.size()); }
 
   std::string_view view() const      { return {m_data, m_len}; }
+
+  operator std::string_view() const  { return view(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -353,7 +374,11 @@ struct Decoder {
   }
 
   // Unescape a JSON string into buf, return view of result.
-  // Only called when has_escape is true.
+  // Only called when has_escape is true. std::string is used deliberately:
+  // escaped strings are rare in practice (real payloads have ~0), so the
+  // buffer is almost never written. If used OutBuf, it would reserve 4 KB on
+  // the stack unconditionally; std::string pays nothing until the first actual
+  // write.
   static std::string_view unescape(const char* s, size_t len, std::string& buf)
   {
     buf.clear();
@@ -1123,22 +1148,45 @@ struct Encoder {
 // NIF: decode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM do_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc < 1 || argc > 2) return enif_make_badarg(env);
-
   DecodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-
-  ErlNifBinary bin;
-  if (!enif_inspect_binary(env, argv[0], &bin) &&
-      !enif_inspect_iolist_as_binary(env, argv[0], &bin))
-    return enif_make_badarg(env);
-
   Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
   return dec.decode(reinterpret_cast<const char*>(bin.data), bin.size);
+}
+
+static ERL_NIF_TERM nif_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  ErlNifBinary bin;
+  [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
+  assert(ok);
+  return do_decode(env, bin, argc, argv);
+}
+
+static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+
+  ErlNifBinary bin;
+  ERL_NIF_TERM sched_argv[2];
+  if (enif_inspect_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_decode(env, bin, argc, argv);
+    sched_argv[0] = argv[0];
+    sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
+  } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_decode(env, bin, argc, argv);
+    sched_argv[0] = enif_make_binary(env, &bin);
+    sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
+  } else {
+    return enif_make_badarg(env);
+  }
+  return enif_schedule_nif(env, "glazer_decode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_decode_dirty, 2, sched_argv);
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,10 +1231,8 @@ static ERL_NIF_TERM nif_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
 // NIF: encode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM do_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc < 1 || argc > 2) return enif_make_badarg(env);
-
   EncodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts)))
@@ -1194,7 +1240,6 @@ static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 
   OutBuf out;
   Encoder enc{env, opts, out};
-
   if (!enc.encode(argv[0]))
     return enif_raise_exception(env,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
@@ -1203,37 +1248,102 @@ static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
   if (!opts.pretty)
     return make_binary(env, out.view());
 
-  std::string_view pretty_in(out.view());
-  auto pretty_out = glz::prettify_json(pretty_in);
+  auto pretty_out = glz::prettify_json(out.view());
   return make_binary(env, pretty_out);
+}
+
+static ERL_NIF_TERM nif_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  return do_encode(env, argc, argv);
+}
+
+static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+
+  // Output size is unknown upfront; use input binary size as a proxy.
+  // For non-binary terms (atoms, integers, short lists) always run inline.
+  ErlNifBinary bin;
+  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) {
+    ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
+    return enif_schedule_nif(env, "glazer_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                             nif_encode_dirty, 2, sched_argv);
+  }
+  return do_encode(env, argc, argv);
 }
 
 // ---------------------------------------------------------------------------
 // NIF: minify / prettify
 // ---------------------------------------------------------------------------
 
+static ERL_NIF_TERM do_minify(ErlNifEnv* env, const ErlNifBinary& bin)
+{
+  std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
+  auto out = glz::minify_json(in);
+  return enif_make_tuple2(env, AM_OK, make_binary(env, out));
+}
+
+static ERL_NIF_TERM nif_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  ErlNifBinary bin;
+  [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
+  assert(ok);
+  return do_minify(env, bin);
+}
+
 static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) return enif_make_badarg(env);
   ErlNifBinary bin;
-  if (!enif_inspect_binary(env, argv[0], &bin) &&
-      !enif_inspect_iolist_as_binary(env, argv[0], &bin))
+  ERL_NIF_TERM sched_argv[1];
+  if (enif_inspect_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_minify(env, bin);
+    sched_argv[0] = argv[0];
+  } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_minify(env, bin);
+    sched_argv[0] = enif_make_binary(env, &bin);
+  } else {
     return enif_make_badarg(env);
-  std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
-  auto out = glz::minify_json(in);
+  }
+  return enif_schedule_nif(env, "glazer_minify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_minify_dirty, 1, sched_argv);
+}
+
+static ERL_NIF_TERM do_prettify(ErlNifEnv* env, const ErlNifBinary& bin)
+{
+  std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
+  std::string out = glz::prettify_json(in);
   return enif_make_tuple2(env, AM_OK, make_binary(env, out));
+}
+
+static ERL_NIF_TERM nif_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  ErlNifBinary bin;
+  [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
+  assert(ok);
+  return do_prettify(env, bin);
 }
 
 static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) return enif_make_badarg(env);
   ErlNifBinary bin;
-  if (!enif_inspect_binary(env, argv[0], &bin) &&
-      !enif_inspect_iolist_as_binary(env, argv[0], &bin))
+  ERL_NIF_TERM sched_argv[1];
+  if (enif_inspect_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_prettify(env, bin);
+    sched_argv[0] = argv[0];
+  } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_prettify(env, bin);
+    sched_argv[0] = enif_make_binary(env, &bin);
+  } else {
     return enif_make_badarg(env);
-  std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
-  std::string out = glz::prettify_json(in);
-  return enif_make_tuple2(env, AM_OK, make_binary(env, out));
+  }
+  return enif_schedule_nif(env, "glazer_prettify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_prettify_dirty, 1, sched_argv);
 }
 
 // ---------------------------------------------------------------------------
