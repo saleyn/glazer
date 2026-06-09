@@ -353,7 +353,7 @@ Where `glazer` has an edge over `torque`:
 
 ### Performance optimizations
 
-A few implementation techniques in `c_src/glaze_nif.cpp` account for most
+A few implementation techniques in `c_src/glazer_nif.cpp` account for most
 of the gap over the slower contenders:
 
 - **Single-pass, zero-copy decode/encode.** As noted above, there's no

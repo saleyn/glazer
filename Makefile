@@ -70,7 +70,7 @@ optimize:
 	@echo "==> PGO step 2/3: collect profile data via test suite"
 	mix bench 1>/dev/null
 	@echo "==> PGO step 3/3: rebuild with profile data"
-	@rm -f $(OBJ_DIR)/glaze_nif.o $(PRIV_DIR)/glazer.so
+	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=use all
 	@$(REBAR) compile
 	@echo "==> PGO build complete"

@@ -5,8 +5,8 @@ PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_
 OBJ_DIR  ?= $(BASEDIR)/obj
 DEBUG    ?= 0
 
-SRC      := glaze_nif.cpp
-OBJ      := $(OBJ_DIR)/glaze_nif.o
+SRC      := glazer_nif.cpp
+OBJ      := $(OBJ_DIR)/glazer_nif.o
 TARGET   := $(PRIV_DIR)/glazer.so
 
 ERL_ERTS_INCLUDE := $(shell erl -noshell -noinput \

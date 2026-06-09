@@ -10,9 +10,9 @@
 // tree.
 //
 // Decode: hand-rolled recursive-descent parser — zero-copy over raw input,
-//         produces Erlang terms in a single pass (no intermediate generic_u64 tree).
-// Encode: direct Erlang-term → JSON writer with a stack-allocated output buffer
-//         (no intermediate generic_u64 tree).
+//         produces Erlang terms in a single pass (no intermediate tree).
+// Encode: direct Erlang-term to JSON writer with a stack-allocated output
+//         buffer (no intermediate generic_u64 tree).
 // ---------------------------------------------------------------------------
 
 #include <array>
@@ -31,10 +31,10 @@
 #include <erl_nif.h>
 
 #include "fast_float.hpp"
-#include "glaze_json_format.hpp"
-#include "glaze_atoms.hpp"
-#include "glaze_bigint.hpp"
-#include "glaze_lltoa.hpp"
+#include "glazer_json_format.hpp"
+#include "glazer_atoms.hpp"
+#include "glazer_bigint.hpp"
+#include "glazer_lltoa.hpp"
 
 // ---------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
