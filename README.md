@@ -4,10 +4,11 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
 [![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
-Fast Erlang NIF JSON encoder/decoder backed by the
-[glaze](https://github.com/stephenberry/glaze) C++ library, with a
-hand-rolled recursive-descent decoder and direct term-to-JSON encoder
-that produce/consume native Erlang terms in a single pass.
+Fast Erlang NIF JSON encoder/decoder with a hand-rolled recursive-descent
+decoder and direct term-to-JSON encoder that produce/consume native Erlang
+terms in a single pass. Inspired by the
+[glaze](https://github.com/stephenberry/glaze) C++ library, `glazer` has
+matured into a standalone implementation with no external C++ dependencies.
 
 ## Features
 
@@ -28,21 +29,20 @@ that produce/consume native Erlang terms in a single pass.
 Add `glazer` to your `rebar.config` deps:
 
 ```erlang
-{deps, [glazer]}.
+{deps, [
+  {glazer, "~> 0.1"}
+]}.
 ```
 
 Building the NIF requires a C++23 compiler (GCC 12+ or Clang 16+) and
-CMake; the `glaze` C++ library is fetched automatically at build time
-via CMake's `FetchContent`. The top-level `Makefile` wires the CMake
-build into `rebar3 compile`, so a plain
+`make`. There are no external C++ library dependencies — all C++ code is
+self-contained in `c_src/`. A plain
 
 ```sh
-rebar3 compile
+make
 ```
 
-This builds `priv/glazer.so` and compiles the Erlang
-sources.  Make sure you have a relatively recent C++ compiler version
-installed.
+builds `priv/glazer.so` and compiles the Erlang sources.
 
 ### Elixir
 
@@ -56,17 +56,16 @@ def deps do
 end
 ```
 
-Then fetch and compile as usual:
+Then fetch and compile:
 
 ```sh
-mix deps.get
-mix compile
+make
 ```
 
 `glazer` is an Erlang application with a Rebar-based C++ NIF build;
 `mix` invokes the same top-level `Makefile`/`rebar3 compile` path
-described above, so the same C++23 compiler and CMake requirements
-apply. Once compiled, call it via the `:glazer` module from Elixir:
+described above, so the same C++23 compiler requirement applies.
+Once compiled, call it via the `:glazer` module from Elixir:
 
 ```elixir
 iex> :glazer.decode(~s({"a":1,"b":[true,null,3.5]}))
@@ -298,14 +297,14 @@ Running benchmarks...
                twitter (616.7K)     twitter2 (758.0K)     openrtb (1.2K)         esad (1.3K)         small (0.1K)
                decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 ---------------------------------------------------------------------------------------------------------------------
-glazer        10867.8   3789.0    14568.0   6778.7       18.7     16.5       11.7      8.4        1.2      1.8
-torque        12264.5   4302.1    15739.7   6707.7       19.5     15.6       15.3      9.2        3.7      2.4
-simdjsone     12131.4   8118.0    21256.3  13222.9       28.0     32.8       17.7     16.6        3.0      3.4
-jiffy         32471.7   4649.2    49874.9   8020.8       48.3     24.8       36.0     17.8        8.9      4.3
-jason         23134.7  12788.1    41330.1  22295.6       47.4     26.9       34.3     27.3        6.3      2.9
-thoas         22960.3  13912.5    41908.0  23347.5       57.4     34.9       36.0     24.8        6.4      6.0
-euneus        23109.6  11924.4    32612.6  21748.2       49.7     30.6       25.9     20.7        7.4      5.2
-json          22208.2  11554.2    32070.3  21003.0       50.0     35.3       22.8     19.1        7.0      4.2
+glazer         9517.1   3137.2    11433.2   6162.7       18.2     14.4       12.9      8.0        2.2      2.1
+torque        10684.4   4054.6    12462.9   6447.4       18.4     14.2       13.3      8.7        5.6      2.2
+simdjsone     11247.9   7240.1    18182.3  12374.3       28.7     30.7       16.2     21.8        2.3      4.2
+jiffy         29433.9   4731.5    45569.0   8103.0       53.4     24.7       34.3     13.6        7.0      4.4
+jason         21190.0  12235.7    36822.3  22125.9       49.2     39.2       27.8     22.0        4.1      3.9
+thoas         21363.8  12791.1    37789.9  23072.4       54.2     38.6       37.9     22.9        3.4      3.9
+euneus        20946.2  10733.7    28909.2  21062.5       48.3     32.4       25.6     19.3        7.5      2.5
+json          20101.3  10567.5    27445.5  20646.1       45.6     32.3       25.4     10.3        9.0      3.1
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -337,10 +336,10 @@ Where `glazer` has an edge over `torque`:
 - **Standalone `minify/1`/`prettify/1` and big-integer helpers**
   (`encode_bigint/1`/`decode_bigint/1`) that don't require a full
   decode/encode round-trip.
-- **Built on [glaze](https://github.com/stephenberry/glaze)**, a mature,
-  actively-maintained, header-only C++ JSON library — vs. `torque`'s
-  reliance on a Rust toolchain and `sonic-rs`, which adds a second
-  language/toolchain to the build.
+- **No external C++ dependencies.** The NIF is fully self-contained —
+  no CMake, no `FetchContent`, no vendored third-party library to pull
+  at build time — vs. `torque`'s reliance on a Rust toolchain and
+  `sonic-rs`, which adds a second language/toolchain to the build.
 
 ### Performance optimizations
 

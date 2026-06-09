@@ -2,6 +2,6 @@
 /deps/
 /doc/
 /priv/
+/obj/
 erl_crash.dump
 rebar3.crashdump
-

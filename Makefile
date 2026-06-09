@@ -2,46 +2,29 @@ ifndef VERBOSE
 MAKEFLAGS += --no-print-directory
 endif
 
-REBAR_BUILD_DIR ?= _build/default
-BUILD_DIR  ?= $(REBAR_BUILD_DIR)/lib/glazer/.build
-PRIV_DIR   := $(abspath priv)
-BUILD_TYPE ?= Release
-NIF_DEBUG  ?= 0
-REBAR			 ?= rebar3
-APP        := $(shell sed -n '/application,/{s/^.*, //; s/,.*$$//; p; q}' src/*.app.src)
-
-ifeq ($(NIF_DEBUG),1)
-  BUILD_TYPE := Debug
-endif
+PRIV_DIR := $(abspath priv)
+OBJ_DIR  := $(abspath obj)
+DEBUG    ?= 0
+REBAR    ?= rebar3
+APP      := $(shell sed -n '/application,/{s/^.*, //; s/,.*$$//; p; q}' src/*.app.src)
 
 all: compile
 
-deps: nif
-
 nif: $(PRIV_DIR)/glazer.so
 
-$(PRIV_DIR)/glazer.so: $(BUILD_DIR)/Makefile
-	@cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) $(if $(VERBOSE),--verbose,) -- --no-print-directory
+$(PRIV_DIR)/glazer.so: $(wildcard c_src/*.cpp c_src/*.hpp)
+	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) \
+	  $(if $(VERBOSE),VERBOSE=1,) --no-print-directory
 
-$(BUILD_DIR)/Makefile: $(BUILD_DIR) $(PRIV_DIR)
-	@cmake -S c_src -B $(BUILD_DIR) \
-	  -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-	  -DPRIV_DIR=$(PRIV_DIR) \
-	  $(if $(VERBOSE),,>/dev/null)
-
-$(PRIV_DIR) $(BUILD_DIR):
-	@mkdir -p $@
-
-compile: nif
+compile: $(PRIV_DIR)/glazer.so
 	$(REBAR) compile
 
 clean:
 	$(REBAR) clean
-	@cmake --build $(BUILD_DIR) --target clean 2>/dev/null || true
+	@$(MAKE) --no-print-directory -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) clean 2>/dev/null || true
 
 distclean: clean
-	@rm -rf $(BUILD_DIR) priv/glazer.so
-	@rm -fr _build
+	@rm -rf obj priv/glazer.so _build
 
 test:
 	$(REBAR) eunit
@@ -61,10 +44,9 @@ publish: docs
 
 deprecate:
 	@if [ -z $(vsn) ]; then \
-    echo "Usage: $(MAKE) $@ vsn=X.Y.Z      - Deprecate version X.Y.Z"; \
-    exit 1; \
-  fi
+	  echo "Usage: $(MAKE) $@ vsn=X.Y.Z      - Deprecate version X.Y.Z"; \
+	  exit 1; \
+	fi
 	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
-
 
 .PHONY: all deps doc compile clean distclean test nif

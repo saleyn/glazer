@@ -15,14 +15,15 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <erl_nif.h>
 
-#include "glaze/json.hpp"
-#include "glaze/util/glaze_fast_float.hpp"
+#include "fast_float.hpp"
+#include "glaze_json_format.hpp"
 #include "glaze_atoms.hpp"
 #include "glaze_bigint.hpp"
 #include "glaze_lltoa.hpp"
@@ -465,8 +466,8 @@ struct Decoder {
     if (is_float) {
       double d;
       // std::from_chars for floating-point isn't available on all platforms
-      // (e.g. older Apple libc++), so use Glaze's vendored fast_float here.
-      auto [ep, ec] = glz::from_chars<false>(start, m_p, d);
+      // (e.g. older Apple libc++), so use vendored fast_float here.
+      auto [ep, ec] = glz::fast_float::from_chars(start, m_p, d);
       if (ec != std::errc{}) return 0;
       return enif_make_double(m_env, d);
     }
