@@ -516,17 +516,17 @@ struct Decoder {
 
     // Integer: try int64/uint64 first, bigint fallback
     if (neg) {
-      int64_t v;
+      int64_t v = 0;
       auto [ep, ec] = std::from_chars(start + 1, m_p, v);
-      if (ec == std::errc{}) return enif_make_int64(m_env, -v);
+      if (ec == std::errc{})
+        return enif_make_int64(m_env, -v);
       // Could be uint64_t range negative? no — fall through to bigint
     } else {
-      uint64_t v;
+      uint64_t v = 0;
       auto [ep, ec] = std::from_chars(start, m_p, v);
-      if (ec == std::errc{}) {
-        if (v <= uint64_t(INT64_MAX)) return enif_make_int64(m_env, int64_t(v));
-        return enif_make_uint64(m_env, v);
-      }
+      if (ec == std::errc{})
+        return v <= uint64_t(INT64_MAX) ? enif_make_int64(m_env, int64_t(v))
+                                        : enif_make_uint64(m_env, v);
     }
     // Bigint
     ERL_NIF_TERM r = glazer::BigInt::decode(m_env, start, m_p);

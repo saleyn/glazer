@@ -57,8 +57,12 @@ ASAN     ?= 0
 ifeq ($(DEBUG),1)
   CXXFLAGS += -O0 -g
 else ifeq ($(ASAN),1)
+  # Compile with ASan instrumentation but do NOT link -fsanitize=address.
+  # Linking it would embed or reference the runtime inside the NIF .so; when
+  # the Erlang VM dlopen's that .so the runtime loads too late and ASan aborts.
+  # Instead all __asan_* symbols stay undefined in the .so and are resolved
+  # from the runtime preloaded via LD_PRELOAD (Linux only — see Makefile).
   CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer
-  LDFLAGS  += -fsanitize=address
 else
   CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS)
   LDFLAGS  += $(LINK_FLAGS)

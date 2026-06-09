@@ -56,20 +56,17 @@ distclean: clean
 test:
 	$(REBAR) eunit
 
-# Locate the ASan runtime so it can be preloaded into the Erlang VM.
-# GCC names it libasan.so; Clang names it libclang_rt.asan-<arch>.so.
-# On macOS the runtime is injected via DYLD_INSERT_LIBRARIES instead.
-_ASAN_GCC  := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
-_ASAN_CLANG := $(shell $(CXX) -print-file-name=libclang_rt.asan-x86_64.so 2>/dev/null; \
-                       $(CXX) -print-file-name=libclang_rt.asan-aarch64.so 2>/dev/null)
-# Use whichever path is a real file (not the bare input name echoed back).
-ASAN_RT := $(firstword $(foreach f,$(_ASAN_GCC) $(_ASAN_CLANG),$(if $(filter-out $(notdir $f),$f),$f)))
-
-ifeq ($(shell uname -s),Darwin)
-  ASAN_PRELOAD = DYLD_INSERT_LIBRARIES="$(ASAN_RT)"
-else
-  ASAN_PRELOAD = LD_PRELOAD="$(ASAN_RT)"
-endif
+# Locate the ASan runtime for LD_PRELOAD on Linux.
+# macOS memcheck is not supported (DYLD_INSERT_LIBRARIES is dropped by the
+# rebar3 shell wrapper before reaching erl), so this block is Linux-only.
+# Try Clang's resource-dir path first; fall back to GCC's -print-file-name.
+_CXX_RESOURCE_DIR := $(shell $(CXX) -print-resource-dir 2>/dev/null)
+_HOST_ARCH        := $(shell uname -m)
+_ASAN_CLANG       := $(_CXX_RESOURCE_DIR)/lib/linux/libclang_rt.asan-$(_HOST_ARCH).so
+_ASAN_GCC         := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
+ASAN_RT           := $(strip $(if $(wildcard $(_ASAN_CLANG)),$(_ASAN_CLANG),\
+                       $(if $(filter-out $(notdir $(_ASAN_GCC)),$(_ASAN_GCC)),$(_ASAN_GCC))))
+ASAN_PRELOAD       = LD_PRELOAD="$(ASAN_RT)"
 
 memcheck:
 	@echo "==> Building NIF with AddressSanitizer"
@@ -80,7 +77,10 @@ memcheck:
 	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=0" \
 	  $(ASAN_PRELOAD) \
 	  $(REBAR) eunit
-	@echo "==> memcheck done — rebuild for normal use: make"
+	@echo "==> Rebuilding normal NIF (removing ASan instrumentation)"
+	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) \
+	  $(if $(VERBOSE),VERBOSE=1,) clean all
+	@$(REBAR) compile
 
 doc docs:
 	$(REBAR) ex_doc

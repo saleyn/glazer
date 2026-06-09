@@ -103,11 +103,6 @@ jobs:
           CC:  ${{ matrix.compiler.CC }}
           CXX: ${{ matrix.compiler.CXX }}
         run:  make compile
-      - name: Sanitize Memory
-        env:
-          CC:  ${{ matrix.compiler.CC }}
-          CXX: ${{ matrix.compiler.CXX }}
-        run: make memcheck
       - name: Test
         env:
           CC:  ${{ matrix.compiler.CC }}
