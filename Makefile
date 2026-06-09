@@ -56,16 +56,29 @@ distclean: clean
 test:
 	$(REBAR) eunit
 
-ASAN_RT := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
+# Locate the ASan runtime so it can be preloaded into the Erlang VM.
+# GCC names it libasan.so; Clang names it libclang_rt.asan-<arch>.so.
+# On macOS the runtime is injected via DYLD_INSERT_LIBRARIES instead.
+_ASAN_GCC  := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
+_ASAN_CLANG := $(shell $(CXX) -print-file-name=libclang_rt.asan-x86_64.so 2>/dev/null; \
+                       $(CXX) -print-file-name=libclang_rt.asan-aarch64.so 2>/dev/null)
+# Use whichever path is a real file (not the bare input name echoed back).
+ASAN_RT := $(firstword $(foreach f,$(_ASAN_GCC) $(_ASAN_CLANG),$(if $(filter-out $(notdir $f),$f),$f)))
+
+ifeq ($(shell uname -s),Darwin)
+  ASAN_PRELOAD = DYLD_INSERT_LIBRARIES="$(ASAN_RT)"
+else
+  ASAN_PRELOAD = LD_PRELOAD="$(ASAN_RT)"
+endif
 
 memcheck:
 	@echo "==> Building NIF with AddressSanitizer"
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
 	  $(if $(VERBOSE),VERBOSE=1,) clean all
 	@$(REBAR) compile
-	@echo "==> Running eunit under ASan (LD_PRELOAD=$(ASAN_RT))"
+	@echo "==> Running eunit under ASan ($(ASAN_PRELOAD))"
 	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=0" \
-	  LD_PRELOAD="$(ASAN_RT)" \
+	  $(ASAN_PRELOAD) \
 	  $(REBAR) eunit
 	@echo "==> memcheck done — rebuild for normal use: make"
 
