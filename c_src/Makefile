@@ -19,9 +19,15 @@ ERL_EI_LIB       := $(shell erl -noshell -noinput \
 CXXFLAGS := -std=c++23 -fPIC -Wall -finline-functions \
             -I$(ERL_ERTS_INCLUDE) -I$(ERL_EI_INCLUDE) -I.
 
-# Detect compiler family for LTO flags
+# Detect compiler family for LTO flags.
+# AppleClang uses ld64 which handles thin-LTO natively — no -fuse-ld=lld.
+# Upstream Clang on Linux emits LLVM bitcode that requires lld.
+# GCC uses -flto=auto with GNU ld/gold.
 CXX_ID := $(shell $(CXX) --version 2>&1 | head -1)
-ifneq ($(findstring clang,$(CXX_ID)),)
+ifneq ($(findstring Apple,$(CXX_ID)),)
+  LTO_FLAGS  := -flto=thin
+  LINK_FLAGS :=
+else ifneq ($(findstring clang,$(CXX_ID)),)
   LTO_FLAGS  := -flto=thin
   LINK_FLAGS := -fuse-ld=lld
 else

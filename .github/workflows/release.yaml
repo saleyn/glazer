@@ -87,38 +87,7 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check if tag is greater than max remote tag
-        id: should_publish
-        run: |
-          # If triggered manually via workflow_dispatch, always publish
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "Triggered via workflow_dispatch, publishing"
-            exit 0
-          fi
-
-          CURRENT_TAG="${{ steps.current_version.outputs.version }}"
-          MAX_TAG=$(git tag -l "*.*.*" | sed 's/^v//' | sort -V | tail -1)
-
-          if [ -z "$MAX_TAG" ]; then
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "First release: $CURRENT_TAG"
-          else
-            # Compare versions: if CURRENT_TAG > MAX_TAG, publish
-            if [ "$(printf '%s\n' "$MAX_TAG" "$CURRENT_TAG" | sort -V | tail -1)" = "$CURRENT_TAG" ] && [ "$MAX_TAG" != "$CURRENT_TAG" ]; then
-              echo "publish=true" >> $GITHUB_OUTPUT
-              echo "Current tag $CURRENT_TAG is greater than max tag $MAX_TAG"
-            elif [ "$MAX_TAG" = "$CURRENT_TAG" ]; then
-              echo "publish=update" >> $GITHUB_OUTPUT
-              echo "Current tag $CURRENT_TAG is the same as max tag $MAX_TAG, may need to update published version"
-            else
-              echo "publish=false" >> $GITHUB_OUTPUT
-              echo "Current tag $CURRENT_TAG is not greater than max tag $MAX_TAG, skipping publish"
-            fi
-          fi
-
       - name: Setup Rebar3
-        if: steps.should_publish.outputs.publish != 'false'
         uses: erlef/setup-beam@v1
         with:
           # Latest that excludes pre-releases
@@ -129,33 +98,41 @@ jobs:
             https://builds.hex.pm
             https://cdn.jsdelivr.net/hex
 
+      - name: Check if version is already published
+        id: should_publish
+        run: |
+          VERSION="${{ steps.current_version.outputs.version }}"
+          APP="glazer"
+          TODAY=$(date +%Y-%m-%d)
+
+          if mix hex.info "$APP" "$VERSION" 2>/dev/null | grep -q "Released: $TODAY"; then
+            echo "publish=replace" >> $GITHUB_OUTPUT
+            echo "Version $VERSION published today — will replace"
+          elif mix hex.info "$APP" "$VERSION" 2>/dev/null | grep -q "Released:"; then
+            echo "publish=false" >> $GITHUB_OUTPUT
+            echo "Version $VERSION already published on a prior day — skipping"
+          else
+            echo "publish=true" >> $GITHUB_OUTPUT
+            echo "Version $VERSION not yet published — will publish"
+          fi
+
       - name: Publish to Hex.pm
         if: steps.should_publish.outputs.publish != 'false'
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
         run: |
-          set +e
-
-          # Get the version from the app source
-          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
+          VERSION="${{ steps.current_version.outputs.version }}"
           APP="glazer"
-          TODAY=$(date +%Y-%m-%d)
-
-          # Check if the package was already published today
-          REPLACE=$(if mix hex.info "$APP" "$VERSION" 2>&1 | grep -q "Released: $TODAY"; then echo " replace"; fi)
-
-          if [ -n "$REPLACE" ]; then
-            echo "Package $APP $VERSION was released today, trying to update existing release"
+          if [ "${{ steps.should_publish.outputs.publish }}" = "replace" ]; then
+            echo "Replacing $APP $VERSION (published today)"
             rebar3 hex publish --repo hexpm --yes --replace
-          elif [ "${{ steps.should_publish.outputs.publish }}" = "true" ]; then
+          else
             echo "Publishing $APP $VERSION"
             rebar3 hex publish --repo hexpm --yes
-          else
-            echo "Package $APP $VERSION was already published and cannot be replaced!"
           fi
 
       - name: Retire prior version
-        if: steps.should_publish.outputs.publish == 'true'
+        if: steps.should_publish.outputs.publish != 'false'
         run: |
           set +e
           APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)
