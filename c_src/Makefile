@@ -52,9 +52,13 @@ endif
 # workload was interrupted) instead of aborting the build.
 PGO      ?= 0
 PGO_DIR  := $(OBJ_DIR)/pgo
+ASAN     ?= 0
 
 ifeq ($(DEBUG),1)
   CXXFLAGS += -O0 -g
+else ifeq ($(ASAN),1)
+  CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer
+  LDFLAGS  += -fsanitize=address
 else
   CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS)
   LDFLAGS  += $(LINK_FLAGS)

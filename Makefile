@@ -23,6 +23,7 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  test         Run eunit test suite"
+	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit"
 	@echo "  benchmark    Run benchmarks via mix bench"
 	@echo "  deps         Fetch mix dependencies"
 	@echo "  doc          Generate documentation"
@@ -33,6 +34,7 @@ help:
 	@echo ""
 	@echo "Variables:"
 	@echo "  DEBUG=1      Build NIF without optimisations (-O0 -g)"
+	@echo "  ASAN=1       Build with AddressSanitizer (implied by memcheck)"
 	@echo "  VERBOSE=1    Show full compiler command lines"
 
 nif: $(PRIV_DIR)/glazer.so
@@ -53,6 +55,19 @@ distclean: clean
 
 test:
 	$(REBAR) eunit
+
+ASAN_RT := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
+
+memcheck:
+	@echo "==> Building NIF with AddressSanitizer"
+	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
+	  $(if $(VERBOSE),VERBOSE=1,) clean all
+	@$(REBAR) compile
+	@echo "==> Running eunit under ASan (LD_PRELOAD=$(ASAN_RT))"
+	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=0" \
+	  LD_PRELOAD="$(ASAN_RT)" \
+	  $(REBAR) eunit
+	@echo "==> memcheck done — rebuild for normal use: make"
 
 doc docs:
 	$(REBAR) ex_doc
@@ -88,4 +103,4 @@ deprecate:
 	fi
 	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
 
-.PHONY: all help doc compile clean distclean test nif optimize benchmark bench deps publish deprecate
+.PHONY: all help doc compile clean distclean test memcheck nif optimize benchmark bench deps publish deprecate
