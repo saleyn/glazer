@@ -149,13 +149,23 @@ private:
     }
 
     // Copy limbs as little-endian bytes directly into the payload.
+    // Use byte_len to bound the write: full limbs first, then the
+    // partial last limb (byte_len may be < limbs.size()*4 after trimming).
     uint8_t* dst = buf.data() + hdr;
-    for (uint32_t w : limbs) {
+    size_t full_limbs = byte_len >> 2; // division by 4
+    size_t tail_bytes = byte_len & 3;  // remainder mod 4
+    for (size_t i = 0; i < full_limbs; ++i) {
+      uint32_t w = limbs[i];
       dst[0] = w & 0xFF;
       dst[1] = (w >>  8) & 0xFF;
       dst[2] = (w >> 16) & 0xFF;
       dst[3] = (w >> 24) & 0xFF;
       dst += 4;
+    }
+    if (tail_bytes) {
+      uint32_t w = limbs[full_limbs];
+      for (size_t j = 0; j < tail_bytes; ++j)
+        *dst++ = (w >> (j * 8)) & 0xFF;
     }
 
     ERL_NIF_TERM result;
