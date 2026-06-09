@@ -10,7 +10,8 @@ application-wide, set the `null` env key in your config:
 
 See also [https://github.com/stephenberry/glaze]
 """.
--export([decode/1, decode/2, encode/1, encode/2, minify/1, prettify/1,
+-export([decode/1, decode/2, try_decode/1, try_decode/2,
+         encode/1, encode/2, minify/1, prettify/1,
          encode_bigint/1, decode_bigint/1,
          scan/1, scan/2,
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
@@ -96,15 +97,31 @@ init() ->
 
 -doc """
 Decode a JSON binary or iolist to an Erlang term. JSON objects are returned as
-maps (default).
+maps (default). Raises `{parse_error, Msg}` on invalid input.
 """.
 -spec decode(binary() | iolist()) -> term().
-decode(_Input) ->
+decode(Input) ->
+  case try_decode(Input) of
+    {ok, Term}    -> Term;
+    {error, Reason} -> error(Reason)
+  end.
+
+-doc "Decode a JSON binary or iolist to an Erlang term with options. Raises `{parse_error, Msg}` on invalid input.".
+-spec decode(binary() | iolist(), decode_opts()) -> term().
+decode(Input, Opts) ->
+  case try_decode(Input, Opts) of
+    {ok,    Term}   -> Term;
+    {error, Reason} -> error(Reason)
+  end.
+
+-doc "Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising.".
+-spec try_decode(binary() | iolist()) -> {ok, term()} | {error, {parse_error, binary()}}.
+try_decode(_Input) ->
   ?NOT_LOADED_ERROR.
 
--doc "Decode a JSON binary or iolist to an Erlang term with options.".
--spec decode(binary() | iolist(), decode_opts()) -> term().
-decode(_Input, _Opts) ->
+-doc "Decode a JSON binary or iolist with options, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising.".
+-spec try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, {parse_error, binary()}}.
+try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
 -doc "Encode an Erlang term to a JSON binary.".

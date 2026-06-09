@@ -647,6 +647,8 @@ struct Decoder {
     return map;
   }
 
+  // Always returns {ok, Term} | {error, {parse_error, Msg}}.
+  // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
   ERL_NIF_TERM decode(const char* data, size_t size)
   {
     m_p = data; m_end = data + size; m_beg = data;
@@ -654,12 +656,11 @@ struct Decoder {
     ERL_NIF_TERM result = parse_value(scratch);
     if (!result) {
       std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
-      return enif_raise_exception(m_env,
+      return enif_make_tuple2(m_env, AM_ERROR,
         enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
     }
     skip_ws();
-    // trailing garbage is tolerated
-    return result;
+    return enif_make_tuple2(m_env, AM_OK, result);
   }
 };
 
@@ -1409,8 +1410,8 @@ static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info
 }
 
 static ErlNifFunc nif_funcs[] = {
-  {"decode",        1, nif_decode,        0},
-  {"decode",        2, nif_decode,        0},
+  {"try_decode",    1, nif_decode,        0},
+  {"try_decode",    2, nif_decode,        0},
   {"scan",          1, nif_scan,          0},
   {"scan",          2, nif_scan,          0},
   {"encode",        1, nif_encode,        0},
