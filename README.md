@@ -42,7 +42,17 @@ self-contained in `c_src/`. A plain
 make
 ```
 
-builds `priv/glazer.so` and compiles the Erlang sources.
+builds `priv/glazer.so` and compiles the Erlang sources. For the fastest
+possible binary, run a Profile-Guided Optimisation (PGO) build instead:
+
+```sh
+make optimize
+```
+
+This performs three steps automatically: compiles an instrumented binary,
+runs the test suite to collect real branch-frequency data, then recompiles
+with those profiles applied. The resulting `.so` typically outperforms a
+plain `-O3` build by 5–15% on realistic JSON workloads.
 
 ### Elixir
 

@@ -358,19 +358,36 @@ struct Decoder {
   // ---- string reading — returns view into raw input (no unescaping for pure-ASCII keys) ----
   // Returns false on error; sets p past the closing quote.
   // If has_escape is set the caller must unescape before using as binary.
+  // Bulk-scans 8 bytes at a time with SWAR; scalar fallback only on the word
+  // containing a '"' or '\', then returns to SWAR for the next clean run.
   bool read_string_raw(const char*& begin_out, size_t& len_out, bool& has_escape)
   {
     if (m_p >= m_end || *m_p != '"') return false;
     ++m_p;  // skip opening quote
     const char* s = m_p;
     has_escape = false;
-    while (m_p < m_end) {
-      char c = *m_p;
-      if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
-      if (c == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; }
-      else ++m_p;
+    for (;;) {
+      // SWAR phase: skip words with no special bytes.
+      while (m_p + 8 <= m_end) {
+        uint64_t w;
+        memcpy(&w, m_p, 8);
+        if (has_byte(w, '"') | has_byte(w, '\\')) break;
+        m_p += 8;
+      }
+      // Scalar phase: advance byte-by-byte until we hit '"', '\', or end.
+      while (m_p < m_end) {
+        char c = *m_p;
+        if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
+        if (c == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; break; }
+        ++m_p;
+        // If the next char is also not special, return to SWAR.
+        if (m_p + 8 <= m_end) {
+          uint64_t w; memcpy(&w, m_p, 8);
+          if (!(has_byte(w, '"') | has_byte(w, '\\'))) { m_p += 8; break; }
+        }
+      }
+      if (m_p >= m_end) return false; // unterminated string
     }
-    return false; // unterminated
   }
 
   // Unescape a JSON string into buf, return view of result.
@@ -524,15 +541,9 @@ struct Decoder {
 
     switch (*m_p) {
       case '"': {
-        ++m_p;
-        const char* s = m_p;
-        bool has_escape = false;
-        while (m_p < m_end) {
-          if (*m_p == '"') { size_t len = m_p - s; ++m_p; return make_string_term(s, len, has_escape, scratch); }
-          if (*m_p == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; }
-          else ++m_p;
-        }
-        return 0;
+        const char* s; size_t len; bool has_escape;
+        if (!read_string_raw(s, len, has_escape)) return 0;
+        return make_string_term(s, len, has_escape, scratch);
       }
 
       case '{': return parse_object(scratch);
@@ -647,7 +658,7 @@ struct Decoder {
         enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
     }
     skip_ws();
-    // trailing garbage is tolerated (matches glaze's prior behaviour)
+    // trailing garbage is tolerated
     return result;
   }
 };
@@ -702,12 +713,12 @@ struct Scanner {
       char c = *m_p;
 
       if (st.in_string) {
-        if (st.escape)            { st.escape = false; ++m_p; continue; }
-        if (c == '\\')            { st.escape = true;  ++m_p; continue; }
-        if (c == '"')             { st.in_string = false; ++m_p;
-                                    if (st.depth == 0 && st.scalar) { value_end = m_p; return true; }
-                                    continue;
-                                  }
+        if (st.escape)  { st.escape = false; ++m_p; continue; }
+        if (c == '\\')  { st.escape = true;  ++m_p; continue; }
+        if (c == '"')   { st.in_string = false; ++m_p;
+                          if (st.depth == 0 && st.scalar) { value_end = m_p; return true; }
+                          continue;
+                        }
         ++m_p;
         continue;
       }
@@ -954,7 +965,7 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
           case '\n': out.push("\\n",  2); break;
           case '\r': out.push("\\r",  2); break;
           case '\t': out.push("\\t",  2); break;
-          default:   push_uescape(out, c); break;
+          default:   push_uescape(out,c); break;
         }
         ++p;
         run = p;
@@ -974,9 +985,9 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
     if (uescape) {
       push_uescape(out, cp);
     } else if (force_utf8 && cp == 0xFFFD && !(p - seq_start == 3 &&
-               (unsigned char)seq_start[0] == 0xEF &&
-               (unsigned char)seq_start[1] == 0xBF &&
-               (unsigned char)seq_start[2] == 0xBD)) {
+               uint8_t(seq_start[0]) == 0xEF &&
+               uint8_t(seq_start[1]) == 0xBF &&
+               uint8_t(seq_start[2]) == 0xBD)) {
       // Invalid sequence sanitized to U+FFFD (and it wasn't already a
       // literal U+FFFD in the input) — emit the replacement character.
       out.push("\xEF\xBF\xBD", 3);

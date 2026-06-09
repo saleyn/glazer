@@ -48,9 +48,9 @@ defmodule Mix.Tasks.Bench do
   """
   use Mix.Task
 
-  @lib_w 12
+  @lib_w 9
   @col_w 7
-  @sep    2
+  @sep   2
 
   @data_files [
     {"twitter",  "test/data/twitter.json"},

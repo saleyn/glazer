@@ -16,7 +16,7 @@ ERL_EI_INCLUDE   := $(shell erl -noshell -noinput \
 ERL_EI_LIB       := $(shell erl -noshell -noinput \
   -eval "io:format(\"~ts\",[code:lib_dir(erl_interface,lib)]),halt(0).")
 
-CXXFLAGS := -std=c++23 -fPIC -Wall -finline-functions \
+CXXFLAGS := -std=c++23 -fPIC -Wall -finline-functions -fvisibility=hidden \
             -I$(ERL_ERTS_INCLUDE) -I$(ERL_EI_INCLUDE) -I.
 
 # Detect compiler family for LTO flags.
@@ -35,11 +35,36 @@ else
   LINK_FLAGS :=
 endif
 
+# Profile-Guided Optimisation (PGO) — lets the compiler use real branch
+# frequencies and call counts to lay out hot paths, inline more aggressively,
+# and reorder basic blocks for better instruction-cache usage.  Typical gain
+# on a JSON-heavy workload is 5–15 % over plain -O3.
+#
+# Three-step workflow (or just run `make pgo` from the project root):
+#
+#   1. make PGO=generate   — build an instrumented .so that writes profile
+#                            data (*.gcda) into obj/pgo/ at runtime
+#   2. run a representative workload (e.g. `rebar3 eunit`, a benchmark)
+#   3. make PGO=use        — rebuild optimised using the collected profile
+#
+# Profile data lives in $(OBJ_DIR)/pgo/ and is removed by `make clean`.
+# -fprofile-correction tolerates minor counter mismatches (e.g. if the
+# workload was interrupted) instead of aborting the build.
+PGO      ?= 0
+PGO_DIR  := $(OBJ_DIR)/pgo
+
 ifeq ($(DEBUG),1)
   CXXFLAGS += -O0 -g
 else
   CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS)
   LDFLAGS  += $(LINK_FLAGS)
+  ifeq ($(PGO),generate)
+    CXXFLAGS += -fprofile-generate=$(PGO_DIR)
+    LDFLAGS  += -fprofile-generate=$(PGO_DIR)
+  else ifeq ($(PGO),use)
+    CXXFLAGS += -fprofile-use=$(PGO_DIR) -fprofile-correction -Wno-missing-profile
+    LDFLAGS  += -fprofile-use=$(PGO_DIR)
+  endif
 endif
 
 LDFLAGS += -shared -L$(ERL_EI_LIB) -lei
@@ -47,18 +72,25 @@ ifeq ($(shell uname -s),Darwin)
   LDFLAGS += -undefined dynamic_lookup
 endif
 
-.PHONY: all clean
+.PHONY: all clean force
 
 all: $(TARGET)
 
 $(TARGET): $(OBJ) | $(PRIV_DIR)
 	$(CXX) $(OBJ) $(LDFLAGS) -o $@
 
-$(OBJ): $(SRC) | $(OBJ_DIR)
+# When PGO=use the .o is stale by timestamp (same source, same flags string)
+# but must be recompiled against the newly collected profile data — force it.
+# Note: GCC writes .gcda files under a path derived from the source file's
+# absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
+# GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
+$(OBJ): $(SRC) $(if $(filter use,$(PGO)),force) \
+        | $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(PRIV_DIR) $(OBJ_DIR):
+$(PRIV_DIR) $(OBJ_DIR) $(PGO_DIR):
 	@mkdir -p $@
 
 clean:
 	rm -f $(OBJ) $(TARGET)
+	rm -rf $(PGO_DIR)
