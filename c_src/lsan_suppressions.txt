@@ -1,0 +1,14 @@
+# LeakSanitizer suppressions for `make memcheck`.
+#
+# These leaks originate from the BEAM/erts runtime and its helper processes
+# (not from glazer's NIF code) and are present regardless of glazer:
+#   - erts spawns external helpers (e.g. inet_gethost, sed during rebar3
+#     dependency checks) whose allocations LSan attributes to this process
+#     tree under LD_PRELOAD.
+#   - sys_thread_init_signal_stack allocates a per-thread alternate signal
+#     stack for the lifetime of each scheduler thread, which is still live
+#     (and thus reported as "leaked") at process exit.
+leak:inet_gethost
+leak:sys_thread_init_signal_stack
+leak:/bin/sed
+leak:/usr/bin/sed

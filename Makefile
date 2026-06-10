@@ -23,7 +23,7 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  test         Run eunit test suite"
-	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit"
+	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit (leak=1 adds LSan)"
 	@echo "  benchmark    Run benchmarks via mix bench"
 	@echo "  deps         Fetch mix dependencies"
 	@echo "  doc          Generate documentation"
@@ -35,6 +35,7 @@ help:
 	@echo "Variables:"
 	@echo "  DEBUG=1      Build NIF without optimisations (-O0 -g)"
 	@echo "  ASAN=1       Build with AddressSanitizer (implied by memcheck)"
+	@echo "  leak=1       Enable LeakSanitizer during memcheck (off by default)"
 	@echo "  VERBOSE=1    Show full compiler command lines"
 
 nif: $(PRIV_DIR)/glazer.so
@@ -67,14 +68,23 @@ _ASAN_GCC         := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
 ASAN_RT           := $(strip $(if $(wildcard $(_ASAN_CLANG)),$(_ASAN_CLANG),\
                        $(if $(filter-out $(notdir $(_ASAN_GCC)),$(_ASAN_GCC)),$(_ASAN_GCC))))
 ASAN_PRELOAD       = LD_PRELOAD="$(ASAN_RT)"
+LSAN_SUPPRESSIONS := $(abspath c_src/lsan_suppressions.txt)
+
+leak ?= 0
+ifeq ($(leak),0)
+  DETECT_LEAKS := 0
+else
+  DETECT_LEAKS := 1
+endif
 
 memcheck:
 	@echo "==> Building NIF with AddressSanitizer"
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
 	  $(if $(VERBOSE),VERBOSE=1,) clean all
 	@$(REBAR) compile
-	@echo "==> Running eunit under ASan ($(ASAN_PRELOAD))"
-	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=0" \
+	@echo "==> Running eunit under ASan$(if $(filter 1,$(DETECT_LEAKS)), + LeakSanitizer,) ($(ASAN_PRELOAD))"
+	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=$(DETECT_LEAKS)" \
+	  LSAN_OPTIONS="suppressions=$(LSAN_SUPPRESSIONS)" \
 	  $(ASAN_PRELOAD) \
 	  $(REBAR) eunit
 	@echo "==> Rebuilding normal NIF (removing ASan instrumentation)"
