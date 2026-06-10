@@ -96,7 +96,7 @@ doc docs:
 	$(REBAR) ex_doc
 
 benchmark bench: deps
-	@mix bench
+	@MIX_ENV=bench mix bench
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize

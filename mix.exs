@@ -3,10 +3,10 @@ defmodule GlazerBench.MixProject do
 
   def project do
     [
-      app: :glazer,
+      app:     :glazer,
       version: "0.1.0",
-      elixir: "~> 1.15",
-      deps: deps()
+      elixir:  "~> 1.15",
+      deps:    deps()
     ]
   end
 
@@ -16,12 +16,12 @@ defmodule GlazerBench.MixProject do
 
   defp deps do
     [
-      {:simdjsone, github: "saleyn/simdjsone", branch: "next", only: [:dev, :bench]},
-      {:jason,     "~> 1.4", only: [:dev, :bench]},
-      {:jiffy,     "~> 1.1", only: [:dev, :bench]},
-      {:thoas,     "~> 1.2", only: [:dev, :bench]},
-      {:euneus,    "~> 2.0", only: [:dev, :bench]},
-      {:torque,    "~> 0.1.9", only: [:dev, :bench]}
+      {:simdjsone, "~> 0.5",   only: :bench},
+      {:jason,     "~> 1.4",   only: :bench},
+      {:jiffy,     "~> 1.1",   only: :bench},
+      {:thoas,     "~> 1.2",   only: :bench},
+      {:euneus,    "~> 2.0",   only: :bench},
+      {:torque,    "~> 0.1.9", only: :bench}
     ]
   end
 end
@@ -35,14 +35,14 @@ defmodule Mix.Tasks.Bench do
       mix bench
 
   Libraries benchmarked (when available):
-    - glazer   (this library — Glaze C++ NIF)
+    - glazer      (this library - C++ NIF)
+    - torque      (Rust sonic-rs NIF)
     - simdjsone   (simdjson NIF)
     - jiffy       (jiffy NIF)
     - jason       (pure Elixir)
     - thoas       (pure Elixir)
     - euneus      (pure Elixir)
     - json        (OTP 27+ built-in)
-    - torque      (Rust sonic-rs NIF)
 
   Output: one pivoted table — libraries as rows, files×{decode,encode} as column pairs.
   """
@@ -62,6 +62,8 @@ defmodule Mix.Tasks.Bench do
 
   @impl Mix.Task
   def run(_args) do
+    Mix.env() != :bench && Mix.raise("mix bench must be run with MIX_ENV=bench")
+
     # Ensure all deps are started so NIFs get loaded.
     Mix.Task.run("app.start")
 
