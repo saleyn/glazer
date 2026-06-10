@@ -571,9 +571,10 @@ jsontestsuite_implementation_defined_test_() ->
     ?_assertEqual([<<255>>],          glazer:decode(<<"[\"", 255, "\"]">>)),
     ?_assertEqual([<<129>>],          glazer:decode(<<"[\"", 129, "\"]">>)),
 
-    %% 500 levels of array nesting is within MAX_DEPTH and decodes fine.
+    %% Deep-but-reasonable array nesting is within MAX_DEPTH and decodes fine
+    %% (see max_depth_test_ for the depth-limit boundary itself).
     ?_test(begin
-      N = 500,
+      N = 100,
       Bin = iolist_to_binary([lists:duplicate(N, "["), "[]", lists:duplicate(N, "]")]),
       ?assertMatch({ok, _}, glazer:try_decode(Bin))
     end)
