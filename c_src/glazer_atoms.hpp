@@ -9,11 +9,9 @@ static ERL_NIF_TERM AM_TRUE;
 static ERL_NIF_TERM AM_FALSE;
 static ERL_NIF_TERM AM_NULL;
 static ERL_NIF_TERM AM_NIL;
-static ERL_NIF_TERM AM_BADARG;
 static ERL_NIF_TERM AM_ENOMEM;
 
 // Decode option atoms
-static ERL_NIF_TERM AM_RETURN_MAPS;
 static ERL_NIF_TERM AM_OBJECT_AS_TUPLE;
 static ERL_NIF_TERM AM_USE_NIL;
 static ERL_NIF_TERM AM_NULL_TERM;
@@ -49,10 +47,8 @@ inline void init_atoms(ErlNifEnv* env)
   AM_FALSE                = enif_make_atom(env, "false");
   AM_NULL                 = enif_make_atom(env, "null");
   AM_NIL                  = enif_make_atom(env, "nil");
-  AM_BADARG               = enif_make_atom(env, "badarg");
   AM_ENOMEM               = enif_make_atom(env, "enomem");
 
-  AM_RETURN_MAPS          = enif_make_atom(env, "return_maps");
   AM_OBJECT_AS_TUPLE      = enif_make_atom(env, "object_as_tuple");
   AM_USE_NIL              = enif_make_atom(env, "use_nil");
   AM_NULL_TERM            = enif_make_atom(env, "null_term");

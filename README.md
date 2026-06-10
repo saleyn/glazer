@@ -233,13 +233,13 @@ routines directly, independent of JSON parsing/encoding:
 
 | Option | Description |
 |---|---|
-| `return_maps` | Decode JSON objects as Erlang maps (default) |
-| `object_as_tuple` | Decode JSON objects as `{[{Key, Value}]}` proplist tuples (jiffy-style) |
+| `object_as_tuple` | Decode JSON objects as `{[{Key, Value}]}` proplist tuples (jiffy-style) instead of maps (default) |
 | `use_nil` | Use the atom `nil` for JSON `null` |
 | `{null_term, Atom}` | Use `Atom` for JSON `null` |
 | `{keys, atom}` | Decode object keys as atoms (via `binary_to_atom/2`-equivalent) |
 | `{keys, existing_atom}` | Decode object keys as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | Decode object keys as binaries (default) |
+| `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
 
 ```erlang
 1> glazer:decode(<<"{\"a\":1}">>, [object_as_tuple]).
@@ -253,7 +253,23 @@ nil
 
 4> glazer:decode(<<"null">>, [{null_term, undefined}]).
 undefined
+
+5> glazer:decode(<<"{\"a\":1,\"a\":2}">>).
+#{<<"a">> => 2}
+
+6> glazer:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple]).
+{[{<<"a">>, 1}, {<<"a">>, 2}]}
+
+7> glazer:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple, dedupe_keys]).
+{[{<<"a">>, 2}]}
 ```
+
+> [!NOTE]
+> A JSON object with duplicate keys cannot be represented as an Erlang map,
+> so decoding to maps (the default) and `{keys, atom | existing_atom}` always
+> dedupe duplicate keys, last value wins, regardless of `dedupe_keys`. With
+> `object_as_tuple`, duplicate keys are preserved as-is unless `dedupe_keys`
+> is given.
 
 ### Encode options (`encode/2`)
 

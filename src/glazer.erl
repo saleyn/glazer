@@ -23,8 +23,7 @@ See also [https://github.com/stephenberry/glaze]
   erlang:nif_error({not_loaded, [{module, ?MODULE}, {line, ?LINE}]})).
 
 -type decode_opt() ::
-    return_maps
-  | object_as_tuple
+    object_as_tuple
   | use_nil
   | {null_term, atom()}
   | {keys, atom | existing_atom | binary}
@@ -33,17 +32,18 @@ See also [https://github.com/stephenberry/glaze]
 -doc """
 Decode options:
 
-- `return_maps`         - decode JSON objects as Erlang maps (default)
-- `object_as_tuple`     - decode JSON objects as `{[{K, V}]}` proplists
+- `object_as_tuple`     - decode JSON objects as `{[{K, V}]}` proplists rather than maps
 - `use_nil`             - use the atom `nil` for JSON null
 - `{null_term, Atom}`   - use `Atom` for JSON null
 - `{keys, atom}`        - decode object keys as atoms
 - `{keys, existing_atom}` - decode keys as existing atoms, fall back to binary
 - `{keys, binary}`      - decode keys as binaries (default)
-- `dedupe_keys`         - eliminate duplicate object keys, keeping the last
-  occurrence's value (and position). Without this option, an object
-  containing duplicate keys raises `badarg` when decoded with
-  `return_maps` (the default) or `{keys, atom | existing_atom}`.
+- `dedupe_keys`         - with `object_as_tuple`, eliminate duplicate object
+  keys from the resulting proplist, keeping the last occurrence's value
+  (and position). Has no effect when objects are decoded as maps (the
+  default) or with `{keys, atom | existing_atom}`: a JSON object with
+  duplicate keys is always deduped (last value wins) when decoded to a map,
+  since maps cannot represent duplicate keys.
 """.
 -type decode_opts() :: [decode_opt()].
 

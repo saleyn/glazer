@@ -51,7 +51,6 @@ static constexpr size_t DIRTY_THRESHOLD = 8192;
 // ---------------------------------------------------------------------------
 
 struct DecodeOpts {
-  bool         return_maps         = true;
   bool         object_as_tuple     = false;
   ERL_NIF_TERM null_term           = 0;
   bool         label_atom          = false;
@@ -74,8 +73,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_RETURN_MAPS))      opts.return_maps     = true;
-    else if (enif_is_identical(head, AM_OBJECT_AS_TUPLE)){ opts.object_as_tuple = true; opts.return_maps = false; }
+    if      (enif_is_identical(head, AM_OBJECT_AS_TUPLE))  opts.object_as_tuple = true;
     else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
     else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
     else {
@@ -592,30 +590,26 @@ struct Decoder {
     return enif_make_list_from_array(m_env, items.data(), (unsigned)items.size());
   }
 
-  // Remove earlier duplicate keys in-place, keeping each key's *last*
-  // occurrence (and its position). O(n^2) but objects are typically small
-  // (SmallTermVec inline capacity is 16) so this is cheaper than a hash set
-  // for the common case.
-  static void dedupe_keys_last(SmallTermVec<16>& ks, SmallTermVec<16>& vs)
+  // Build a map from parallel key/value arrays that may contain duplicate
+  // keys, keeping the *last* value for each duplicate. enif_make_map_put
+  // overwrites on collision, so a single left-to-right pass naturally
+  // gives last-value-wins semantics with no explicit key comparison.
+  static ERL_NIF_TERM make_map_dedup(ErlNifEnv* env, SmallTermVec<16>& ks, SmallTermVec<16>& vs)
   {
-    size_t n = ks.size();
-    size_t out = 0;
-    for (size_t i = 0; i < n; ++i) {
-      bool dup = false;
-      for (size_t j = i + 1; j < n; ++j) {
-        if (enif_compare(ks.data()[i], ks.data()[j]) == 0) { dup = true; break; }
-      }
-      if (!dup) {
-        ks.data()[out] = ks.data()[i];
-        vs.data()[out] = vs.data()[i];
-        ++out;
-      }
+    ERL_NIF_TERM map = enif_make_new_map(env);
+    for (size_t i = 0; i < ks.size(); ++i) {
+      ERL_NIF_TERM next;
+      enif_make_map_put(env, map, ks.data()[i], vs.data()[i], &next);
+      map = next;
     }
-    ks.set_size(out);
-    vs.set_size(out);
+    return map;
   }
 
-  // Same as above, but for {Key, Val} pair tuples (object_as_tuple path).
+  // Remove earlier duplicate {Key, Val} pairs in-place, keeping each key's
+  // *last* occurrence (and its position). O(n^2) but objects are typically
+  // small (SmallTermVec inline capacity is 16) so this is cheaper than a
+  // hash set for the common case. Used for the object_as_tuple path, which
+  // has no map-based shortcut.
   static void dedupe_pairs_last(SmallTermVec<16>& pairs, ErlNifEnv* env)
   {
     size_t n = pairs.size();
@@ -717,12 +711,10 @@ struct Decoder {
       skip_ws();
     }
 
-    if (m_opts.dedupe_keys)
-      dedupe_keys_last(ks, vs);
-
     ERL_NIF_TERM map;
     return enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map)
-         ? map : enif_raise_exception(m_env, AM_BADARG);
+         ? map
+         : make_map_dedup(m_env, ks, vs); // Dedupe, keeping the last value for each key
   }
 
   // Always returns {ok, Term} | {error, {parse_error, Msg}}.
