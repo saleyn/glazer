@@ -135,12 +135,12 @@ encode(_Data, _Opts) ->
   ?NOT_LOADED_ERROR.
 
 -doc "Minify a JSON binary or iolist, removing all unnecessary whitespace.".
--spec minify(binary() | iolist()) -> {ok, binary()} | {error, binary()}.
+-spec minify(binary() | iolist()) -> binary().
 minify(_Input) ->
   ?NOT_LOADED_ERROR.
 
 -doc "Pretty-print a JSON binary or iolist with two-space indentation.".
--spec prettify(binary() | iolist()) -> {ok, binary()} | {error, binary()}.
+-spec prettify(binary() | iolist()) -> binary().
 prettify(_Input) ->
   ?NOT_LOADED_ERROR.
 
@@ -312,14 +312,14 @@ roundtrip_test_() ->
 
 minify_test_() ->
   [
-    ?_assertEqual({ok, <<"[1,2,3]">>},   minify(<<"[ 1, 2, 3 ]">>)),
-    ?_assertEqual({ok, <<"{\"a\":1}">>}, minify(<<" { \"a\" : 1 } ">>))
+    ?_assertEqual(<<"[1,2,3]">>,   minify(<<"[ 1, 2, 3 ]">>)),
+    ?_assertEqual(<<"{\"a\":1}">>, minify(<<" { \"a\" : 1 } ">>))
   ].
 
 prettify_test_() ->
   [
-    ?_assertMatch({ok, <<"[\n", _/binary>>},  prettify(<<"[1,2,3]">>)),
-    ?_assertMatch({ok, <<"{\n", _/binary>>},  prettify(<<"{\"a\":1}">>))
+    ?_assertMatch(<<"[\n", _/binary>>,  prettify(<<"[1,2,3]">>)),
+    ?_assertMatch(<<"{\n", _/binary>>,  prettify(<<"{\"a\":1}">>))
   ].
 
 keys_test_() ->
@@ -398,7 +398,7 @@ iolist_input_test_() ->
   [
     ?_assertEqual(#{<<"a">> => 1}, decode([<<"{\"a\":">>, <<"1}">>])),
     ?_assertEqual(#{<<"a">> => 1}, decode([<<"{">>, [<<"\"a\":1">>], <<"}">>])),
-    ?_assertEqual({ok, <<"{\"a\":1}">>}, minify([<<"{ \"a\"">>, <<": 1 }">>]))
+    ?_assertEqual(<<"{\"a\":1}">>, minify([<<"{ \"a\"">>, <<": 1 }">>]))
   ].
 
 decode_error_test_() ->

@@ -51,18 +51,18 @@ static constexpr size_t DIRTY_THRESHOLD = 8192;
 // ---------------------------------------------------------------------------
 
 struct DecodeOpts {
-  bool         return_maps           = true;
-  bool         object_as_tuple       = false;
-  ERL_NIF_TERM null_term             = 0;
-  bool         label_atom            = false;
-  bool         label_existing_atom   = false;
+  bool         return_maps         = true;
+  bool         object_as_tuple     = false;
+  ERL_NIF_TERM null_term           = 0;
+  bool         label_atom          = false;
+  bool         label_existing_atom = false;
 };
 
 struct EncodeOpts {
-  bool         pretty      = false;
-  bool         uescape     = false;
-  bool         force_utf8  = false;
-  ERL_NIF_TERM null_term   = 0;
+  bool         pretty     = false;
+  bool         uescape    = false;
+  bool         force_utf8 = false;
+  ERL_NIF_TERM null_term  = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -362,7 +362,9 @@ struct Decoder {
   // containing a '"' or '\', then returns to SWAR for the next clean run.
   bool read_string_raw(const char*& begin_out, size_t& len_out, bool& has_escape)
   {
-    if (m_p >= m_end || *m_p != '"') return false;
+    if (m_p >= m_end || *m_p != '"')
+      return false;
+
     ++m_p;  // skip opening quote
     const char* s = m_p;
     has_escape = false;
@@ -470,17 +472,17 @@ struct Decoder {
       std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       ERL_NIF_TERM t;
       // enif_make_existing_atom_len avoids the std::string copy the old code paid
-      if (enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1))
-        return t;
-      return make_binary(m_env, sv);
+      return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
+           ? t : make_binary(m_env, sv);
     }
     // Binary keys: reuse cached terms for repeated keys (raw, unescaped only —
     // escapes are rare for keys and not worth complicating the cache for).
     // Only worthwhile for larger documents — see KEY_CACHE_MIN_SIZE.
     if (!has_escape && m_use_key_cache) {
       uint32_t h = KeyCache::hash_of(s, len);
-      if (ERL_NIF_TERM cached = m_key_cache.lookup(s, len, h)) return cached;
-      ERL_NIF_TERM term = make_binary(m_env, std::string_view(s, len));
+      if (ERL_NIF_TERM cached = m_key_cache.lookup(s, len, h))
+        return cached;
+      auto term = make_binary(m_env, std::string_view(s, len));
       m_key_cache.insert(s, len, h, term);
       return term;
     }
@@ -537,7 +539,8 @@ struct Decoder {
   ERL_NIF_TERM parse_value(std::string& scratch)
   {
     skip_ws();
-    if (m_p >= m_end) return 0;
+    if (m_p >= m_end)
+      return 0;
 
     switch (*m_p) {
       case '"': {
@@ -600,21 +603,33 @@ struct Decoder {
 
       while (m_p < m_end) {
         if (*m_p != '"') return 0;
-        const char* ks; size_t kl; bool ke;
+
+        const char* ks;
+        size_t      kl;
+        bool        ke;
+
         if (!read_string_raw(ks, kl, ke)) return 0;
-        ERL_NIF_TERM key = make_key_term(ks, kl, ke, scratch);
+
+        auto key = make_key_term(ks, kl, ke, scratch);
         skip_ws();
-        if (m_p >= m_end || *m_p != ':') return 0; else ++m_p;
-        ERL_NIF_TERM val = parse_value(scratch);
+
+        if (m_p >= m_end || *m_p != ':') return 0;
+        ++m_p;
+
+        auto val = parse_value(scratch);
         if (!val) return 0;
+
         pairs.push_back(enif_make_tuple2(m_env, key, val));
         skip_ws();
+
         if (m_p >= m_end) return 0;
+
         if (*m_p == '}') { ++m_p; break; }
-        if (*m_p != ',') return 0; else ++m_p;
+        if (*m_p != ',') return 0;
+        ++m_p;
         skip_ws();
       }
-      ERL_NIF_TERM list = enif_make_list_from_array(m_env, pairs.data(), (unsigned)pairs.size());
+      auto list = enif_make_list_from_array(m_env, pairs.data(), (unsigned)pairs.size());
       return enif_make_tuple1(m_env, list);
     }
 
@@ -626,25 +641,36 @@ struct Decoder {
 
     while (m_p < m_end) {
       if (*m_p != '"') return 0;
-      const char* kstr; size_t klen; bool kesc;
-      if (!read_string_raw(kstr, klen, kesc)) return 0;
-      ERL_NIF_TERM key = make_key_term(kstr, klen, kesc, scratch);
+
+      const char* kstr;
+      size_t      klen;
+      bool        kesc;
+
+      if (!read_string_raw(kstr, klen, kesc))
+        return 0;
+
+      auto key = make_key_term(kstr, klen, kesc, scratch);
       skip_ws();
-      if (m_p >= m_end || *m_p != ':') return 0; else ++m_p;
-      ERL_NIF_TERM val = parse_value(scratch);
+
+      if (m_p >= m_end || *m_p != ':') return 0;
+      ++m_p;
+
+      auto val = parse_value(scratch);
       if (!val) return 0;
+
       ks.push_back(key); vs.push_back(val);
       skip_ws();
+
       if (m_p >= m_end) return 0;
       if (*m_p == '}') { ++m_p; break; }
-      if (*m_p != ',') return 0; else ++m_p;
+      if (*m_p != ',') return 0;
+      ++m_p;
       skip_ws();
     }
 
     ERL_NIF_TERM map;
-    if (!enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map))
-      return enif_raise_exception(m_env, AM_BADARG);
-    return map;
+    return enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map)
+         ? map : enif_raise_exception(m_env, AM_BADARG);
   }
 
   // Always returns {ok, Term} | {error, {parse_error, Msg}}.
@@ -909,7 +935,7 @@ static void push_uescape(OutBuf& out, uint32_t cp)
 // Unicode replacement character (U+FFFD) and advances p by one byte.
 static uint32_t decode_utf8(const char*& p, const char* end)
 {
-  unsigned char c = (unsigned char)*p;
+  auto c    = (unsigned char)*p;
   auto cont = [&](const char* q) {
     return q < end && ((unsigned char)*q & 0xC0) == 0x80;
   };
@@ -922,17 +948,17 @@ static uint32_t decode_utf8(const char*& p, const char* end)
     return cp >= 0x80 ? cp : 0xFFFD;
   }
   if ((c & 0xF0) == 0xE0 && cont(p+1) && cont(p+2)) {
-    uint32_t cp = (uint32_t(c & 0x0F) << 12)
-                | (uint32_t((unsigned char)p[1] & 0x3F) << 6)
-                |  uint32_t((unsigned char)p[2] & 0x3F);
+    auto cp = (uint32_t(c & 0x0F) << 12)
+            | (uint32_t((unsigned char)p[1] & 0x3F) << 6)
+            |  uint32_t((unsigned char)p[2] & 0x3F);
     p += 3;
     return (cp >= 0x800 && (cp < 0xD800 || cp > 0xDFFF)) ? cp : 0xFFFD;
   }
   if ((c & 0xF8) == 0xF0 && cont(p+1) && cont(p+2) && cont(p+3)) {
-    uint32_t cp = (uint32_t(c & 0x07) << 18)
-                | (uint32_t((unsigned char)p[1] & 0x3F) << 12)
-                | (uint32_t((unsigned char)p[2] & 0x3F) << 6)
-                |  uint32_t((unsigned char)p[3] & 0x3F);
+    auto cp = (uint32_t(c & 0x07) << 18)
+            | (uint32_t((unsigned char)p[1] & 0x3F) << 12)
+            | (uint32_t((unsigned char)p[2] & 0x3F) << 6)
+            |  uint32_t((unsigned char)p[3] & 0x3F);
     p += 4;
     return (cp >= 0x10000 && cp <= 0x10FFFF) ? cp : 0xFFFD;
   }
@@ -953,7 +979,7 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
   const char* run = p;
 
   while (p < end) {
-    unsigned char c = (unsigned char)*p;
+    auto c = (unsigned char)*p;
 
     if (c < 0x80) {
       if (NEEDS_ESCAPE_TAB[c]) {
@@ -1020,7 +1046,6 @@ struct Encoder {
     // Dispatch on the term's runtime type once — avoids the cascade of
     // enif_is_identical / enif_get_* probes that each cost a C call.
     switch (enif_term_type(m_env, term)) {
-
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
@@ -1180,7 +1205,8 @@ static ERL_NIF_TERM nif_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
 static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
 
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[2];
@@ -1216,7 +1242,8 @@ static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 
 static ERL_NIF_TERM nif_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
 
   ErlNifBinary bin;
   if (!enif_inspect_binary(env, argv[0], &bin) &&
@@ -1247,7 +1274,7 @@ static ERL_NIF_TERM do_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[
 {
   EncodeOpts opts;
   opts.null_term = am_null;
-  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts)))
+  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts))) [[unlikely]]
     return enif_make_badarg(env);
 
   OutBuf out;
@@ -1291,8 +1318,7 @@ static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 static ERL_NIF_TERM do_minify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
-  auto out = glz::minify_json(in);
-  return enif_make_tuple2(env, AM_OK, make_binary(env, out));
+  return make_binary(env, glz::minify_json(in));
 }
 
 static ERL_NIF_TERM nif_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -1305,7 +1331,8 @@ static ERL_NIF_TERM nif_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
 static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc != 1) return enif_make_badarg(env);
+  if (argc != 1) [[unlikely]]
+    return enif_make_badarg(env);
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[1];
   if (enif_inspect_binary(env, argv[0], &bin)) {
@@ -1326,8 +1353,7 @@ static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 static ERL_NIF_TERM do_prettify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
-  std::string out = glz::prettify_json(in);
-  return enif_make_tuple2(env, AM_OK, make_binary(env, out));
+  return make_binary(env, glz::prettify_json(in));
 }
 
 static ERL_NIF_TERM nif_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -1340,7 +1366,8 @@ static ERL_NIF_TERM nif_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_T
 
 static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc != 1) return enif_make_badarg(env);
+  if (argc != 1) [[unlikely]]
+    return enif_make_badarg(env);
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[1];
   if (enif_inspect_binary(env, argv[0], &bin)) {
@@ -1364,7 +1391,8 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
 
 static ERL_NIF_TERM nif_encode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc != 1) return enif_make_badarg(env);
+  if (argc != 1) [[unlikely]]
+    return enif_make_badarg(env);
   ErlNifSInt64 val;
   if (enif_get_int64(env, argv[0], &val)) {
     char buf[22]; char* e = lltoa_impl::i64toa(buf, val);

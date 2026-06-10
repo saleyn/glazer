@@ -61,10 +61,10 @@ encode_map_keys_test_() ->
 
 pretty_test_() ->
   Compact = <<"[1,2,3]">>,
-  {ok, Pretty} = glazer:prettify(Compact),
+  Pretty = glazer:prettify(Compact),
   [
     ?_assertMatch(<<"[\n", _/binary>>, Pretty),
-    ?_assertEqual({ok, Compact}, glazer:minify(Pretty))
+    ?_assertEqual(Compact, glazer:minify(Pretty))
   ].
 
 nested_test_() ->
