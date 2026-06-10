@@ -30,7 +30,7 @@ Add `glazer` to your `rebar.config` deps:
 
 ```erlang
 {deps, [
-  {glazer, "~> 0.1"}
+  {glazer, "~> 0.2"}
 ]}.
 ```
 
@@ -61,7 +61,7 @@ Add `glazer` to your `mix.exs` deps:
 ```elixir
 def deps do
   [
-    {:glazer, "~> 0.1"}
+    {:glazer, "~> 0.2"}
   ]
 end
 ```
