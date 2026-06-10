@@ -4,17 +4,33 @@ This project uses automated workflows to manage releases. Follow these steps to 
 
 ## Process
 
-1. **Update the version** in `glazer.app.src`:
-   ```elixir
-   {vsn,"2.3.1"}
-   ```
+1. Update the version (use one of the two methods below):
+    - Automated
+      ```sh
+      $ make bump-version
+      Bumping version from 0.2.1 to 0.2.2
+      Changed: {vsn, "0.2.1"} -> {vsn, "0.2.2"}
 
-2. **Commit the version bump**:
-   ```bash
-   git add src/glazer.app.src
-   git commit -m "Bump version to 2.3.1"
-   git push origin master
-   ```
+      Commit this change? [Y/n]
+
+      [main 443a400] Bump version to 0.2.2
+       2 files changed, 25 insertions(+), 2 deletions(-)
+
+      **Push the change**
+      $ git push origin main
+      ```
+
+    - Manual<br/>
+      **Update the version** in `glazer.app.src`:
+      ```elixir
+      {vsn,"2.3.1"}
+      ```
+      **Commit the version bump and push the change**:
+      ```bash
+      $ git add src/glazer.app.src
+      $ git commit -m "Bump version to 2.3.1"
+      $ git push origin main
+      ```
 
 3. **Automatic tag creation**: The CI workflow automatically creates a git tag based on the project version when:
    - A push is made to the `master` branch
