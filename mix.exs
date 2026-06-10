@@ -71,8 +71,10 @@ defmodule Mix.Tasks.Bench do
     if files == [] do
       Mix.shell().error("No test data files found in test/data/")
     else
+      workers = parallelism()
+
       files_data = Enum.map(files, fn {label, bin} ->
-        results = run_file(bin, suites)
+        results = run_file(bin, suites, workers)
         {label, results}
       end)
 
@@ -174,38 +176,59 @@ defmodule Mix.Tasks.Bench do
   defp iterations(size) when size >  10_000, do: 1_000
   defp iterations(_),                        do: 5_000
 
-  defp run_file(bin, suites) do
-    n = iterations(byte_size(bin))
-    parent = self()
-    ref    = make_ref()
-
-    tasks = Enum.map(suites, fn {name, decode, encode} ->
-      pid = spawn(fn ->
-        result =
-          try do
-            dt = measure(n, fn -> decode.(bin) end)
-            decoded = decode.(bin)
-            et = measure(n, fn -> encode.(decoded) end)
-            {:ok, dt, et}
-          rescue
-            e -> {:error, Exception.message(e)}
-          catch
-            kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-          end
-        send(parent, {ref, name, result})
-      end)
-      {name, pid}
-    end)
-
+  defp run_file(bin, suites, parallelism) do
+    n       = iterations(byte_size(bin))
+    parent  = self()
+    ref     = make_ref()
     timeout = n * 200 + 10_000
 
-    Enum.map(tasks, fn {name, _pid} ->
-      receive do
-        {^ref, ^name, result} -> {name, result}
-      after
-        timeout -> {name, {:error, "timeout"}}
-      end
+    suites
+    |> Enum.chunk_every(parallelism)
+    |> Enum.flat_map(fn chunk ->
+      tasks = Enum.map(chunk, fn {name, decode, encode} ->
+        pid = spawn(fn ->
+          result =
+            try do
+              dt = measure(n, fn -> decode.(bin) end)
+              decoded = decode.(bin)
+              et = measure(n, fn -> encode.(decoded) end)
+              {:ok, dt, et}
+            rescue
+              e -> {:error, Exception.message(e)}
+            catch
+              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+            end
+          send(parent, {ref, name, result})
+        end)
+        {name, pid}
+      end)
+
+      Enum.map(tasks, fn {name, _pid} ->
+        receive do
+          {^ref, ^name, result} -> {name, result}
+        after
+          timeout -> {name, {:error, "timeout"}}
+        end
+      end)
     end)
+  end
+
+  defp parallelism do
+    nproc = System.schedulers_online()
+
+    nworkers =
+      case System.get_env("PARALLEL") do
+        nil ->
+          nproc
+
+        value ->
+          case Integer.parse(value) do
+            {n, _} -> n |> max(1) |> min(nproc)
+            :error -> nproc
+          end
+      end
+    IO.puts("==> Running benchmarks with parallelism: #{nworkers}")
+    nworkers
   end
 
   defp measure(n, f) do
@@ -237,7 +260,7 @@ defmodule Mix.Tasks.Bench do
     sep   = @sep
 
     # group width: "dec  enc  " + sep
-    group_w = col_w * 2 + 3 + sep
+    group_w = col_w * 2 + 2 + sep
 
     IO.puts("")
     IO.puts("(numbers in µs)")

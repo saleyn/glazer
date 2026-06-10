@@ -96,7 +96,6 @@ doc docs:
 	$(REBAR) ex_doc
 
 benchmark bench: deps
-	@echo "Running benchmarks..."
 	@mix bench
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
@@ -126,4 +125,4 @@ deprecate:
 	fi
 	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
 
-.PHONY: all help doc compile clean distclean test memcheck nif optimize benchmark bench deps publish deprecate
+.PHONY: all help doc compile clean distclean test memcheck nif optimize benchmark bench publish deprecate

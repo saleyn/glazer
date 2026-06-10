@@ -301,21 +301,21 @@ A comparison benchmark against other JSON libraries (`simdjsone`,
 `torque`) is available via:
 
 ```sh
-$ make bench
-Running benchmarks...
+$ PARALLEL=2 make bench
+==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-               twitter (616.7K)     twitter2 (758.0K)     openrtb (1.2K)         esad (1.3K)         small (0.1K)
-               decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
----------------------------------------------------------------------------------------------------------------------
-glazer         9517.1   3137.2    11433.2   6162.7       18.2     14.4       12.9      8.0        2.2      2.1
-torque        10684.4   4054.6    12462.9   6447.4       18.4     14.2       13.3      8.7        5.6      2.2
-simdjsone     11247.9   7240.1    18182.3  12374.3       28.7     30.7       16.2     21.8        2.3      4.2
-jiffy         29433.9   4731.5    45569.0   8103.0       53.4     24.7       34.3     13.6        7.0      4.4
-jason         21190.0  12235.7    36822.3  22125.9       49.2     39.2       27.8     22.0        4.1      3.9
-thoas         21363.8  12791.1    37789.9  23072.4       54.2     38.6       37.9     22.9        3.4      3.9
-euneus        20946.2  10733.7    28909.2  21062.5       48.3     32.4       25.6     19.3        7.5      2.5
-json          20101.3  10567.5    27445.5  20646.1       45.6     32.3       25.4     10.3        9.0      3.1
+            twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
+            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
+-------------------------------------------------------------------------------------------------------------
+glazer      3974.6   1267.5     4524.6   2609.6        8.2      5.6        6.2      3.4        0.9      0.9
+torque      5271.9   1398.3     4389.6   2524.1        8.4      5.9        6.5      3.6        1.4      1.0
+simdjsone   4383.1   3521.5     6947.3   6805.6       10.6     13.3        7.8      9.7        1.1      2.3
+jiffy      13977.8   2421.8    21426.5   4778.1       23.7     13.3       17.6      9.0        4.4      2.2
+jason       9329.5   7968.4    17862.7  15890.5       23.1     20.5       15.0     15.0        2.9      2.4
+thoas       9229.6   8834.4    18061.7  17136.0       24.3     22.0       17.6     17.5        2.6      2.4
+euneus      9675.8   6470.4    12913.5  12255.6       26.2     16.0       17.9     10.2        3.0      2.2
+json        9535.7   6349.2    12470.8  11612.9       25.1     16.1       17.1      9.4        2.4      1.9
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
