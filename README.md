@@ -4,11 +4,12 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
 [![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
-Fast Erlang NIF JSON encoder/decoder with a hand-rolled recursive-descent
+Very fast Erlang NIF JSON encoder/decoder with a hand-rolled recursive-descent
 decoder and direct term-to-JSON encoder that produce/consume native Erlang
 terms in a single pass. Inspired by the
 [glaze](https://github.com/stephenberry/glaze) C++ library, `glazer` has
-matured into a standalone implementation with no external C++ dependencies.
+matured into a standalone implementation with no external C++ dependencies with
+performance and features unmatched by other existing JSON parsing libraries.
 
 ## Features
 
