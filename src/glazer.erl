@@ -27,7 +27,8 @@ See also [https://github.com/stephenberry/glaze]
   | object_as_tuple
   | use_nil
   | {null_term, atom()}
-  | {keys, atom | existing_atom | binary}.
+  | {keys, atom | existing_atom | binary}
+  | dedupe_keys.
 
 -doc """
 Decode options:
@@ -39,6 +40,10 @@ Decode options:
 - `{keys, atom}`        - decode object keys as atoms
 - `{keys, existing_atom}` - decode keys as existing atoms, fall back to binary
 - `{keys, binary}`      - decode keys as binaries (default)
+- `dedupe_keys`         - eliminate duplicate object keys, keeping the last
+  occurrence's value (and position). Without this option, an object
+  containing duplicate keys raises `badarg` when decoded with
+  `return_maps` (the default) or `{keys, atom | existing_atom}`.
 """.
 -type decode_opts() :: [decode_opt()].
 

@@ -56,6 +56,7 @@ struct DecodeOpts {
   ERL_NIF_TERM null_term           = 0;
   bool         label_atom          = false;
   bool         label_existing_atom = false;
+  bool         dedupe_keys         = false;
 };
 
 struct EncodeOpts {
@@ -76,6 +77,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
     if      (enif_is_identical(head, AM_RETURN_MAPS))      opts.return_maps     = true;
     else if (enif_is_identical(head, AM_OBJECT_AS_TUPLE)){ opts.object_as_tuple = true; opts.return_maps = false; }
     else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
+    else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -171,6 +173,7 @@ struct SmallTermVec {
 
   ERL_NIF_TERM* data() const { return m_data; }
   size_t        size() const { return m_len;  }
+  void          set_size(size_t n) { m_len = n; }
 };
 
 // ---------------------------------------------------------------------------
@@ -589,6 +592,49 @@ struct Decoder {
     return enif_make_list_from_array(m_env, items.data(), (unsigned)items.size());
   }
 
+  // Remove earlier duplicate keys in-place, keeping each key's *last*
+  // occurrence (and its position). O(n^2) but objects are typically small
+  // (SmallTermVec inline capacity is 16) so this is cheaper than a hash set
+  // for the common case.
+  static void dedupe_keys_last(SmallTermVec<16>& ks, SmallTermVec<16>& vs)
+  {
+    size_t n = ks.size();
+    size_t out = 0;
+    for (size_t i = 0; i < n; ++i) {
+      bool dup = false;
+      for (size_t j = i + 1; j < n; ++j) {
+        if (enif_compare(ks.data()[i], ks.data()[j]) == 0) { dup = true; break; }
+      }
+      if (!dup) {
+        ks.data()[out] = ks.data()[i];
+        vs.data()[out] = vs.data()[i];
+        ++out;
+      }
+    }
+    ks.set_size(out);
+    vs.set_size(out);
+  }
+
+  // Same as above, but for {Key, Val} pair tuples (object_as_tuple path).
+  static void dedupe_pairs_last(SmallTermVec<16>& pairs, ErlNifEnv* env)
+  {
+    size_t n = pairs.size();
+    size_t out = 0;
+    for (size_t i = 0; i < n; ++i) {
+      int arity_i; const ERL_NIF_TERM* tp_i;
+      enif_get_tuple(env, pairs.data()[i], &arity_i, &tp_i);
+      bool dup = false;
+      for (size_t j = i + 1; j < n; ++j) {
+        int arity_j; const ERL_NIF_TERM* tp_j;
+        enif_get_tuple(env, pairs.data()[j], &arity_j, &tp_j);
+        if (enif_compare(tp_i[0], tp_j[0]) == 0) { dup = true; break; }
+      }
+      if (!dup)
+        pairs.data()[out++] = pairs.data()[i];
+    }
+    pairs.set_size(out);
+  }
+
   ERL_NIF_TERM parse_object(std::string& scratch)
   {
     assert(*m_p == '{');
@@ -629,6 +675,9 @@ struct Decoder {
         ++m_p;
         skip_ws();
       }
+      if (m_opts.dedupe_keys)
+        dedupe_pairs_last(pairs, m_env);
+
       auto list = enif_make_list_from_array(m_env, pairs.data(), (unsigned)pairs.size());
       return enif_make_tuple1(m_env, list);
     }
@@ -667,6 +716,9 @@ struct Decoder {
       ++m_p;
       skip_ws();
     }
+
+    if (m_opts.dedupe_keys)
+      dedupe_keys_last(ks, vs);
 
     ERL_NIF_TERM map;
     return enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map)

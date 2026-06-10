@@ -43,6 +43,86 @@ object_as_tuple_test_() ->
                   glazer:decode(<<"{\"x\":true,\"y\":false}">>, [object_as_tuple]))
   ].
 
+%% ----------------------------------------------------------------------------
+%% Duplicate object keys
+%%
+%% With `return_maps` (the default) and `{keys, atom}`/`{keys, existing_atom}`,
+%% an object containing duplicate keys cannot be represented as an Erlang map
+%% and decoding raises `badarg` (not a `{parse_error, _}`), even via
+%% `try_decode/1,2`. With `object_as_tuple`, duplicates are preserved as-is
+%% in the resulting proplist, in source order, with no deduping.
+%% ----------------------------------------------------------------------------
+
+duplicate_keys_test_() ->
+  [
+    ?_assertError(badarg, glazer:decode(<<"{\"a\":1,\"a\":2}">>)),
+    ?_assertError(badarg, glazer:decode(<<"{\"a\":1,\"b\":2,\"a\":3}">>)),
+    ?_assertError(badarg, glazer:decode(<<"{\"a\":1,\"a\":2}">>, [{keys, atom}])),
+    ?_assertError(badarg, glazer:decode(<<"{\"a\":1,\"a\":2}">>, [{keys, existing_atom}])),
+
+    %% try_decode/1,2 do not convert this into {error, {parse_error, _}}
+    ?_assertError(badarg, glazer:try_decode(<<"{\"a\":1,\"a\":2}">>)),
+
+    %% duplicates inside a nested object also raise
+    ?_assertError(badarg, glazer:decode(<<"{\"a\":{\"x\":1,\"x\":2}}">>)),
+
+    %% duplicates inside an object within an array also raise
+    ?_assertError(badarg, glazer:decode(<<"[{\"a\":1,\"a\":2}]">>)),
+
+    %% object_as_tuple preserves duplicate keys without deduping
+    ?_assertEqual({[{<<"a">>, 1}, {<<"a">>, 2}]},
+                  glazer:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple])),
+    ?_assertEqual({[{<<"a">>, 1}, {<<"b">>, 2}, {<<"a">>, 3}]},
+                  glazer:decode(<<"{\"a\":1,\"b\":2,\"a\":3}">>, [object_as_tuple])),
+    ?_assertEqual({[{<<"foo">>, {[{<<"bar">>, 1}, {<<"bar">>, 2}]}}]},
+                  glazer:decode(<<"{\"foo\":{\"bar\":1,\"bar\":2}}">>, [object_as_tuple]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% dedupe_keys
+%%
+%% Eliminates duplicate object keys, keeping the value (and position) of the
+%% *last* occurrence. Applies to both `return_maps` (default) and
+%% `object_as_tuple`, and recursively to nested objects/arrays.
+%% ----------------------------------------------------------------------------
+
+dedupe_keys_test_() ->
+  [
+    %% Simple sanity check: no duplicates, nothing changes
+    ?_assertEqual(#{<<"foo">> => 1},
+                  glazer:decode(<<"{\"foo\":1}">>, [dedupe_keys])),
+
+    %% Basic dedup: last value wins
+    ?_assertEqual(#{<<"foo">> => 2},
+                  glazer:decode(<<"{\"foo\":1,\"foo\":2}">>, [dedupe_keys])),
+
+    %% Non-repeated keys are fine
+    ?_assertEqual(#{<<"foo">> => 1, <<"bar">> => 2},
+                  glazer:decode(<<"{\"foo\":1,\"bar\":2}">>, [dedupe_keys])),
+
+    %% Multiple repeats: last value wins
+    ?_assertEqual(#{<<"foo">> => 3},
+                  glazer:decode(<<"{\"foo\":1,\"foo\":2,\"foo\":3}">>, [dedupe_keys])),
+
+    %% Sub-objects are deduped too
+    ?_assertEqual(#{<<"foo">> => #{<<"bar">> => 2}},
+                  glazer:decode(<<"{\"foo\":{\"bar\":1,\"bar\":2}}">>, [dedupe_keys])),
+
+    %% Objects nested in arrays are deduped
+    ?_assertEqual([#{<<"foo">> => 2}],
+                  glazer:decode(<<"[{\"foo\":1,\"foo\":2}]">>, [dedupe_keys])),
+
+    %% object_as_tuple: key order stays the same other than deduped keys,
+    %% with the last occurrence's value and position retained
+    ?_assertEqual({[{<<"bar">>, 1}, {<<"baz">>, 3}, {<<"foo">>, 4}]},
+                  glazer:decode(<<"{\"bar\":1,\"foo\":2,\"baz\":3,\"foo\":4}">>,
+                                 [object_as_tuple, dedupe_keys])),
+
+    %% {keys, atom} also dedupes
+    ?_assertEqual(#{a => 2},
+                  glazer:decode(<<"{\"a\":1,\"a\":2}">>, [{keys, atom}, dedupe_keys]))
+  ].
+
 null_atom_test_() ->
   [
     ?_assertEqual(nil,       glazer:decode(<<"null">>, [use_nil])),
