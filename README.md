@@ -324,25 +324,27 @@ $ PARALLEL=2 make bench
             twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
             decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      3974.6   1267.5     4524.6   2609.6        8.2      5.6        6.2      3.4        0.9      0.9
-torque      5271.9   1398.3     4389.6   2524.1        8.4      5.9        6.5      3.6        1.4      1.0
-simdjsone   4383.1   3521.5     6947.3   6805.6       10.6     13.3        7.8      9.7        1.1      2.3
-jiffy      13977.8   2421.8    21426.5   4778.1       23.7     13.3       17.6      9.0        4.4      2.2
-jason       9329.5   7968.4    17862.7  15890.5       23.1     20.5       15.0     15.0        2.9      2.4
-thoas       9229.6   8834.4    18061.7  17136.0       24.3     22.0       17.6     17.5        2.6      2.4
-euneus      9675.8   6470.4    12913.5  12255.6       26.2     16.0       17.9     10.2        3.0      2.2
-json        9535.7   6349.2    12470.8  11612.9       25.1     16.1       17.1      9.4        2.4      1.9
+glazer      3814.8   1113.0     4950.9   2009.6        8.3      4.6        5.9      4.5        0.9      0.8
+torque      5042.4   1343.4     4293.5   4268.1        8.2      5.9        5.1      5.0        1.3      1.0
+simdjsone   4856.5   3449.3     7415.0   6352.3       11.1     13.5        7.1      8.5        2.9      2.1
+jiffy      13926.6   2401.6    21676.2   4972.4       23.5     13.1       14.4      9.1        5.2      2.3
+jason       9833.9   8277.1    18359.1  16110.1       22.8     25.0       14.6     14.5        2.6      2.2
+thoas       9660.2   9053.3    18634.3  17206.5       23.5     27.0       17.1     17.2        2.5      2.3
+euneus     10275.4   6910.8    13286.3  12294.6       20.5     22.0       11.6      9.6        2.9      2.1
+json        9934.5   6771.4    12476.1  12104.3       18.7     21.1       10.8      8.3        2.3      1.7
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
 
 ### Performance
 
-`glazer` is roughly on par with `torque` (a Rust `sonic-rs` NIF) across
-the benchmarked workloads — neither library is consistently faster, and the
-gap on any given file/operation is typically within a few percent. Both sit
-well ahead of the other contenders (`simdjsone`, `jiffy`, and the pure-Elixir
-libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`).
+`glazer` has a faster JSON encoder than all competitors. `glazer` is roughly on
+par with `torque` (a Rust `sonic-rs` NIF) across the benchmarked workloads on
+decoding — neither library is consistently faster, and the gap on any given
+file/operation is typically modest (within ~30%), varying in direction from
+file to file. Both sit well ahead of the other contenders (`simdjsone`,
+`jiffy`, and the pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's
+built-in `json`).
 
 Where `glazer` has an edge over `torque`:
 

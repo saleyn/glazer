@@ -159,7 +159,7 @@ struct SmallTermVec {
   ~SmallTermVec() { if (m_data != m_inline) delete[] m_data; }
 
   void push_back(ERL_NIF_TERM v) {
-    if (m_len == m_cap) {
+    if (m_len == m_cap) [[unlikely]] {
       size_t nc = m_cap * 2;
       ERL_NIF_TERM* nb = new ERL_NIF_TERM[nc];
       memcpy(nb, m_data, m_len * sizeof(ERL_NIF_TERM));
@@ -190,10 +190,10 @@ struct OutBuf {
   ~OutBuf() { if (m_data != m_inline) free(m_data); }
 
   void ensure(size_t need) {
-    if (m_len + need <= m_cap) return;
+    if (m_len + need <= m_cap) [[likely]] return;
     size_t nc = m_cap * 2;
     while (nc < m_len + need) nc *= 2;
-    if (m_data == m_inline) {
+    if (m_data == m_inline) [[unlikely]] {
       // Can't realloc a stack array — first spill to the heap requires a copy.
       std::unique_ptr<char[]> nb = std::unique_ptr<char[]>(static_cast<char*>(malloc(nc)));
       memcpy(nb.get(), m_data, m_len);
@@ -272,8 +272,8 @@ struct KeyCache {
   ERL_NIF_TERM lookup(const char* s, size_t len, uint32_t hash) const {
     for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       const Entry& e = m_entries[i];
-      if (e.epoch != m_epoch) return 0; // empty slot — key was never inserted
-      if (e.hash == hash && e.len == len && memcmp(e.s, s, len) == 0)
+      if (e.epoch != m_epoch) [[unlikely]] return 0; // empty slot — key was never inserted
+      if (e.hash == hash && e.len == len && memcmp(e.s, s, len) == 0) [[likely]]
         return e.term;
     }
     return 0;
@@ -303,15 +303,39 @@ struct Decoder {
   const char*       m_end;
   KeyCache          m_key_cache;
   bool              m_use_key_cache;
+  unsigned          m_depth = 0;
 
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
   // like RPC messages, where glazer otherwise loses ground to torque).
   static constexpr size_t KEY_CACHE_MIN_SIZE = 2048;
 
+  // parse_value/parse_array/parse_object recurse on each nesting level, so
+  // an unbounded depth can overflow the C stack and crash the whole VM.
+  // This cap is well within the default thread stack size with room to
+  // spare for the rest of each frame.
+  static constexpr unsigned MAX_DEPTH = 512;
+
   Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
       m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
+
+  // Increments the shared depth counter for the lifetime of a parse_array /
+  // parse_object call, so every return path (including early `return 0`)
+  // restores it.
+  struct DepthGuard {
+    explicit DepthGuard(Decoder* d) : d(d) { ++d->m_depth; }
+    ~DepthGuard() { --d->m_depth; }
+
+    bool check() const {
+      if (d->m_depth > MAX_DEPTH) [[unlikely]] return false;
+      ++d->m_p;
+      d->skip_ws();
+      return true;
+    }
+  private:
+    Decoder* d;
+  };
 
   // ---- whitespace ----
   static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
@@ -381,7 +405,7 @@ struct Decoder {
       while (m_p < m_end) {
         char c = *m_p;
         if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
-        if (c == '\\') { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; break; }
+        if (c == '\\') [[unlikely]] { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; break; }
         ++m_p;
         // If the next char is also not special, return to SWAR.
         if (m_p + 8 <= m_end) {
@@ -540,7 +564,7 @@ struct Decoder {
   ERL_NIF_TERM parse_value(std::string& scratch)
   {
     skip_ws();
-    if (m_p >= m_end)
+    if (m_p >= m_end) [[unlikely]]
       return 0;
 
     switch (*m_p) {
@@ -571,23 +595,26 @@ struct Decoder {
   ERL_NIF_TERM parse_array(std::string& scratch)
   {
     assert(*m_p == '[');
-    ++m_p;
-    skip_ws();
+    DepthGuard guard(this);
+    if (!guard.check()) [[unlikely]] return 0;
 
     SmallTermVec<16> items;
-    if (m_p < m_end && *m_p == ']') { ++m_p; return enif_make_list_from_array(m_env, nullptr, 0); }
+    if (m_p < m_end && *m_p == ']') {
+      ++m_p;
+      return enif_make_list_from_array(m_env, nullptr, 0);
+    }
 
-    while (m_p < m_end) {
+    for (;;) {
       ERL_NIF_TERM v = parse_value(scratch);
-      if (!v) return 0;
+      if (!v) [[unlikely]] return 0;
       items.push_back(v);
       skip_ws();
-      if (m_p >= m_end) return 0;
+      if (m_p >= m_end) [[unlikely]] return 0;
       if (*m_p == ']') { ++m_p; break; }
-      if (*m_p != ',') return 0;
+      if (*m_p != ',') [[unlikely]] return 0;
       ++m_p;
     }
-    return enif_make_list_from_array(m_env, items.data(), (unsigned)items.size());
+    return enif_make_list_from_array(m_env, items.data(), unsigned(items.size()));
   }
 
   // Build a map from parallel key/value arrays that may contain duplicate
@@ -632,8 +659,8 @@ struct Decoder {
   ERL_NIF_TERM parse_object(std::string& scratch)
   {
     assert(*m_p == '{');
-    ++m_p;
-    skip_ws();
+    DepthGuard guard(this);
+    if (!guard.check()) [[unlikely]] return 0;
 
     if (m_opts.object_as_tuple) {
       SmallTermVec<16> pairs;
@@ -641,31 +668,31 @@ struct Decoder {
       if (m_p < m_end && *m_p == '}') { ++m_p;
         return enif_make_tuple1(m_env, enif_make_list_from_array(m_env, nullptr, 0)); }
 
-      while (m_p < m_end) {
-        if (*m_p != '"') return 0;
+      for (;;) {
+        if (m_p >= m_end || *m_p != '"') [[unlikely]] return 0;
 
         const char* ks;
         size_t      kl;
         bool        ke;
 
-        if (!read_string_raw(ks, kl, ke)) return 0;
+        if (!read_string_raw(ks, kl, ke)) [[unlikely]] return 0;
 
         auto key = make_key_term(ks, kl, ke, scratch);
         skip_ws();
 
-        if (m_p >= m_end || *m_p != ':') return 0;
+        if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
         ++m_p;
 
         auto val = parse_value(scratch);
-        if (!val) return 0;
+        if (!val) [[unlikely]] return 0;
 
         pairs.push_back(enif_make_tuple2(m_env, key, val));
         skip_ws();
 
-        if (m_p >= m_end) return 0;
+        if (m_p >= m_end) [[unlikely]] return 0;
 
         if (*m_p == '}') { ++m_p; break; }
-        if (*m_p != ',') return 0;
+        if (*m_p != ',') [[unlikely]] return 0;
         ++m_p;
         skip_ws();
       }
@@ -682,31 +709,31 @@ struct Decoder {
     if (m_p < m_end && *m_p == '}') { ++m_p;
       ERL_NIF_TERM m; enif_make_map_from_arrays(m_env, nullptr, nullptr, 0, &m); return m; }
 
-    while (m_p < m_end) {
-      if (*m_p != '"') return 0;
+    for (;;) {
+      if (m_p >= m_end || *m_p != '"') [[unlikely]] return 0;
 
       const char* kstr;
       size_t      klen;
       bool        kesc;
 
       if (!read_string_raw(kstr, klen, kesc))
-        return 0;
+        [[unlikely]] return 0;
 
       auto key = make_key_term(kstr, klen, kesc, scratch);
       skip_ws();
 
-      if (m_p >= m_end || *m_p != ':') return 0;
+      if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
       ++m_p;
 
       auto val = parse_value(scratch);
-      if (!val) return 0;
+      if (!val) [[unlikely]] return 0;
 
       ks.push_back(key); vs.push_back(val);
       skip_ws();
 
-      if (m_p >= m_end) return 0;
+      if (m_p >= m_end) [[unlikely]] return 0;
       if (*m_p == '}') { ++m_p; break; }
-      if (*m_p != ',') return 0;
+      if (*m_p != ',') [[unlikely]] return 0;
       ++m_p;
       skip_ws();
     }
@@ -724,13 +751,13 @@ struct Decoder {
     m_p = data; m_end = data + size; m_beg = data;
     std::string scratch;
     ERL_NIF_TERM result = parse_value(scratch);
-    if (!result) {
-      std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
-      return enif_make_tuple2(m_env, AM_ERROR,
-        enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
-    }
-    skip_ws();
-    return enif_make_tuple2(m_env, AM_OK, result);
+    if (result) skip_ws();
+    if (result && m_p == m_end) [[likely]]
+      return enif_make_tuple2(m_env, AM_OK, result);
+
+    std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
+    return enif_make_tuple2(m_env, AM_ERROR,
+      enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
   }
 };
 
@@ -932,7 +959,7 @@ static void json_escape_string(std::string_view sv, OutBuf& out)
 
   while (p < end) {
     unsigned char c = (unsigned char)*p;
-    if (!NEEDS_ESCAPE_TAB[c]) { ++p; continue; }
+    if (!NEEDS_ESCAPE_TAB[c]) [[likely]] { ++p; continue; }
 
     if (p > run) out.push(run, p - run);
 
@@ -984,7 +1011,7 @@ static uint32_t decode_utf8(const char*& p, const char* end)
     return q < end && ((unsigned char)*q & 0xC0) == 0x80;
   };
 
-  if (c < 0x80) { ++p; return c; }
+  if (c < 0x80) [[likely]] { ++p; return c; }
 
   if ((c & 0xE0) == 0xC0 && cont(p+1)) {
     uint32_t cp = (uint32_t(c & 0x1F) << 6) | (uint32_t((unsigned char)p[1]) & 0x3F);
@@ -1025,8 +1052,10 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
   while (p < end) {
     auto c = (unsigned char)*p;
 
-    if (c < 0x80) {
-      if (NEEDS_ESCAPE_TAB[c]) {
+    if (c < 0x80) [[likely]] {
+      if (!NEEDS_ESCAPE_TAB[c]) [[likely]] {
+        ++p;
+      } else {
         if (p > run) out.push(run, p - run);
         switch (c) {
           case '"':  out.push("\\\"", 2); break;
@@ -1040,8 +1069,6 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
         }
         ++p;
         run = p;
-      } else {
-        ++p;
       }
       continue;
     }
@@ -1099,7 +1126,7 @@ struct Encoder {
 
       case ERL_NIF_TERM_TYPE_INTEGER: {
         ErlNifSInt64 i;
-        if (enif_get_int64(m_env, term, &i)) {
+        if (enif_get_int64(m_env, term, &i)) [[likely]] {
           char buf[22]; char* e = lltoa_impl::i64toa(buf, i);
           m_out.push(buf, e - buf);
           return true;
@@ -1254,7 +1281,7 @@ static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[2];
-  if (enif_inspect_binary(env, argv[0], &bin)) {
+  if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
       return do_decode(env, bin, argc, argv);
     sched_argv[0] = argv[0];
@@ -1342,12 +1369,13 @@ static ERL_NIF_TERM nif_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
 static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc < 1 || argc > 2) return enif_make_badarg(env);
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
 
   // Output size is unknown upfront; use input binary size as a proxy.
   // For non-binary terms (atoms, integers, short lists) always run inline.
   ErlNifBinary bin;
-  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) {
+  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
     return enif_schedule_nif(env, "glazer_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
                              nif_encode_dirty, 2, sched_argv);
@@ -1379,7 +1407,7 @@ static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
     return enif_make_badarg(env);
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[1];
-  if (enif_inspect_binary(env, argv[0], &bin)) {
+  if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
       return do_minify(env, bin);
     sched_argv[0] = argv[0];
@@ -1414,7 +1442,7 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     return enif_make_badarg(env);
   ErlNifBinary bin;
   ERL_NIF_TERM sched_argv[1];
-  if (enif_inspect_binary(env, argv[0], &bin)) {
+  if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
       return do_prettify(env, bin);
     sched_argv[0] = argv[0];
@@ -1450,7 +1478,7 @@ static ERL_NIF_TERM nif_encode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
 static ERL_NIF_TERM nif_decode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  if (argc != 1) return enif_make_badarg(env);
+  if (argc != 1) [[unlikely]] return enif_make_badarg(env);
   ErlNifBinary bin;
   if (!enif_inspect_binary(env, argv[0], &bin) &&
       !enif_inspect_iolist_as_binary(env, argv[0], &bin))

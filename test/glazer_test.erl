@@ -313,3 +313,268 @@ split_at(Bin, Off, [P | Rest], Acc) ->
   Len = P - Off,
   <<Piece:Len/binary, Tail/binary>> = Bin,
   split_at(Tail, P, Rest, [Piece | Acc]).
+
+%% ----------------------------------------------------------------------------
+%% RFC 8259 golden tests
+%%
+%% These document glazer's conformance to RFC 8259 ("The JavaScript Object
+%% Notation (JSON) Data Interchange Format"), including the places where the
+%% parser is intentionally lenient (accepting inputs the grammar forbids).
+%% Lenient cases are marked as such; everything else reflects required
+%% behaviour.
+%% ----------------------------------------------------------------------------
+
+%% RFC 8259 §3 - literal names "true", "false", "null" are case-sensitive
+%% and must be lowercase.
+rfc8259_literals_test_() ->
+  [
+    ?_assertEqual(true,  glazer:decode(<<"true">>)),
+    ?_assertEqual(false, glazer:decode(<<"false">>)),
+    ?_assertEqual(null,  glazer:decode(<<"null">>)),
+
+    ?_assertError({parse_error, _}, glazer:decode(<<"True">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"TRUE">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"NULL">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"nul">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"tru">>))
+  ].
+
+%% RFC 8259 §6 - numbers.
+%% number = [ "-" ] int [ frac ] [ exp ]
+%% int    = "0" / (digit1-9 *DIGIT)
+%% frac   = "." 1*DIGIT
+%% exp    = ("e" / "E") ["-" / "+"] 1*DIGIT
+rfc8259_numbers_test_() ->
+  [
+    %% well-formed integers and floats
+    ?_assertEqual(0,     glazer:decode(<<"0">>)),
+    ?_assertEqual(42,    glazer:decode(<<"42">>)),
+    ?_assertEqual(-7,    glazer:decode(<<"-7">>)),
+    ?_assertEqual(3.14,  glazer:decode(<<"3.14">>)),
+    ?_assertEqual(1.0e10, glazer:decode(<<"1e10">>)),
+    ?_assertEqual(1.0e-10, glazer:decode(<<"1e-10">>)),
+    ?_assertEqual(1.5e3, glazer:decode(<<"1.5E+3">>)),
+
+    %% RFC 8259 forbids a leading '+' on numbers
+    ?_assertError({parse_error, _}, glazer:decode(<<"+1">>)),
+
+    %% RFC 8259 requires at least one digit before '.', and requires a digit
+    %% after '.'; a bare leading '.' is not a valid number
+    ?_assertError({parse_error, _}, glazer:decode(<<".5">>)),
+
+    %% --- Lenient deviations from strict RFC 8259 grammar ---
+
+    %% RFC 8259's `int` production forbids leading zeros (e.g. "01"), but
+    %% glazer accepts them.
+    ?_assertEqual(1,   glazer:decode(<<"01">>)),
+    ?_assertEqual(-1,  glazer:decode(<<"-01">>)),
+
+    %% "-0" / "0" are valid per the grammar and decode to 0.
+    ?_assertEqual(0,   glazer:decode(<<"-0">>)),
+
+    %% RFC 8259's `frac` production requires at least one digit after '.';
+    %% glazer accepts a trailing '.' with no digits.
+    ?_assertEqual(1.0, glazer:decode(<<"1.">>)),
+
+    %% RFC 8259's `exp` production requires at least one digit after
+    %% 'e'/'E' (with optional sign); glazer accepts an exponent with no
+    %% digits.
+    ?_assertEqual(1.0, glazer:decode(<<"1e">>))
+  ].
+
+%% RFC 8259 §7 - strings.
+%% Required escapes: \" \\ \/ \b \f \n \r \t \uXXXX. Unescaped control
+%% characters (U+0000-U+001F) are technically forbidden in strings.
+rfc8259_strings_test_() ->
+  [
+    ?_assertEqual(<<"hello">>,  glazer:decode(<<"\"hello\"">>)),
+    ?_assertEqual(<<"">>,       glazer:decode(<<"\"\"">>)),
+
+    %% standard escapes
+    ?_assertEqual(<<"\"">>,     glazer:decode(<<"\"\\\"\"">>)),
+    ?_assertEqual(<<"\\">>,     glazer:decode(<<"\"\\\\\"">>)),
+    ?_assertEqual(<<"/">>,      glazer:decode(<<"\"\\/\"">>)),
+    ?_assertEqual(<<"\b">>,     glazer:decode(<<"\"\\b\"">>)),
+    ?_assertEqual(<<"\f">>,     glazer:decode(<<"\"\\f\"">>)),
+    ?_assertEqual(<<"\n">>,     glazer:decode(<<"\"\\n\"">>)),
+    ?_assertEqual(<<"\r">>,     glazer:decode(<<"\"\\r\"">>)),
+    ?_assertEqual(<<"\t">>,     glazer:decode(<<"\"\\t\"">>)),
+
+    %% \uXXXX escapes, including a surrogate pair combined into one
+    %% UTF-8-encoded code point
+    ?_assertEqual(<<"A">>,      glazer:decode(<<"\"\\u0041\"">>)),
+    ?_assertEqual(<<240,159,152,128>>,
+                  glazer:decode(<<"\"\\ud83d\\ude00\"">>)),
+
+    %% an unterminated string is rejected
+    ?_assertError({parse_error, _}, glazer:decode(<<"\"unterminated">>)),
+
+    %% --- Lenient deviations from strict RFC 8259 grammar ---
+
+    %% RFC 8259 forbids unescaped control characters (e.g. raw tab) inside
+    %% strings; glazer passes them through unchanged.
+    ?_assertEqual(<<"a\tb">>,   glazer:decode(<<"\"a\tb\"">>)),
+
+    %% An unrecognised escape (e.g. "\x") is not part of the RFC 8259
+    %% grammar; glazer passes the backslash-prefixed text through verbatim
+    %% rather than rejecting it.
+    ?_assertEqual(<<"x41">>,    glazer:decode(<<"\"\\x41\"">>)),
+
+    %% A lone (unpaired) UTF-16 surrogate in a \u escape does not represent
+    %% a valid Unicode scalar value; glazer encodes it as WTF-8/CESU-8 bytes
+    %% rather than rejecting it.
+    ?_assertEqual(<<237,160,128>>, glazer:decode(<<"\"\\ud800\"">>)),
+    ?_assertEqual(<<237,176,128>>, glazer:decode(<<"\"\\udc00\"">>))
+  ].
+
+%% RFC 8259 §2, §4, §5 - whitespace, objects, and arrays.
+%% ws = *( %x20 / %x09 / %x0A / %x0D )
+%% Trailing/leading commas are not permitted by the object/array grammar.
+rfc8259_structure_test_() ->
+  [
+    %% insignificant whitespace (space, tab, LF, CR) around structural
+    %% characters and values is allowed
+    ?_assertEqual(#{<<"a">> => 1},
+                  glazer:decode(<<" \t\r\n{ \t\r\n\"a\"\t:\t1\t}\t\r\n">>)),
+    ?_assertEqual([1, 2, 3], glazer:decode(<<"[ 1 , 2 , 3 ]">>)),
+
+    %% trailing commas are rejected
+    ?_assertError({parse_error, _}, glazer:decode(<<"[1,2,]">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{\"a\":1,}">>)),
+
+    %% leading commas are rejected
+    ?_assertError({parse_error, _}, glazer:decode(<<"[,1]">>)),
+
+    %% JSON5-style extensions are rejected: single-quoted strings,
+    %% unquoted object keys, and comments are not part of RFC 8259
+    ?_assertError({parse_error, _}, glazer:decode(<<"{'a':1}">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{a:1}">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{\"a\":1 // comment\n}">>))
+  ].
+
+%% RFC 8259 §2 - "JSON-text = ws value ws": any of the seven JSON value
+%% types may appear at the top level (RFC 8259 relaxed RFC 4627, which
+%% required the top level to be an object or array), but nothing other than
+%% trailing whitespace may follow the value.
+rfc8259_top_level_test_() ->
+  [
+    ?_assertEqual(<<"hi">>, glazer:decode(<<"\"hi\"">>)),
+    ?_assertEqual(42,       glazer:decode(<<"42">>)),
+    ?_assertEqual(true,     glazer:decode(<<"true">>)),
+    ?_assertEqual(false,    glazer:decode(<<"false">>)),
+    ?_assertEqual(null,     glazer:decode(<<"null">>)),
+    ?_assertEqual([],       glazer:decode(<<"[]">>)),
+    ?_assertEqual(#{},      glazer:decode(<<"{}">>)),
+
+    %% empty input is not a valid JSON text
+    ?_assertError({parse_error, _}, glazer:decode(<<"">>)),
+
+    %% trailing whitespace after the value is allowed
+    ?_assertEqual(1, glazer:decode(<<"1   ">>)),
+    ?_assertEqual(1, glazer:decode(<<"  1  \t\r\n">>)),
+
+    %% trailing non-whitespace data after a complete value is rejected
+    ?_assertError({parse_error, _}, glazer:decode(<<"1 2">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"123abc">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"[1] [2]">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{} {}">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"true false">>)),
+
+    %% try_decode/1 reports the same trailing-garbage condition as an error
+    %% tuple instead of raising
+    ?_assertMatch({error, {parse_error, _}}, glazer:try_decode(<<"1 2">>))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% RFC 8259 §5 - unterminated arrays and objects.
+%%
+%% An array/object that ends (at EOF, or with a trailing comma followed by
+%% EOF) without a matching `]`/`}` is incomplete and must be rejected, not
+%% treated as if the closing bracket were implicitly present.
+%% ----------------------------------------------------------------------------
+rfc8259_unterminated_test_() ->
+  [
+    ?_assertError({parse_error, _}, glazer:decode(<<"[">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"[1,">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"{\"a\":1,">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"[\"a\",\n4\n,1,">>)),
+
+    %% sanity: the corresponding complete forms still decode correctly
+    ?_assertEqual([],               glazer:decode(<<"[]">>)),
+    ?_assertEqual(#{},              glazer:decode(<<"{}">>)),
+    ?_assertEqual([1],              glazer:decode(<<"[1]">>)),
+    ?_assertEqual(#{<<"a">> => 1},  glazer:decode(<<"{\"a\":1}">>))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% Maximum nesting depth.
+%%
+%% The recursive-descent parser bounds array/object nesting depth so that
+%% pathologically deep input (e.g. thousands of nested arrays) is rejected
+%% with a parse_error instead of overflowing the C stack.
+%% ----------------------------------------------------------------------------
+max_depth_test_() ->
+  [
+    %% moderately nested input decodes fine
+    ?_test(begin
+      N = 100,
+      Bin = iolist_to_binary([lists:duplicate(N, "["), "1", lists:duplicate(N, "]")]),
+      {ok, _} = glazer:try_decode(Bin)
+    end),
+
+    %% pathologically deep input is rejected, not crashed on
+    ?_test(begin
+      N = 100000,
+      Bin = iolist_to_binary([lists:duplicate(N, "["), "1", lists:duplicate(N, "]")]),
+      ?assertMatch({error, {parse_error, _}}, glazer:try_decode(Bin))
+    end),
+
+    %% 100,000 "[" characters with no value and no closing brackets. Exercises
+    %% the depth limit on unbalanced/incomplete input, not just balanced
+    %% nesting.
+    ?_test(begin
+      Bin = binary:copy(<<"[">>, 100000),
+      ?assertMatch({error, {parse_error, _}}, glazer:try_decode(Bin))
+    end)
+  ].
+
+%% ----------------------------------------------------------------------------
+%% JSONTestSuite (https://github.com/nst/JSONTestSuite) "i_" cases —
+%% inputs the spec leaves implementation-defined (parsers may accept or
+%% reject). These document glazer's actual choices; none is a conformance
+%% requirement.
+%% ----------------------------------------------------------------------------
+jsontestsuite_implementation_defined_test_() ->
+  [
+    %% Arbitrary-precision integers beyond uint64/int64 range are accepted
+    %% via bigint support, in either sign.
+    ?_assertEqual([100000000000000000000],
+                  glazer:decode(<<"[100000000000000000000]">>)),
+    ?_assertEqual([-237462374673276894279832749832423479823246327846],
+                  glazer:decode(<<"[-237462374673276894279832749832423479823246327846]">>)),
+
+    %% Numbers with an exponent so large/small that the magnitude over- or
+    %% underflows a double are rejected.
+    ?_assertError({parse_error, _}, glazer:decode(<<"[1e999]">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"[-1e999]">>)),
+    ?_assertError({parse_error, _}, glazer:decode(<<"[1e-999]">>)),
+
+    %% A byte-order mark (BOM) is not stripped or otherwise recognised; JSON
+    %% text must be UTF-8 without a BOM.
+    ?_assertError({parse_error, _}, glazer:decode(<<239,187,191, "{}">>)),
+
+    %% glazer does not validate that string contents are well-formed UTF-8:
+    %% invalid byte sequences (overlong encodings, lone continuation bytes,
+    %% truncated multi-byte sequences) are passed through unchanged as raw
+    %% bytes in the resulting binary.
+    ?_assertEqual([<<255>>],          glazer:decode(<<"[\"", 255, "\"]">>)),
+    ?_assertEqual([<<129>>],          glazer:decode(<<"[\"", 129, "\"]">>)),
+
+    %% 500 levels of array nesting is within MAX_DEPTH and decodes fine.
+    ?_test(begin
+      N = 500,
+      Bin = iolist_to_binary([lists:duplicate(N, "["), "[]", lists:duplicate(N, "]")]),
+      ?assertMatch({ok, _}, glazer:try_decode(Bin))
+    end)
+  ].
