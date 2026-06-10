@@ -86,13 +86,17 @@ private:
 
     while (remaining >= 9) {
       uint32_t chunk = 0;
-      for (int i = 0; i < 9; ++i) chunk = chunk * 10 + (ptr[i] - '0');
+      for (int i = 0; i < 9; ++i)
+        chunk = chunk * 10 + (ptr[i] - '0');
       mul_add(limbs, 1000000000u, chunk);
       ptr += 9; remaining -= 9;
     }
     if (remaining > 0) {
       uint32_t chunk = 0, mul = 1;
-      for (size_t i = 0; i < remaining; ++i) { chunk = chunk * 10 + (ptr[i] - '0'); mul *= 10; }
+      for (size_t i = 0; i < remaining; ++i) {
+        chunk = chunk * 10 + (ptr[i] - '0');
+        mul *= 10;
+      }
       mul_add(limbs, mul, chunk);
     }
 
@@ -103,7 +107,7 @@ private:
   static void mul_add(std::vector<uint32_t>& limbs, uint32_t mul, uint32_t add) {
     uint64_t carry = add;
     for (auto& w : limbs) {
-      uint64_t v = static_cast<uint64_t>(w) * mul + carry;
+      auto v = static_cast<uint64_t>(w) * mul + carry;
       w = static_cast<uint32_t>(v);
       carry = v >> 32;
     }

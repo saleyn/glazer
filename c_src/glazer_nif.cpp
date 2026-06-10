@@ -313,10 +313,10 @@ struct Decoder {
   // parse_value/parse_array/parse_object recurse on each nesting level, so
   // an unbounded depth can overflow the C stack and crash the whole VM.
   // This cap is well within the default thread stack size with room to
-  // spare for the rest of each frame, including under AddressSanitizer
-  // (whose redzones and shadow-memory checks inflate each frame
-  // considerably compared to a normal build).
-  static constexpr unsigned MAX_DEPTH = 440;
+  // spare for the rest of each frame, across compilers (gcc/clang) and
+  // under AddressSanitizer (whose redzones and shadow-memory checks inflate
+  // each frame considerably compared to a normal build).
+  static constexpr unsigned MAX_DEPTH = 256;
 
   Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
