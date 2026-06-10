@@ -29,6 +29,7 @@ help:
 	@echo "  doc          Generate documentation"
 	@echo ""
 	@echo "Publishing:"
+	@echo "  bump-version Increment patch version and commit"
 	@echo "  publish      Publish to hex.pm  (pass replace=1 to replace existing)"
 	@echo "  deprecate    Deprecate a hex.pm release  (pass vsn=X.Y.Z)"
 	@echo ""
@@ -125,4 +126,26 @@ deprecate:
 	fi
 	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
 
-.PHONY: all help doc compile clean distclean test memcheck nif optimize benchmark bench publish deprecate
+bump-version:
+	@FILE=$$(ls -1 src/*.app.src | head -n1); \
+	CURRENT=$$(grep -m1 '{vsn,' $$FILE | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/'); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
+	NEW=$$(echo "$${MAJOR}.$${MINOR}.$$((PATCH + 1))" | tr -d '\n'); \
+	echo "Bumping version from $${CURRENT} to $${NEW}"; \
+	sed -i "s/{vsn, \"$${CURRENT}\"}/{vsn, \"$${NEW}\"}/" $$FILE; \
+	echo "Changed: {vsn, \"$${CURRENT}\"} -> {vsn, \"$${NEW}\"}"; \
+	echo ""; \
+	read -p "Commit this change? [Y/n] " -n 1 -r || true; \
+	echo ""; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]] || [[ -z $$REPLY ]]; then \
+	  git commit -am "Bump version to $${NEW}"; \
+	else \
+	  echo "Aborted. Reverting rebar.config..."; \
+	  git checkout rebar.config; \
+	  exit 1; \
+	fi
+
+.PHONY: all help doc compile clean distclean test memcheck nif \
+        optimize benchmark bench publish deprecate bump-version
