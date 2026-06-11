@@ -114,7 +114,10 @@ jobs:
 
   windows:
     name: OTP ${{ matrix.otp }} windows
-    runs-on: windows-latest
+    # Pinned to windows-2022 (win22 image) — windows-latest now points at a
+    # win25-vs2026 image that erlef/setup-beam@v1 doesn't recognize yet.
+    # Revert to windows-latest once setup-beam adds win25 support.
+    runs-on: windows-2022
     #continue-on-error: true
     strategy:
       fail-fast: false
