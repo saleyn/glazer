@@ -133,6 +133,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
+          path-type: inherit
           install: >-
             mingw-w64-ucrt-x86_64-gcc
             make
