@@ -137,6 +137,11 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-gcc
             make
+      - name: Debug Erlang discovery
+        shell: msys2 {0}
+        run: |
+          which erl || echo "erl not found"
+          erl -noshell -noinput -eval 'io:format("root_dir=~ts~n",[code:root_dir()]),io:format("ei_include=~ts~n",[code:lib_dir(erl_interface,include)]),io:format("ei_lib=~ts~n",[code:lib_dir(erl_interface,lib)]),halt(0).'
       - name: Build
         shell: msys2 {0}
         env:
