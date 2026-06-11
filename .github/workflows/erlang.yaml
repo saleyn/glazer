@@ -115,7 +115,7 @@ jobs:
   windows:
     name: OTP ${{ matrix.otp }} windows
     runs-on: windows-latest
-    continue-on-error: true
+    #continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
