@@ -25,9 +25,9 @@ jobs:
       matrix:
         os: [ linux ]
         compiler:
-          - { compiler: GNU-14,  CC: gcc-14,      CXX: g++-14 }
-          - { compiler: GNU-12,  CC: gcc-12,      CXX: g++-12 }
-          - { compiler: LLVM-19, CC: clang-19,    CXX: clang++-19 }
+          - { compiler: GNU-14,  CC: gcc-14,   CXX: g++-14 }
+          - { compiler: GNU-12,  CC: gcc-12,   CXX: g++-12 }
+          - { compiler: LLVM-19, CC: clang-19, CXX: clang++-19 }
         otp: [27, 28, 29]
         exclude:
           # GCC 14 and clang 19 are only available in OTP 28 (Debian Bookworm+)
@@ -112,81 +112,40 @@ jobs:
           CXX: ${{ matrix.compiler.CXX }}
         run:  make test
 
-  create-tag:
-    name: Create Tag if Version Changed
-    runs-on: ubuntu-latest
-    needs: [linux, macOS]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  windows:
+    name: OTP ${{ matrix.otp }} windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: [27, 28, 29]
+
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v2
+      - name: Install Erlang/OTP
+        uses: erlef/setup-beam@v1
         with:
-          fetch-depth: 0
-          # Don't let checkout persist its own GITHUB_TOKEN credential helper —
-          # it conflicts with (and wins over) the RELEASE_PAT we embed in the
-          # push URL below, causing the push to authenticate as
-          # github-actions[bot] (which lacks permission) instead of RELEASE_PAT.
-          persist-credentials: false
-
-      - name: Get project version
-        id: project_version
-        run: |
-          VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Project version: $VERSION"
-
-      - name: Check if tag should be created
-        id: should_create_tag
-        run: |
-          PROJECT_VERSION="${{ steps.project_version.outputs.version }}"
-          MAX_TAG=$(git tag -l "*.*.*" | sed 's/^v//' | sort -V | tail -1)
-
-          if [ -z "$MAX_TAG" ]; then
-            echo "create_tag=true"   >> $GITHUB_OUTPUT
-            echo "First tag: $PROJECT_VERSION"
-          elif [ "$(printf '%s\n' "$MAX_TAG" "$PROJECT_VERSION" | sort -V | tail -1)" = "$PROJECT_VERSION" ] && [ "$MAX_TAG" != "$PROJECT_VERSION" ]; then
-            echo "create_tag=true"   >> $GITHUB_OUTPUT
-            echo "Project version $PROJECT_VERSION is greater than max tag $MAX_TAG, creating tag"
-          elif [ "$MAX_TAG" = "$PROJECT_VERSION" ]; then
-            # Same version as the latest tag: if that tag's commit was created less
-            # than an hour ago, assume this is a quick follow-up fix and re-tag/re-release
-            # rather than silently skipping.
-            TAG_COMMIT_TIME=$(git log -1 --format=%ct "$PROJECT_VERSION")
-            NOW=$(date +%s)
-            AGE=$((NOW - TAG_COMMIT_TIME))
-
-            if [ "$AGE" -lt 3600 ]; then
-              echo "create_tag=recreate" >> $GITHUB_OUTPUT
-              echo "Tag $PROJECT_VERSION's commit is ${AGE}s old (< 1h), recreating tag at current commit"
-            else
-              echo "create_tag=false" >> $GITHUB_OUTPUT
-              echo "Tag $PROJECT_VERSION already exists and its commit is ${AGE}s old (>= 1h), skipping"
-            fi
-          else
-            echo "create_tag=false" >> $GITHUB_OUTPUT
-            echo "Project version $PROJECT_VERSION is not greater than max tag $MAX_TAG, skipping tag creation"
-          fi
-
-      - name: Create and push tag
-        if: steps.should_create_tag.outputs.create_tag != 'false'
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: '3'
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+      - name: Build
         env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
-        run: |
-          VERSION="${{ steps.project_version.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          REMOTE="https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git"
-
-          git tag -f "$VERSION"
-
-          if [ "${{ steps.should_create_tag.outputs.create_tag }}" = "recreate" ]; then
-            echo "Force-pushing tag $VERSION to point at current commit"
-            git push --force "$REMOTE" "$VERSION"
-            echo "### :recycle: Recreated tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
-          else
-            git push "$REMOTE" "$VERSION"
-            echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
-          fi
-
+          CC:  gcc
+          CXX: g++
+        run:  make compile
+      - name: Test
+        env:
+          CC:  gcc
+          CXX: g++
+        run:  make test

@@ -1,10 +1,10 @@
 name: Release
-run-name: Release ${{ github.ref_name }}${{ github.event.forced && ' (re-tagged)' || '' }}
 
 on:
   push:
-    tags:
-      - "*.*.*"
+    branches: [ main ]
+    paths:
+      - "src/glazer.app.src"
   # Allow manual triggering via the GitHub UI or API.
   workflow_dispatch:
     inputs:
@@ -12,18 +12,134 @@ on:
         description: "Tag to release (optional, uses current ref if not provided)"
         required: false
         default: ""
+  schedule:
+    # Check hourly whether the latest version published to Hex.pm has a
+    # corresponding git tag yet, and create one if not.
+    - cron: "0 * * * *"
 
 jobs:
-  create-release:
-    name: Create Release
+  detect:
+    name: Detect Release
     runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      should_tag:     ${{ steps.resolve.outputs.should_tag }}
+      version:        ${{ steps.resolve.outputs.version }}
+      commit:         ${{ steps.resolve.outputs.commit }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      - name: Setup Elixir
+        if: github.event_name == 'schedule'
+        uses: erlef/setup-beam@v1
+        with:
+          # Latest that excludes pre-releases
+          otp-version: "> 0"
+          hexpm-mirrors: |
+            https://builds.hex.pm
+            https://cdn.jsdelivr.net/hex
+
+      - name: Resolve release target
+        id: resolve
+        run: |
+          get_version() { sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' "$1" | head -1; }
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.tag }}" ]; then
+              echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+              echo "commit=${{ github.event.inputs.tag }}"  >> $GITHUB_OUTPUT
+            else
+              VERSION=$(get_version src/glazer.app.src)
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+            fi
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "should_tag=false"    >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=$(get_version src/glazer.app.src)
+            PARENT_VERSION=$(git show "HEAD^:src/glazer.app.src" 2>/dev/null | get_version /dev/stdin || echo "")
+
+            if [ "$VERSION" != "$PARENT_VERSION" ]; then
+              echo "Version changed: $PARENT_VERSION -> $VERSION"
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "Version unchanged ($VERSION), skipping release"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+            echo "should_tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # schedule: check whether the latest version published to Hex.pm
+          # already has a matching git tag; if not, create one.
+          echo "should_release=false" >> $GITHUB_OUTPUT
+
+          APP="glazer"
+          INFO=$(mix hex.info "$APP" 2>/dev/null)
+          VSNS=$(printf '%s\n' "$INFO" | awk '
+            /^Releases:/ { sub(/^Releases:[[:space:]]*/, ""); print; exit }
+            /^Recent releases:/ { recent=1; next }
+            recent && /^[[:space:]]*[0-9]/ { sub(/^[[:space:]]*/, ""); print; next }
+            recent && !/^[[:space:]]/ { exit }
+          ')
+          PUBLISHED=$(printf '%s\n' "$VSNS" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | awk 'NR==1 {print $1}')
+
+          if [ -z "$PUBLISHED" ]; then
+            echo "Could not determine latest published version, skipping"
+            echo "should_tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if git tag -l "$PUBLISHED" | grep -q .; then
+            echo "Tag $PUBLISHED already exists, skipping"
+            echo "should_tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find the commit that introduced this version in glazer.app.src.
+          COMMIT=""
+          for sha in $(git log --format=%H -- src/glazer.app.src); do
+            VER=$(git show "$sha:src/glazer.app.src" | get_version /dev/stdin)
+            if [ "$VER" = "$PUBLISHED" ]; then
+              COMMIT="$sha"
+            else
+              break
+            fi
+          done
+
+          if [ -z "$COMMIT" ]; then
+            echo "No commit on main introduces version $PUBLISHED, skipping"
+            echo "should_tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Hex.pm has unreleased tag for version $PUBLISHED (commit $COMMIT)"
+          echo "version=$PUBLISHED" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
+          echo "should_tag=true"    >> $GITHUB_OUTPUT
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [detect]
+    if: needs.detect.outputs.should_release == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.detect.outputs.commit }}
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -34,23 +150,11 @@ jobs:
             https://builds.hex.pm
             https://cdn.jsdelivr.net/hex
 
-      - name: Get release version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
-
       - name: Get changelog entry
         id: changelog
         run: |
           # Extract changelog for this version
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.detect.outputs.version }}"
           # Look for the version in CHANGELOG.md or fall back to git log
           if [ -f "CHANGELOG.md" ]; then
             # Extract section between version header and next version header
@@ -68,24 +172,15 @@ jobs:
   publish-to-hex:
     name: Publish to Hex.pm
     runs-on: ubuntu-latest
+    needs: [detect]
+    if: needs.detect.outputs.should_release == 'true'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Get current tag version
-        id: current_version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' src/glazer.app.src | head -1)
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
+          ref: ${{ needs.detect.outputs.commit }}
 
       - name: Setup Rebar3
         uses: erlef/setup-beam@v1
@@ -101,7 +196,7 @@ jobs:
       - name: Check if version is already published
         id: should_publish
         run: |
-          VERSION="${{ steps.current_version.outputs.version }}"
+          VERSION="${{ needs.detect.outputs.version }}"
           APP="glazer"
           TODAY=$(date +%Y-%m-%d)
 
@@ -121,7 +216,7 @@ jobs:
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
         run: |
-          VERSION="${{ steps.current_version.outputs.version }}"
+          VERSION="${{ needs.detect.outputs.version }}"
           APP="glazer"
           if [ "${{ steps.should_publish.outputs.publish }}" = "replace" ]; then
             echo "Replacing $APP $VERSION (published today)"
@@ -173,3 +268,37 @@ jobs:
           done
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+  create-tag:
+    name: Create Tag
+    runs-on: ubuntu-latest
+    needs: [detect]
+    # The scheduled job tags the latest version that's already on Hex.pm
+    # but doesn't yet have a git tag.
+    if: github.event_name == 'schedule' && needs.detect.outputs.should_tag == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Don't let checkout persist its own GITHUB_TOKEN credential helper —
+          # it conflicts with (and wins over) the RELEASE_PAT we embed in the
+          # push URL below, causing the push to authenticate as
+          # github-actions[bot] (which lacks permission) instead of RELEASE_PAT.
+          persist-credentials: false
+
+      - name: Create and push tag
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          COMMIT="${{ needs.detect.outputs.commit }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          REMOTE="https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git"
+
+          git tag "$VERSION" "$COMMIT"
+          git push "$REMOTE" "$VERSION"
+          echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short "$COMMIT")\`" >> $GITHUB_STEP_SUMMARY
