@@ -7,8 +7,16 @@ DEBUG    ?= 0
 
 SRC      := glazer_nif.cpp
 OBJ      := $(OBJ_DIR)/glazer_nif.o
-TARGET   := $(PRIV_DIR)/glazer.so
 
+# erlang:load_nif/2 appends the platform-specific extension itself
+# (.dll on Windows, .so elsewhere), so the build output must match.
+ifneq (,$(findstring MINGW,$(shell uname -s))$(findstring MSYS,$(shell uname -s)))
+  EXT := .dll
+else
+  EXT := .so
+endif
+
+TARGET           := $(PRIV_DIR)/glazer$(EXT)
 ERL_ERTS_INCLUDE := $(shell erl -noshell -noinput \
   -eval "io:format(\"~ts/erts-~ts/include\",[code:root_dir(),erlang:system_info(version)]),halt(0).")
 ERL_EI_INCLUDE   := $(shell erl -noshell -noinput \
