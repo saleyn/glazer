@@ -6,20 +6,6 @@
 //         Erlang terms directly in a single pass, mirroring the philosophy
 //         of the JSON decoder in glazer_json.hpp (no intermediate tree).
 //
-// Implemented (Steps 1-4): block mappings/sequences (incl. nested), plain
-// scalars (incl. multi-line folding), single- and double-quoted scalars
-// (with full newline folding / escape handling), comments, implicit scalar
-// typing (YAML 1.2 core schema by default, with an opt-in `yaml_1_1_bools`
-// mode), `---`/`...` document markers tolerated as no-ops (single document
-// only), flow-style collections ({...}/[...], incl. nesting in/under block
-// constructs, trailing commas, and the `[k: v]` single-pair mapping
-// shorthand), block scalars (|/> with chomping and indentation indicators),
-// and anchors/aliases (&name/*name; aliases share the anchored
-// ERL_NIF_TERM — Erlang terms are immutable, so no copy is needed; cyclic
-// aliases surface as "undefined alias" since an anchor is only registered
-// once its node is complete; anchor names may be re-bound per YAML 1.2).
-// Block constructs inside flow collections are rejected per spec.
-//
 // Not yet implemented: tags (!!str etc.), multi-document streams, complex
 // (collection) mapping keys, merge-key (<<) semantics, anchors on mapping
 // keys, top-level (root-node) anchors/aliases.
@@ -27,8 +13,10 @@
 #pragma once
 
 #include <cassert>
+#include <cctype>
 #include <charconv>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -71,6 +59,25 @@ static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecode
           else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.label_atom = false; opts.label_existing_atom = false; }
         }
       }
+    }
+  }
+  return true;
+}
+
+struct YamlEncodeOpts {
+  ERL_NIF_TERM null_term = 0;
+};
+
+static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlEncodeOpts& opts)
+{
+  ERL_NIF_TERM head, tail = list;
+  while (enif_get_list_cell(env, tail, &head, &tail)) {
+    if (enif_is_identical(head, AM_USE_NIL)) opts.null_term = AM_NIL;
+    else {
+      int arity; const ERL_NIF_TERM* tp;
+      if (enif_get_tuple(env, head, &arity, &tp) && arity == 2)
+        if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
+          opts.null_term = tp[1];
     }
   }
   return true;
@@ -609,21 +616,21 @@ struct YamlDecoder {
   ERL_NIF_TERM resolve_plain_scalar(std::string_view s) {
     if (s.empty() || s == "~" || s == "null" || s == "Null" || s == "NULL")
       return m_opts.null_term;
-    if (s == "true" || s == "True" || s == "TRUE")  return AM_TRUE;
+    if (s == "true"  || s == "True"  || s == "TRUE")  return AM_TRUE;
     if (s == "false" || s == "False" || s == "FALSE") return AM_FALSE;
     if (m_opts.yaml_1_1_bools) {
-      if (s == "yes" || s == "Yes" || s == "YES" ||
-          s == "on"  || s == "On"  || s == "ON")
+      if (s == "yes" || s == "Yes"   || s == "YES" ||
+          s == "on"  || s == "On"    || s == "ON")
         return AM_TRUE;
-      if (s == "no" || s == "No" || s == "NO" ||
-          s == "off" || s == "Off" || s == "OFF")
+      if (s == "no"  || s == "No"    || s == "NO" ||
+          s == "off" || s == "Off"   || s == "OFF")
         return AM_FALSE;
     }
-    if (s == ".inf" || s == ".Inf" || s == ".INF" || s == "+.inf" || s == "+.Inf" || s == "+.INF")
+    if (s == ".inf"  || s == ".Inf"  || s == ".INF" || s == "+.inf" || s == "+.Inf" || s == "+.INF")
       return AM_INFINITY;
     if (s == "-.inf" || s == "-.Inf" || s == "-.INF")
       return AM_NEG_INFINITY;
-    if (s == ".nan" || s == ".NaN" || s == ".NAN")
+    if (s == ".nan"  || s == ".NaN"  || s == ".NAN")
       return AM_NAN;
 
     if (ERL_NIF_TERM num = try_parse_number(s)) return num;
@@ -777,6 +784,13 @@ struct YamlDecoder {
         }
         return parse_block(next_indent);
       }
+      // A block sequence is allowed at the same indentation as the mapping
+      // key that owns it (e.g. "imp:\n- id: x"), per spec.
+      if (next_indent == min_indent) {
+        const char* q = m_p + next_indent;
+        if (q < m_end && *q == '-' && (q + 1 >= m_end || is_blank(q[1]) || is_break(q[1])))
+          return parse_sequence(next_indent);
+      }
       m_p = save;
       return m_opts.null_term;
     }
@@ -870,15 +884,19 @@ struct YamlDecoder {
     SmallTermVec<16> items;
     bool first = !at_line_start;
     for (;;) {
+      const char* line_start_p = m_p;
       if (!first) {
         skip_blank_and_comment_lines();
+        line_start_p = m_p;
         if (at_end() || peek_indent() != indent) break;
         m_p += indent;
       }
       first = false;
       const char* p = m_p;
-      if (!(p < m_end && *p == '-' && (p + 1 >= m_end || is_blank(p[1]) || is_break(p[1]))))
+      if (!(p < m_end && *p == '-' && (p + 1 >= m_end || is_blank(p[1]) || is_break(p[1])))) {
+        m_p = line_start_p;
         break;
+      }
       m_p = p + 1; // consume '-'
       skip_blanks();
 
@@ -899,14 +917,16 @@ struct YamlDecoder {
     SmallTermVec<16> ks, vs;
     bool first = !at_line_start;
     for (;;) {
+      const char* line_start_p = m_p;
       if (!first) {
         skip_blank_and_comment_lines();
+        line_start_p = m_p;
         if (at_end() || peek_indent() != indent) break;
         m_p += indent;
       }
       first = false;
       if (m_p < m_end && *m_p == '-' && (m_p + 1 >= m_end || is_blank(m_p[1]) || is_break(m_p[1])))
-        break; // sequence item at this indent — not part of this mapping
+        { m_p = line_start_p; break; } // sequence item at this indent — not part of this mapping
 
       // Parse the key (plain or quoted scalar, up to ':').
       ERL_NIF_TERM key_term;
@@ -1238,7 +1258,7 @@ struct YamlDecoder {
     }
 
     ERL_NIF_TERM map;
-    if (enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map))
+    if (enif_make_map_from_arrays(m_env, ks.data(), vs.data(), unsigned(ks.size()), &map))
       return map;
     // Dedupe, keeping last value for duplicate keys.
     map = enif_make_new_map(m_env);
@@ -1310,15 +1330,13 @@ struct YamlDecoder {
       std::string msg = m_err.empty()
         ? ("YAML parse error at offset " + std::to_string(m_p - m_beg))
         : (m_err + " at offset " + std::to_string(m_p - m_beg));
-      return enif_make_tuple2(m_env, AM_ERROR,
-        enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
+      return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
     }
 
     skip_blank_and_comment_lines();
     if (!at_end()) {
       std::string msg = "trailing content at offset " + std::to_string(m_p - m_beg);
-      return enif_make_tuple2(m_env, AM_ERROR,
-        enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
+      return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
     }
 
     return enif_make_tuple2(m_env, AM_OK, result);
@@ -1356,5 +1374,451 @@ struct YamlDecoder {
     }
     m_p = save;
     return found;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Erlang-term -> YAML encoder (block style, 2-space indentation)
+//
+// Mirrors the JSON encoder's term-dispatch shape, but writes block-style
+// YAML: nested mappings/sequences are indented two spaces per level, with
+// sequences placed at the *same* indentation as the mapping key that owns
+// them (the style produced by PyYAML/libyaml and accepted by the decoder
+// above). Empty maps/sequences fall back to flow style (`{}` / `[]`) since
+// block style has no representation for them.
+//
+// Scalars are emitted in plain style where unambiguous, single-quoted where
+// quoting is needed but the content is plain UTF-8 with no control
+// characters, and double-quoted (with full escaping) otherwise.
+// ---------------------------------------------------------------------------
+
+struct YamlEncoder {
+  ErlNifEnv*            m_env;
+  const YamlEncodeOpts& m_opts;
+  OutBuf&               m_out;
+  char                  m_atom_buf[256];
+
+  // -------------------------------------------------------------------------
+  // Scalar string analysis / emission
+  // -------------------------------------------------------------------------
+
+  // Returns true if `s`, written unquoted, would be re-read by the core
+  // schema as something other than a string (null/bool/number/special
+  // float), per resolve_plain_scalar's rules in the decoder above.
+  //
+  // Dispatches on the first character first: every literal this function
+  // recognizes (and every numeric scalar) starts with one of
+  // "~ntfyYNoO.+-0123456789", so plain words like "Alice" or "NYC" bail out
+  // after a single branch instead of running the full literal/number checks.
+  static bool looks_like_non_string_scalar(std::string_view s) {
+    if (s.empty()) return true;
+    switch (s.front()) {
+      case '~':
+        return s == "~";
+      case 'n': return s == "null"  || s == "no";
+      case 'N': return s == "Null"  || s == "NULL" || s == "No" || s == "NO";
+      case 't': return s == "true";
+      case 'T': return s == "True"  || s == "TRUE";
+      case 'f': return s == "false";
+      case 'F': return s == "False" || s == "FALSE";
+      case 'y': return s == "yes";
+      case 'Y': return s == "Yes"   || s == "YES";
+      case 'O': return s == "On"    || s == "ON" || s == "Off" || s == "OFF";
+      case 'o': return s == "on"    || s == "off";
+      case '.':
+        return s == ".inf" || s == ".Inf" || s == ".INF" ||
+               s == ".nan" || s == ".NaN" || s == ".NAN";
+      case '+': case '-':
+        if (s == "+.inf" || s == "+.Inf" || s == "+.INF" ||
+            s == "-.inf" || s == "-.Inf" || s == "-.INF")
+          return true;
+        break;
+      case '0': case '1': case '2': case '3': case '4':
+      case '5': case '6': case '7': case '8': case '9':
+        break;
+      default:
+        return false;
+    }
+
+    // Looks like a YAML core-schema int/float (decimal, hex, octal)?
+    const char* p = s.data();
+    const char* end = p + s.size();
+    if (*p == '+' || *p == '-') ++p;
+    if (p == end) return false;
+    if (*p == '0' && p + 1 < end && (p[1] == 'x' || p[1] == 'X' || p[1] == 'o' || p[1] == 'O')) {
+      for (const char* q = p + 2; q < end; ++q)
+        if (!std::isxdigit((unsigned char)*q)) return false;
+      return p + 2 < end;
+    }
+    bool has_digit = false, has_dot = false, has_exp = false;
+    for (const char* q = p; q < end; ++q) {
+      char c = *q;
+      if (c >= '0' && c <= '9') { has_digit = true; continue; }
+      if (c == '.' && !has_dot && !has_exp) { has_dot = true; continue; }
+      if ((c == 'e' || c == 'E') && has_digit && !has_exp) {
+        has_exp = true;
+        if (q + 1 < end && (q[1] == '+' || q[1] == '-')) ++q;
+        continue;
+      }
+      return false;
+    }
+    return has_digit;
+  }
+
+  static inline bool is_indicator_char(char c) {
+    switch (c) {
+      case '-': case '?': case ':': case ',': case '[': case ']': case '{': case '}':
+      case '#': case '&': case '*': case '!': case '|': case '>': case '\'': case '"':
+      case '%': case '@': case '`':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // Returns true if `s` contains a byte that forces double-quoting (control
+  // characters other than plain printable text — single-quoted scalars
+  // cannot represent these).
+  static bool needs_double_quote(std::string_view s) {
+    for (unsigned char c : s)
+      if (c < 0x20) return true;
+    return false;
+  }
+
+  // Returns true if `s` can be written as a YAML plain scalar without any
+  // quoting, in the contexts this encoder uses (block mapping value / block
+  // sequence item, single-line content only).
+  static bool is_safe_plain_scalar(std::string_view s) {
+    if (s.empty()) return false;
+    if (looks_like_non_string_scalar(s)) return false;
+
+    char first = s.front();
+    if (is_indicator_char(first)) return false;
+    // A leading '-', '?', ':' is always disallowed above for simplicity
+    // (matches common emitters and avoids edge cases).
+    if (first == ' ' || s.back() == ' ') return false;
+
+    // Single pass: control chars force double-quoting; ": " / trailing ':'
+    // and " #" are plain-scalar-ending sequences.
+    for (size_t i = 0; i < s.size(); ++i) {
+      unsigned char c = s[i];
+      if (c < 0x20) return false;
+      if (c == ':' && (i + 1 == s.size() || s[i+1] == ' ')) return false;
+      if (c == '#' && i > 0 && s[i-1] == ' ') return false;
+    }
+    return true;
+  }
+
+  // Emit `s` single-quoted, doubling embedded single quotes.
+  void emit_single_quoted(std::string_view s) {
+    m_out.push('\'');
+    const char* p = s.data();
+    const char* end = p + s.size();
+    const char* run = p;
+    while (p < end) {
+      if (*p == '\'') {
+        if (p > run) m_out.push(run, p - run);
+        m_out.push("''", 2);
+        ++p;
+        run = p;
+      } else {
+        ++p;
+      }
+    }
+    if (p > run) m_out.push(run, p - run);
+    m_out.push('\'');
+  }
+
+  // Emit `s` double-quoted with full C-style escaping (the JSON-compatible
+  // escape subset is always valid YAML).
+  void emit_double_quoted(std::string_view s) {
+    m_out.push('"');
+    for (unsigned char c : s) {
+      switch (c) {
+        case '"':  m_out.push("\\\"", 2); break;
+        case '\\': m_out.push("\\\\", 2); break;
+        case '\n': m_out.push("\\n",  2); break;
+        case '\r': m_out.push("\\r",  2); break;
+        case '\t': m_out.push("\\t",  2); break;
+        case '\b': m_out.push("\\b",  2); break;
+        case '\f': m_out.push("\\f",  2); break;
+        default:
+          if (c < 0x20) { char esc[6]; write_uescape(esc, c); m_out.push(esc, 6); }
+          else            m_out.push((char)c);
+          break;
+      }
+    }
+    m_out.push('"');
+  }
+
+  // Emit a string scalar, choosing plain / single-quoted / double-quoted.
+  void emit_string_scalar(std::string_view s) {
+    if (is_safe_plain_scalar(s))    m_out.push(s);
+    else if (needs_double_quote(s)) emit_double_quoted(s);
+    else                             emit_single_quoted(s);
+  }
+
+  // -------------------------------------------------------------------------
+  // Top-level entry point
+  // -------------------------------------------------------------------------
+
+  bool encode(ERL_NIF_TERM term) {
+    if (!encode_node(term, 0)) return false;
+    m_out.push('\n');
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Node dispatch
+  //
+  // `indent` is the column of the container that owns the node currently
+  // being encoded. Scalars are written inline; collections recurse with
+  // indent+2 (mappings) or the same indent (sequences nested directly under
+  // a mapping key, per the same-indent convention the decoder accepts).
+  // -------------------------------------------------------------------------
+
+  bool encode_node(ERL_NIF_TERM term, size_t indent) {
+    switch (enif_term_type(m_env, term)) {
+      case ERL_NIF_TERM_TYPE_BITSTRING: {
+        ErlNifBinary bin;
+        if (!enif_inspect_binary(m_env, term, &bin)) return false;
+        emit_string_scalar({reinterpret_cast<const char*>(bin.data), bin.size});
+        return true;
+      }
+
+      case ERL_NIF_TERM_TYPE_INTEGER:
+        return glazer::BigInt::encode(m_env, term, m_out);
+
+      case ERL_NIF_TERM_TYPE_FLOAT:
+        return encode_float(term);
+
+      case ERL_NIF_TERM_TYPE_ATOM:
+        return encode_atom(term);
+
+      case ERL_NIF_TERM_TYPE_MAP: {
+        size_t size;
+        enif_get_map_size(m_env, term, &size);
+        if (size == 0) { m_out.push("{}", 2); return true; }
+        return encode_map(term, indent);
+      }
+
+      case ERL_NIF_TERM_TYPE_LIST:
+        if (enif_is_empty_list(m_env, term)) { m_out.push("[]", 2); return true; }
+        return encode_sequence(term, indent);
+
+      case ERL_NIF_TERM_TYPE_TUPLE: {
+        // {[{K,V}...]} proplist -> mapping
+        int arity; const ERL_NIF_TERM* tp;
+        enif_get_tuple(m_env, term, &arity, &tp);
+        if (arity == 1 && enif_is_list(m_env, tp[0])) {
+          if (enif_is_empty_list(m_env, tp[0])) { m_out.push("{}", 2); return true; }
+          return encode_proplist(tp[0], indent);
+        }
+        return false;
+      }
+
+      default:
+        return false;
+    }
+  }
+
+  bool encode_float(ERL_NIF_TERM term) {
+    double d;
+    if (!enif_get_double(m_env, term, &d)) return false;
+    if (std::isnan(d)) { m_out.push(".nan", 4); return true; }
+    if (std::isinf(d)) {
+      if (d < 0) m_out.push("-.inf", 5);
+      else       m_out.push(".inf", 4);
+      return true;
+    }
+    char buf[32];
+    auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
+    if (ec == std::errc{}) {
+      bool has_dot = false;
+      for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
+      m_out.push(buf, e - buf);
+      if (!has_dot) m_out.push(".0", 2);
+    } else {
+      int n = snprintf(buf, sizeof(buf), "%.17g", d);
+      m_out.push(buf, n);
+    }
+    return true;
+  }
+
+  bool encode_atom(ERL_NIF_TERM term) {
+    if (m_opts.null_term && enif_is_identical(term, m_opts.null_term)) { m_out.push("null", 4); return true; }
+    if (enif_is_identical(term, AM_TRUE))         { m_out.push("true",  4); return true; }
+    if (enif_is_identical(term, AM_FALSE))        { m_out.push("false", 5); return true; }
+    if (enif_is_identical(term, AM_NULL))         { m_out.push("null",  4); return true; }
+    if (enif_is_identical(term, AM_NIL))          { m_out.push("null",  4); return true; }
+    if (enif_is_identical(term, AM_INFINITY))     { m_out.push(".inf",  4); return true; }
+    if (enif_is_identical(term, AM_NEG_INFINITY)) { m_out.push("-.inf", 5); return true; }
+    if (enif_is_identical(term, AM_NAN))          { m_out.push(".nan",  4); return true; }
+    std::string_view sv;
+    if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
+    emit_string_scalar(sv);
+    return true;
+  }
+
+  static void push_indent(OutBuf& out, size_t n) {
+    static constexpr char SPACES[] = "                                ";  // 32 spaces
+    while (n >= sizeof(SPACES) - 1) { out.push(SPACES, sizeof(SPACES) - 1); n -= sizeof(SPACES) - 1; }
+    if (n) out.push(SPACES, n);
+  }
+
+  // Encodes the value of a mapping key at the given indent (the column of
+  // the key itself). Scalars are written inline after "key: "; collections
+  // start on the next line(s): nested mappings indent to indent+2, nested
+  // sequences are placed at the same `indent` (same-indent convention).
+  bool encode_map_value(ERL_NIF_TERM term, size_t indent) {
+    switch (enif_term_type(m_env, term)) {
+      case ERL_NIF_TERM_TYPE_MAP: {
+        size_t size;
+        enif_get_map_size(m_env, term, &size);
+        if (size == 0) { m_out.push(" {}", 3); return true; }
+        m_out.push('\n');
+        return encode_map(term, indent + 2);
+      }
+      case ERL_NIF_TERM_TYPE_LIST: {
+        if (enif_is_empty_list(m_env, term)) { m_out.push(" []", 3); return true; }
+        m_out.push('\n');
+        return encode_sequence(term, indent);
+      }
+      case ERL_NIF_TERM_TYPE_TUPLE: {
+        int arity; const ERL_NIF_TERM* tp;
+        enif_get_tuple(m_env, term, &arity, &tp);
+        if (arity == 1 && enif_is_list(m_env, tp[0])) {
+          if (enif_is_empty_list(m_env, tp[0])) { m_out.push(" {}", 3); return true; }
+          m_out.push('\n');
+          return encode_proplist(tp[0], indent + 2);
+        }
+        return false;
+      }
+      default:
+        m_out.push(' ');
+        return encode_node(term, indent);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Mappings / sequences
+  // -------------------------------------------------------------------------
+
+  // `at_line_start` is false when the first entry continues a line already
+  // begun by the caller (e.g. right after "- " for a mapping that is a
+  // sequence item) — in that case the first entry's indent is skipped.
+  bool encode_map(ERL_NIF_TERM term, size_t indent, bool at_line_start = true) {
+    ErlNifMapIterator iter;
+    if (!enif_map_iterator_create(m_env, term, &iter, ERL_NIF_MAP_ITERATOR_FIRST))
+      return false;
+
+    ERL_NIF_TERM k, v;
+    bool first = true;
+    bool ok = true;
+    while (enif_map_iterator_get_pair(m_env, &iter, &k, &v)) {
+      if (!first || at_line_start) { if (!first) m_out.push('\n'); push_indent(m_out, indent); }
+      first = false;
+      if (!encode_key(k) || !encode_map_value(v, indent)) { ok = false; break; }
+      enif_map_iterator_next(m_env, &iter);
+    }
+    enif_map_iterator_destroy(m_env, &iter);
+    return ok;
+  }
+
+  bool encode_proplist(ERL_NIF_TERM list, size_t indent, bool at_line_start = true) {
+    ERL_NIF_TERM h, t = list;
+    bool first = true;
+    while (enif_get_list_cell(m_env, t, &h, &t)) {
+      int pa; const ERL_NIF_TERM* pp;
+      if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) return false;
+      if (!first || at_line_start) { if (!first) m_out.push('\n'); push_indent(m_out, indent); }
+      first = false;
+      if (!encode_key(pp[0]) || !encode_map_value(pp[1], indent)) return false;
+    }
+    return true;
+  }
+
+  bool encode_key(ERL_NIF_TERM k) {
+    switch (enif_term_type(m_env, k)) {
+      case ERL_NIF_TERM_TYPE_BITSTRING: {
+        ErlNifBinary bin;
+        if (!enif_inspect_binary(m_env, k, &bin)) return false;
+        emit_string_scalar({reinterpret_cast<const char*>(bin.data), bin.size});
+        break;
+      }
+      case ERL_NIF_TERM_TYPE_ATOM: {
+        std::string_view sv;
+        if (!atom_to_sv(m_env, k, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
+        emit_string_scalar(sv);
+        break;
+      }
+      case ERL_NIF_TERM_TYPE_INTEGER:
+        if (!glazer::BigInt::encode(m_env, k, m_out)) return false;
+        break;
+      default:
+        return false;
+    }
+    m_out.push(':');
+    return true;
+  }
+
+  // Sequence items are placed at `indent` (the same column as the mapping
+  // key that owns the sequence, or 0 at the document root), each starting
+  // with "- ". Nested mappings under a "- " continue at indent+2.
+  bool encode_sequence(ERL_NIF_TERM list, size_t indent) {
+    ERL_NIF_TERM h, t = list;
+    bool first = true;
+    while (enif_get_list_cell(m_env, t, &h, &t)) {
+      if (!first) m_out.push('\n');
+      first = false;
+      push_indent(m_out, indent);
+      m_out.push("- ", 2);
+      if (!encode_item(h, indent + 2)) return false;
+    }
+    return true;
+  }
+
+  // Encodes a sequence item, which sits right after "- " on the dash's line.
+  bool encode_item(ERL_NIF_TERM term, size_t indent) {
+    switch (enif_term_type(m_env, term)) {
+      case ERL_NIF_TERM_TYPE_MAP: {
+        size_t size;
+        enif_get_map_size(m_env, term, &size);
+        if (size == 0) { m_out.push("{}", 2); return true; }
+        return encode_map(term, indent, false);
+      }
+      case ERL_NIF_TERM_TYPE_LIST: {
+        if (enif_is_empty_list(m_env, term)) { m_out.push("[]", 2); return true; }
+        // A nested sequence item: "- - ..." (the inner sequence's first
+        // dash immediately follows this item's "- ").
+        return encode_sequence_inline(term, indent);
+      }
+      case ERL_NIF_TERM_TYPE_TUPLE: {
+        int arity; const ERL_NIF_TERM* tp;
+        enif_get_tuple(m_env, term, &arity, &tp);
+        if (arity == 1 && enif_is_list(m_env, tp[0])) {
+          if (enif_is_empty_list(m_env, tp[0])) { m_out.push("{}", 2); return true; }
+          return encode_proplist(tp[0], indent, false);
+        }
+        return false;
+      }
+      default:
+        return encode_node(term, indent);
+    }
+  }
+
+  // A sequence nested directly inside another sequence's item: the first
+  // "- " has already been written by the caller; subsequent items continue
+  // on their own line at `indent` ("- - first\n  - second").
+  bool encode_sequence_inline(ERL_NIF_TERM list, size_t indent) {
+    ERL_NIF_TERM h, t = list;
+    bool first = true;
+    while (enif_get_list_cell(m_env, t, &h, &t)) {
+      if (!first) { m_out.push('\n'); push_indent(m_out, indent); }
+      m_out.push("- ", 2);
+      if (!encode_item(h, indent + 2)) return false;
+      first = false;
+    }
+    return true;
   }
 };

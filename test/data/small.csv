@@ -1,0 +1,11 @@
+id,name,email,score,active,description
+1,"User 1, Jr.",user1@example.com,40.5029,false,"This is a sample description for record number 1 with some ""quoted"" text."
+2,"User 2, Jr.",user2@example.com,45.3367,true,"This is a sample description for record number 2 with some ""quoted"" text."
+3,"User 3, Jr.",user3@example.com,4.0945,false,"This is a sample description for record number 3 with some ""quoted"" text."
+4,"User 4, Jr.",user4@example.com,8.4802,true,"This is a sample description for record number 4 with some ""quoted"" text."
+5,"User 5, Jr.",user5@example.com,86.5823,false,"This is a sample description for record number 5 with some ""quoted"" text."
+6,"User 6, Jr.",user6@example.com,53.3506,true,"This is a sample description for record number 6 with some ""quoted"" text."
+7,"User 7, Jr.",user7@example.com,73.5284,false,"This is a sample description for record number 7 with some ""quoted"" text."
+8,"User 8, Jr.",user8@example.com,27.0841,true,"This is a sample description for record number 8 with some ""quoted"" text."
+9,"User 9, Jr.",user9@example.com,93.5460,false,"This is a sample description for record number 9 with some ""quoted"" text."
+10,"User 10, Jr.",user10@example.com,92.7523,true,"This is a sample description for record number 10 with some ""quoted"" text."

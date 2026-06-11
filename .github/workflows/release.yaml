@@ -4,14 +4,19 @@ on:
   schedule:
     # Check hourly whether the latest non-retired version published to
     # Hex.pm has a corresponding git tag yet, and create one if its
-    # version-bump commit is at least 6 hours old. The age check gives
-    # room for amended re-publishes of the same version on Hex.pm before
-    # it gets tagged.
+    # version-bump commit is at least MIN_AGE_HOURS old (see env below).
+    # The age check gives room for amended re-publishes of the same version
+    # on Hex.pm before it gets tagged.
     - cron: "0 * * * *"
+
+env:
+  # Minimum age (in hours) of a version-bump commit before it gets tagged.
+  # Gives room for amended re-publishes of the same version on Hex.pm.
+  MIN_AGE_HOURS: 1
 
 jobs:
   detect:
-    name: Detect Release
+    name: Detect latest hex.pm release
     runs-on: ubuntu-latest
     outputs:
       should_tag: ${{ steps.resolve.outputs.should_tag }}
@@ -25,32 +30,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          # Latest that excludes pre-releases
-          otp-version: "> 0"
-          hexpm-mirrors: |
-            https://builds.hex.pm
-            https://cdn.jsdelivr.net/hex
-
       - name: Resolve release version
         id: resolve
         run: |
-          get_version() { sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' "$1" | head -1; }
-
           # Check whether the latest version published to Hex.pm already has
           # a matching git tag; if not, create one.
           APP="glazer"
-          INFO=$(mix hex.info "$APP" 2>/dev/null)
-          VSNS=$(printf '%s\n' "$INFO" | awk '
-            /^Releases:/ { sub(/^Releases:[[:space:]]*/, ""); print; exit }
-            /^Recent releases:/ { recent=1; next }
-            recent && /^[[:space:]]*[0-9]/ { sub(/^[[:space:]]*/, ""); print; next }
-            recent && !/^[[:space:]]/ { exit }
-          ')
-          # Skip retired/deprecated releases — pick the latest non-retired one.
-          PUBLISHED=$(printf '%s\n' "$VSNS" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | grep -v '(retired)' | awk 'NR==1 {print $1}')
+
+          # Releases are returned newest-first — pick the latest non-retired one.
+          PUBLISHED=$(curl -fsS "https://hex.pm/api/packages/$APP" | \
+                      jq -r '.releases[].version' | \
+                      while read vsn; do \
+                        RETIRED=$(curl -fsS "https://hex.pm/api/packages/$APP/releases/$vsn" | \
+                        jq -r '.retirement.reason'); \
+                        if [ "$RETIRED" = "null" ]; then echo "$vsn"; break; fi; \
+                      done)
 
           if [ -z "$PUBLISHED" ]; then
             echo "Could not determine latest published (non-retired) version, skipping"
@@ -65,15 +59,11 @@ jobs:
           fi
 
           # Find the commit that introduced this version in glazer.app.src.
-          COMMIT=""
-          for sha in $(git log --format=%H -- src/glazer.app.src); do
-            VER=$(git show "$sha:src/glazer.app.src" | get_version /dev/stdin)
-            if [ "$VER" = "$PUBLISHED" ]; then
-              COMMIT="$sha"
-            else
-              break
-            fi
-          done
+          COMMIT=$(git log --format='%H' -- src/glazer.app.src | \
+                   while read sha; do \
+                     VER=$(git show "$sha:src/glazer.app.src" | sed -nE '/\{vsn/{s/.*\{vsn,\s*"([^"]+)".*/\1/p; q}'); \
+                     if [ "$VER" = "$PUBLISHED" ]; then echo $sha; break; fi; \
+                   done)
 
           if [ -z "$COMMIT" ]; then
             echo "No commit on main introduces version $PUBLISHED, skipping"
@@ -81,13 +71,13 @@ jobs:
             exit 0
           fi
 
-          # Only tag once the version-bump commit is at least 6 hours old, to
-          # allow several amended Hex.pm releases of the same version before
+          # Only tag once the version-bump commit is at least MIN_AGE_HOURS old,
+          # to allow several amended Hex.pm releases of the same version before
           # it gets tagged.
           COMMIT_TS=$(git show -s --format=%ct "$COMMIT")
           NOW_TS=$(date +%s)
           AGE=$((NOW_TS - COMMIT_TS))
-          MIN_AGE=$((6 * 3600))
+          MIN_AGE=$((MIN_AGE_HOURS * 3600))
 
           if [ "$AGE" -lt "$MIN_AGE" ]; then
             echo "Commit $COMMIT for version $PUBLISHED is only $((AGE / 60)) minutes old, waiting for $((MIN_AGE / 3600)) hours"
@@ -95,7 +85,7 @@ jobs:
             exit 0
           fi
 
-          echo "Hex.pm has unreleased tag for version $PUBLISHED (commit $COMMIT)"
+          echo "Found an untagged release in hex.pm for version $PUBLISHED (commit $COMMIT)"
           echo "version=$PUBLISHED" >> $GITHUB_OUTPUT
           echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
           echo "should_tag=true"    >> $GITHUB_OUTPUT

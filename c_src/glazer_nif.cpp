@@ -24,6 +24,7 @@
 #include "glazer_bigint.hpp"
 #include "glazer_json.hpp"
 #include "glazer_yaml.hpp"
+#include "glazer_csv.hpp"
 
 // ---------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
@@ -36,10 +37,10 @@
 static constexpr size_t DIRTY_THRESHOLD = 8192;
 
 // ---------------------------------------------------------------------------
-// NIF: decode
+// NIF: json_decode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM do_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
   DecodeOpts opts;
   opts.null_term = am_null;
@@ -49,15 +50,15 @@ static ERL_NIF_TERM do_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc,
   return dec.decode(reinterpret_cast<const char*>(bin.data), bin.size);
 }
 
-static ERL_NIF_TERM nif_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   ErlNifBinary bin;
   [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
   assert(ok);
-  return do_decode(env, bin, argc, argv);
+  return do_json_decode(env, bin, argc, argv);
 }
 
-static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc < 1 || argc > 2) [[unlikely]]
     return enif_make_badarg(env);
@@ -66,26 +67,26 @@ static ERL_NIF_TERM nif_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
   ERL_NIF_TERM sched_argv[2];
   if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_decode(env, bin, argc, argv);
+      return do_json_decode(env, bin, argc, argv);
     sched_argv[0] = argv[0];
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_decode(env, bin, argc, argv);
+      return do_json_decode(env, bin, argc, argv);
     sched_argv[0] = enif_make_binary(env, &bin);
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else {
     return enif_make_badarg(env);
   }
-  return enif_schedule_nif(env, "glazer_decode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
-                           nif_decode_dirty, 2, sched_argv);
+  return enif_schedule_nif(env, "glazer_json_decode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_json_try_decode_dirty, 2, sched_argv);
 }
 
 // ---------------------------------------------------------------------------
-// NIF: decode_yaml
+// NIF: yaml_decode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM do_decode_yaml(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
   YamlDecodeOpts opts;
   opts.null_term = am_null;
@@ -95,15 +96,15 @@ static ERL_NIF_TERM do_decode_yaml(ErlNifEnv* env, const ErlNifBinary& bin, int 
   return dec.decode();
 }
 
-static ERL_NIF_TERM nif_decode_yaml_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_yaml_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   ErlNifBinary bin;
   [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
   assert(ok);
-  return do_decode_yaml(env, bin, argc, argv);
+  return do_yaml_decode(env, bin, argc, argv);
 }
 
-static ERL_NIF_TERM nif_decode_yaml(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_yaml_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc < 1 || argc > 2) [[unlikely]]
     return enif_make_badarg(env);
@@ -112,19 +113,64 @@ static ERL_NIF_TERM nif_decode_yaml(ErlNifEnv* env, int argc, const ERL_NIF_TERM
   ERL_NIF_TERM sched_argv[2];
   if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_decode_yaml(env, bin, argc, argv);
+      return do_yaml_decode(env, bin, argc, argv);
     sched_argv[0] = argv[0];
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_decode_yaml(env, bin, argc, argv);
+      return do_yaml_decode(env, bin, argc, argv);
     sched_argv[0] = enif_make_binary(env, &bin);
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else {
     return enif_make_badarg(env);
   }
-  return enif_schedule_nif(env, "glazer_decode_yaml", ERL_NIF_DIRTY_JOB_CPU_BOUND,
-                           nif_decode_yaml_dirty, 2, sched_argv);
+  return enif_schedule_nif(env, "glazer_yaml_decode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_yaml_try_decode_dirty, 2, sched_argv);
+}
+
+// ---------------------------------------------------------------------------
+// NIF: csv_decode
+// ---------------------------------------------------------------------------
+
+static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
+{
+  CsvDecodeOpts opts;
+  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
+    return enif_make_badarg(env);
+  CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
+  return dec.decode();
+}
+
+static ERL_NIF_TERM nif_csv_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  ErlNifBinary bin;
+  [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
+  assert(ok);
+  return do_csv_decode(env, bin, argc, argv);
+}
+
+static ERL_NIF_TERM nif_csv_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
+
+  ErlNifBinary bin;
+  ERL_NIF_TERM sched_argv[2];
+  if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_csv_decode(env, bin, argc, argv);
+    sched_argv[0] = argv[0];
+    sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
+  } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
+    if (bin.size < DIRTY_THRESHOLD)
+      return do_csv_decode(env, bin, argc, argv);
+    sched_argv[0] = enif_make_binary(env, &bin);
+    sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
+  } else {
+    return enif_make_badarg(env);
+  }
+  return enif_schedule_nif(env, "glazer_csv_decode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_csv_try_decode_dirty, 2, sched_argv);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +186,7 @@ static ERL_NIF_TERM nif_decode_yaml(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 // left over for the next call.
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM nif_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc < 1 || argc > 2) [[unlikely]]
     return enif_make_badarg(env);
@@ -167,10 +213,10 @@ static ERL_NIF_TERM nif_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
 }
 
 // ---------------------------------------------------------------------------
-// NIF: encode
+// NIF: json_encode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM do_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   EncodeOpts opts;
   opts.null_term = am_null;
@@ -191,12 +237,12 @@ static ERL_NIF_TERM do_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[
   return make_binary(env, pretty_out);
 }
 
-static ERL_NIF_TERM nif_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  return do_encode(env, argc, argv);
+  return do_json_encode(env, argc, argv);
 }
 
-static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc < 1 || argc > 2) [[unlikely]]
     return enif_make_badarg(env);
@@ -206,31 +252,111 @@ static ERL_NIF_TERM nif_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
   ErlNifBinary bin;
   if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
-    return enif_schedule_nif(env, "glazer_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
-                             nif_encode_dirty, 2, sched_argv);
+    return enif_schedule_nif(env, "glazer_json_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                             nif_json_encode_dirty, 2, sched_argv);
   }
-  return do_encode(env, argc, argv);
+  return do_json_encode(env, argc, argv);
 }
 
 // ---------------------------------------------------------------------------
-// NIF: minify / prettify
+// NIF: yaml_encode
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM do_minify(ErlNifEnv* env, const ErlNifBinary& bin)
+static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  YamlEncodeOpts opts;
+  opts.null_term = am_null;
+  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_encode_opts(env, argv[1], opts))) [[unlikely]]
+    return enif_make_badarg(env);
+
+  OutBuf out;
+  YamlEncoder enc{env, opts, out};
+  if (!enc.encode(argv[0]))
+    return enif_raise_exception(env,
+      enif_make_tuple2(env, AM_ENCODE_ERROR,
+        make_binary(env, std::string_view("cannot encode term to YAML"))));
+
+  return make_binary(env, out.view());
+}
+
+static ERL_NIF_TERM nif_yaml_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  return do_yaml_encode(env, argc, argv);
+}
+
+static ERL_NIF_TERM nif_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
+
+  // Output size is unknown upfront; use input binary size as a proxy.
+  ErlNifBinary bin;
+  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+    ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
+    return enif_schedule_nif(env, "glazer_yaml_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                             nif_yaml_encode_dirty, 2, sched_argv);
+  }
+  return do_yaml_encode(env, argc, argv);
+}
+
+// ---------------------------------------------------------------------------
+// NIF: csv_encode
+// ---------------------------------------------------------------------------
+
+static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  CsvEncodeOpts opts;
+  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_encode_opts(env, argv[1], opts))) [[unlikely]]
+    return enif_make_badarg(env);
+
+  OutBuf out;
+  CsvEncoder enc{env, opts, out};
+  if (!enc.encode(argv[0]))
+    return enif_raise_exception(env,
+      enif_make_tuple2(env, AM_ENCODE_ERROR,
+        make_binary(env, std::string_view("cannot encode term to CSV"))));
+
+  return make_binary(env, out.view());
+}
+
+static ERL_NIF_TERM nif_csv_encode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  return do_csv_encode(env, argc, argv);
+}
+
+static ERL_NIF_TERM nif_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
+
+  ErlNifBinary bin;
+  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+    ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
+    return enif_schedule_nif(env, "glazer_csv_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                             nif_csv_encode_dirty, 2, sched_argv);
+  }
+  return do_csv_encode(env, argc, argv);
+}
+
+// ---------------------------------------------------------------------------
+// NIF: json_minify / json_prettify
+// ---------------------------------------------------------------------------
+
+static ERL_NIF_TERM do_json_minify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
   return make_binary(env, glz::minify_json(in));
 }
 
-static ERL_NIF_TERM nif_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   ErlNifBinary bin;
   [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
   assert(ok);
-  return do_minify(env, bin);
+  return do_json_minify(env, bin);
 }
 
-static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) [[unlikely]]
     return enif_make_badarg(env);
@@ -238,34 +364,34 @@ static ERL_NIF_TERM nif_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
   ERL_NIF_TERM sched_argv[1];
   if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_minify(env, bin);
+      return do_json_minify(env, bin);
     sched_argv[0] = argv[0];
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_minify(env, bin);
+      return do_json_minify(env, bin);
     sched_argv[0] = enif_make_binary(env, &bin);
   } else {
     return enif_make_badarg(env);
   }
-  return enif_schedule_nif(env, "glazer_minify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
-                           nif_minify_dirty, 1, sched_argv);
+  return enif_schedule_nif(env, "glazer_json_minify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_json_minify_dirty, 1, sched_argv);
 }
 
-static ERL_NIF_TERM do_prettify(ErlNifEnv* env, const ErlNifBinary& bin)
+static ERL_NIF_TERM do_json_prettify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
   return make_binary(env, glz::prettify_json(in));
 }
 
-static ERL_NIF_TERM nif_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   ErlNifBinary bin;
   [[maybe_unused]] bool ok = enif_inspect_binary(env, argv[0], &bin);
   assert(ok);
-  return do_prettify(env, bin);
+  return do_json_prettify(env, bin);
 }
 
-static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_json_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) [[unlikely]]
     return enif_make_badarg(env);
@@ -273,17 +399,17 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
   ERL_NIF_TERM sched_argv[1];
   if (enif_inspect_binary(env, argv[0], &bin)) [[likely]] {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_prettify(env, bin);
+      return do_json_prettify(env, bin);
     sched_argv[0] = argv[0];
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
     if (bin.size < DIRTY_THRESHOLD)
-      return do_prettify(env, bin);
+      return do_json_prettify(env, bin);
     sched_argv[0] = enif_make_binary(env, &bin);
   } else {
     return enif_make_badarg(env);
   }
-  return enif_schedule_nif(env, "glazer_prettify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
-                           nif_prettify_dirty, 1, sched_argv);
+  return enif_schedule_nif(env, "glazer_json_prettify", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_json_prettify_dirty, 1, sched_argv);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,16 +460,22 @@ static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info
 }
 
 static ErlNifFunc nif_funcs[] = {
-  {"try_decode",         1, nif_decode,             0},
-  {"try_decode",         2, nif_decode,             0},
-  {"try_decode_yaml",    1, nif_decode_yaml,        0},
-  {"try_decode_yaml",    2, nif_decode_yaml,        0},
-  {"scan",               1, nif_scan,               0},
-  {"scan",               2, nif_scan,               0},
-  {"encode",             1, nif_encode,             0},
-  {"encode",             2, nif_encode,             0},
-  {"minify",             1, nif_minify,             0},
-  {"prettify",           1, nif_prettify,           0},
+  {"json_try_decode",    1, nif_json_try_decode,    0},
+  {"json_try_decode",    2, nif_json_try_decode,    0},
+  {"yaml_try_decode",    1, nif_yaml_try_decode,    0},
+  {"yaml_try_decode",    2, nif_yaml_try_decode,    0},
+  {"csv_try_decode",     1, nif_csv_try_decode,     0},
+  {"csv_try_decode",     2, nif_csv_try_decode,     0},
+  {"json_scan",          1, nif_json_scan,          0},
+  {"json_scan",          2, nif_json_scan,          0},
+  {"json_encode",        1, nif_json_encode,        0},
+  {"json_encode",        2, nif_json_encode,        0},
+  {"yaml_encode",        1, nif_yaml_encode,        0},
+  {"yaml_encode",        2, nif_yaml_encode,        0},
+  {"csv_encode",         1, nif_csv_encode,         0},
+  {"csv_encode",         2, nif_csv_encode,         0},
+  {"json_minify",        1, nif_json_minify,        0},
+  {"json_prettify",      1, nif_json_prettify,      0},
   {"encode_integer",     1, nif_encode_integer,     0},
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
 };

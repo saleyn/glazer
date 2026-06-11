@@ -96,8 +96,10 @@ memcheck:
 doc docs:
 	$(REBAR) ex_doc
 
-benchmark bench: deps
-	@MIX_ENV=bench mix bench
+benchmark: bench
+ 
+bench bench-yaml bench-json bench-csv: deps
+	@MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize

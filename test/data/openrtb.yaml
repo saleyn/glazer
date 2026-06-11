@@ -1,0 +1,73 @@
+device:
+  carrier: Verizon
+  connectiontype: 2
+  devicetype: 2
+  geo:
+    country: US
+    lat: 40.7128
+    lon: -74.006
+    region: NY
+    type: 2
+    zip: '10001'
+  ifa: cdda802e-fb9c-47ad-0794d394fbbd
+  ip: 203.0.113.42
+  ipv6: 2001:db8::1
+  language: en
+  os: Apple iOS
+  ua: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like
+    Gecko) Chrome/120.0.0.0 Safari/537.36
+ext:
+  appnexus:
+    seller_member_id: 1410
+id: req-7392841
+imp:
+- banner:
+    h: 250
+    pos: 1
+    w: 300
+  bidfloor: 0.5
+  id: imp-1
+  pmp:
+    deals:
+    - bidfloor: 1.0
+      id: deal-abc
+    - bidfloor: 0.75
+      id: deal-def
+    private_auction: 1
+- bidfloor: 2.0
+  id: imp-2
+  video:
+    maxduration: 30
+    mimes:
+    - video/mp4
+    - video/webm
+    minduration: 5
+    placement: 1
+    protocols:
+    - 2
+    - 5
+regs:
+  coppa: 0
+site:
+  cat:
+  - IAB1
+  - IAB2-3
+  domain: example.com
+  page: https://example.com/articles/some-article-title
+  publisher:
+    id: pub-12345
+  ref: https://google.com/search?q=something
+user:
+  buyeruid: buyer-xyz789
+  ext:
+    eids:
+    - source: adserver.org
+      uids:
+      - id: uid-tdid-1234
+    - source: criteo.com
+      uids:
+      - id: uid-criteo-5678
+    - source: uidapi.com
+      uids:
+      - id: uid2-raw-token-abcdef
+  id: user-abcdef123456

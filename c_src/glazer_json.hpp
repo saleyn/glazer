@@ -557,8 +557,7 @@ struct Decoder {
       return enif_make_tuple2(m_env, AM_OK, result);
 
     std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
-    return enif_make_tuple2(m_env, AM_ERROR,
-      enif_make_tuple2(m_env, AM_PARSE_ERROR, make_binary(m_env, msg)));
+    return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
   }
 };
 
