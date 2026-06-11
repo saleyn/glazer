@@ -171,7 +171,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve release target
+      - name: Resolve release version
         id: resolve
         run: |
           get_version() { sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' "$1" | head -1; }
@@ -181,6 +181,20 @@ jobs:
 
           if [ "$VERSION" != "$PARENT_VERSION" ]; then
             echo "Version changed: $PARENT_VERSION -> $VERSION"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Version unchanged — if this commit landed within an hour of the
+          # last one, treat it as a follow-up fix to the same release and
+          # republish (replacing) the current version on Hex.pm.
+          COMMIT_TS=$(git show -s --format=%ct HEAD)
+          PARENT_TS=$(git show -s --format=%ct HEAD^)
+          AGE=$((COMMIT_TS - PARENT_TS))
+
+          if [ "$AGE" -lt 3600 ]; then
+            echo "Version unchanged ($VERSION), but last commit was $((AGE / 60)) minutes ago — republishing"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "should_release=true" >> $GITHUB_OUTPUT
           else
