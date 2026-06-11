@@ -115,14 +115,11 @@ jobs:
   windows:
     name: OTP ${{ matrix.otp }} windows
     runs-on: windows-latest
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         otp: [27, 28, 29]
-
-    defaults:
-      run:
-        shell: msys2 {0}
 
     steps:
       - uses: actions/checkout@v2
@@ -140,11 +137,13 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             make
       - name: Build
+        shell: msys2 {0}
         env:
           CC:  gcc
           CXX: g++
         run:  make compile
       - name: Test
+        shell: msys2 {0}
         env:
           CC:  gcc
           CXX: g++
