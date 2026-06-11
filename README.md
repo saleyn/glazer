@@ -21,7 +21,7 @@ performance and features unmatched by other existing JSON parsing libraries.
 - Configurable representation of JSON `null` and JSON object keys
 - `minify/1` and `prettify/1` helpers
 - Standalone big-integer encode/decode helpers
-  (`encode_bigint/1`, `decode_integer/1`, `try_decode_integer/1`)
+  (`encode_integer/1`, `decode_integer/1`, `try_decode_integer/1`)
 
 ## Installation
 
@@ -235,11 +235,11 @@ decimal JSON representation):
 <<"123456789012345678901234567890">>
 ```
 
-`encode_bigint/1` and `decode_integer/1`/`try_decode_integer/1` expose the
+`encode_integer/1` and `decode_integer/1`/`try_decode_integer/1` expose the
 same conversion routines directly, independent of JSON parsing/encoding:
 
 ```erlang
-1> glazer:encode_bigint(123456789012345678901234567890).
+1> glazer:encode_integer(123456789012345678901234567890).
 <<"123456789012345678901234567890">>
 
 2> glazer:decode_integer(<<"123456789012345678901234567890">>).
@@ -319,10 +319,11 @@ undefined
 | Function | Description |
 |---|---|
 | `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
+| `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
 | `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary |
 | `minify/1` | Remove unnecessary whitespace from a JSON document |
 | `prettify/1` | Pretty-print a JSON document with two-space indentation |
-| `encode_bigint/1` | Encode an integer to its JSON decimal-string representation |
+| `encode_integer/1` | Encode an integer to its JSON decimal-string representation |
 | `decode_integer/1` | Decode a JSON number string to an Erlang integer, raising on invalid input |
 | `try_decode_integer/1` | Decode a JSON number string to an Erlang integer, returning `{ok, Int}` or `{error, invalid_number_format}` |
 | `scan/1`, `scan/2` | Scan a buffer for the end offset of the next complete JSON value |
@@ -386,7 +387,7 @@ Where `glazer` has an edge over `torque`:
   output and sanitizing invalid UTF-8 — useful when targeting strict JSON
   consumers or transports that aren't UTF-8 clean.
 - **Standalone `minify/1`/`prettify/1` and big-integer helpers**
-  (`encode_bigint/1`/`decode_integer/1`/`try_decode_integer/1`) that don't
+  (`encode_integer/1`/`decode_integer/1`/`try_decode_integer/1`) that don't
   require a full decode/encode round-trip.
 - **No external C++ dependencies.** The NIF is fully self-contained —
   no CMake, no `FetchContent`, no vendored third-party library to pull

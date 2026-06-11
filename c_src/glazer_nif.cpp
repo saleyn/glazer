@@ -1410,7 +1410,7 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
 }
 
 // ---------------------------------------------------------------------------
-// NIF: encode_bigint / try_decode_integer
+// NIF: encode_integer / try_decode_integer
 // ---------------------------------------------------------------------------
 
 static ERL_NIF_TERM nif_encode_integer(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -1457,15 +1457,15 @@ static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info
 }
 
 static ErlNifFunc nif_funcs[] = {
-  {"try_decode",    1, nif_decode,        0},
-  {"try_decode",    2, nif_decode,        0},
-  {"scan",          1, nif_scan,          0},
-  {"scan",          2, nif_scan,          0},
-  {"encode",        1, nif_encode,        0},
-  {"encode",        2, nif_encode,        0},
-  {"minify",        1, nif_minify,        0},
-  {"prettify",      1, nif_prettify,      0},
-  {"encode_bigint",      1, nif_encode_integer,      0},
+  {"try_decode",         1, nif_decode,             0},
+  {"try_decode",         2, nif_decode,             0},
+  {"scan",               1, nif_scan,               0},
+  {"scan",               2, nif_scan,               0},
+  {"encode",             1, nif_encode,             0},
+  {"encode",             2, nif_encode,             0},
+  {"minify",             1, nif_minify,             0},
+  {"prettify",           1, nif_prettify,           0},
+  {"encode_integer",     1, nif_encode_integer,     0},
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
 };
 

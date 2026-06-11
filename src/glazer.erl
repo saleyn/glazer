@@ -12,7 +12,7 @@ See also [https://github.com/stephenberry/glaze]
 """.
 -export([decode/1, decode/2, try_decode/1, try_decode/2,
          encode/1, encode/2, minify/1, prettify/1,
-         encode_bigint/1, decode_integer/1, try_decode_integer/1,
+         encode_integer/1, decode_integer/1, try_decode_integer/1,
          scan/1, scan/2,
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
 
@@ -149,9 +149,9 @@ minify(_Input) ->
 prettify(_Input) ->
   ?NOT_LOADED_ERROR.
 
--doc "Encode a big integer to its JSON string representation. Raises `badarg` if `BigInt` is not an integer.".
--spec encode_bigint(integer()) -> binary().
-encode_bigint(_BigInt) ->
+-doc "Encode an integer to its JSON string representation. Raises `badarg` if `Int` is not an integer.".
+-spec encode_integer(integer()) -> binary().
+encode_integer(_Int) ->
   ?NOT_LOADED_ERROR.
 
 -doc "Decode a JSON number string to an integer. Raises `invalid_number_format` on invalid input.".
@@ -540,9 +540,9 @@ bigint_test_() ->
   Big =  123456789012345678901234567890,
   Neg = -Big,
   [
-    ?_assertEqual(<<"123456789012345678901234567890">>,  encode_bigint(Big)),
-    ?_assertEqual(<<"-123456789012345678901234567890">>, encode_bigint(Neg)),
-    ?_assertError(badarg,                                encode_bigint(<<"not an integer">>)),
+    ?_assertEqual(<<"123456789012345678901234567890">>,  encode_integer(Big)),
+    ?_assertEqual(<<"-123456789012345678901234567890">>, encode_integer(Neg)),
+    ?_assertError(badarg,                                encode_integer(<<"not an integer">>)),
     ?_assertEqual({ok, Big},                             try_decode_integer(<<"123456789012345678901234567890">>)),
     ?_assertEqual({ok, Neg},                             try_decode_integer(<<"-123456789012345678901234567890">>)),
     ?_assertEqual({ok, 123},                             try_decode_integer(<<"123">>)),
