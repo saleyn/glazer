@@ -31,7 +31,7 @@ defmodule Mix.Tasks.BenchYaml do
   ]
 
   @impl Mix.Task
-  def run(_args) do
+  def run(args) do
     Mix.env() != :bench && Mix.raise("mix bench-yaml must be run with MIX_ENV=bench")
 
     # Ensure all deps are started so NIFs get loaded.
@@ -43,7 +43,7 @@ defmodule Mix.Tasks.BenchYaml do
     if files == [] do
       Mix.shell().error("No YAML test data files found in test/data/")
     else
-      workers = parallelism()
+      workers = Mix.Tasks.Bench.Common.parallelism(args)
 
       files_data = Enum.map(files, fn {label, bin} ->
         results = run_file(bin, suites, workers)
@@ -156,12 +156,12 @@ defmodule Mix.Tasks.BenchYaml do
               {dt, decoded} =
                 case decode do
                   :no_decode -> {:na, :glazer.yaml_decode(bin)}
-                  decode_fun -> {measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
+                  decode_fun -> {Mix.Tasks.Bench.Common.measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
                 end
               et =
                 case encode do
                   :no_encode -> :na
-                  encode_fun -> measure(n, fn -> encode_fun.(decoded) end)
+                  encode_fun -> Mix.Tasks.Bench.Common.measure(n, fn -> encode_fun.(decoded) end)
                 end
               {:ok, dt, et}
             rescue
@@ -182,43 +182,6 @@ defmodule Mix.Tasks.BenchYaml do
         end
       end)
     end)
-  end
-
-  defp parallelism do
-    nproc = System.schedulers_online()
-
-    nworkers =
-      case System.get_env("PARALLEL") do
-        nil ->
-          nproc
-
-        value ->
-          case Integer.parse(value) do
-            {n, _} -> n |> max(1) |> min(nproc)
-            :error -> nproc
-          end
-      end
-    IO.puts("==> Running benchmarks with parallelism: #{nworkers}")
-    nworkers
-  end
-
-  defp measure(n, f) do
-    t0 = :erlang.system_time(:microsecond)
-    repeat(n, f)
-    t1 = :erlang.system_time(:microsecond)
-    (t1 - t0) / n
-  end
-
-  defp repeat(0, _f), do: :ok
-  defp repeat(n, f) do
-    try do
-      f.()
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
-    repeat(n - 1, f)
   end
 
   # ---------------------------------------------------------------------------

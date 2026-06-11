@@ -482,7 +482,7 @@ rfc8259_top_level_test_() ->
 
     %% try_decode/1 reports the same trailing-garbage condition as an error
     %% tuple instead of raising
-    ?_assertMatch({error, {parse_error, _}}, glazer:json_try_decode(<<"1 2">>))
+    ?_assertMatch({error, _}, glazer:json_try_decode(<<"1 2">>))
   ].
 
 %% ----------------------------------------------------------------------------
@@ -527,7 +527,7 @@ max_depth_test_() ->
     ?_test(begin
       N = 100000,
       Bin = iolist_to_binary([lists:duplicate(N, "["), "1", lists:duplicate(N, "]")]),
-      ?assertMatch({error, {parse_error, _}}, glazer:json_try_decode(Bin))
+      ?assertMatch({error, _}, glazer:json_try_decode(Bin))
     end),
 
     %% 100,000 "[" characters with no value and no closing brackets. Exercises
@@ -535,7 +535,7 @@ max_depth_test_() ->
     %% nesting.
     ?_test(begin
       Bin = binary:copy(<<"[">>, 100000),
-      ?assertMatch({error, {parse_error, _}}, glazer:json_try_decode(Bin))
+      ?assertMatch({error, _}, glazer:json_try_decode(Bin))
     end)
   ].
 

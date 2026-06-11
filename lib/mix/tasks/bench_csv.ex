@@ -27,7 +27,7 @@ defmodule Mix.Tasks.BenchCsv do
   ]
 
   @impl Mix.Task
-  def run(_args) do
+  def run(args) do
     Mix.env() != :bench && Mix.raise("mix bench-csv must be run with MIX_ENV=bench")
 
     # Ensure all deps are started so NIFs get loaded.
@@ -39,7 +39,7 @@ defmodule Mix.Tasks.BenchCsv do
     if files == [] do
       Mix.shell().error("No CSV test data files found in test/data/")
     else
-      workers = parallelism()
+      workers = Mix.Tasks.Bench.Common.parallelism(args)
 
       files_data = Enum.map(files, fn {label, bin} ->
         results = run_file(bin, suites, workers)
@@ -158,9 +158,9 @@ defmodule Mix.Tasks.BenchCsv do
         pid = spawn(fn ->
           result =
             try do
-              dt = measure(n, fn -> decode.(bin) end)
+              dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
               decoded = decode.(bin)
-              et = measure(n, fn -> encode.(decoded) end)
+              et = Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
               {:ok, dt, et}
             rescue
               e -> {:error, Exception.message(e)}
@@ -180,43 +180,6 @@ defmodule Mix.Tasks.BenchCsv do
         end
       end)
     end)
-  end
-
-  defp parallelism do
-    nproc = System.schedulers_online()
-
-    nworkers =
-      case System.get_env("PARALLEL") do
-        nil ->
-          nproc
-
-        value ->
-          case Integer.parse(value) do
-            {n, _} -> n |> max(1) |> min(nproc)
-            :error -> nproc
-          end
-      end
-    IO.puts("==> Running benchmarks with parallelism: #{nworkers}")
-    nworkers
-  end
-
-  defp measure(n, f) do
-    t0 = :erlang.system_time(:microsecond)
-    repeat(n, f)
-    t1 = :erlang.system_time(:microsecond)
-    (t1 - t0) / n
-  end
-
-  defp repeat(0, _f), do: :ok
-  defp repeat(n, f) do
-    try do
-      f.()
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
-    repeat(n - 1, f)
   end
 
   # ---------------------------------------------------------------------------

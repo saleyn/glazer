@@ -210,7 +210,7 @@ json_decode(Input, Opts) ->
 
 -doc """
 Decode a JSON binary or iolist, returning `{ok, Term}` or
-`{error, {parse_error, Reason}}` instead of raising.
+`{error, Reason}` instead of raising.
 """.
 -spec json_try_decode(binary() | iolist()) -> {ok, term()} | {error, binary()}.
 json_try_decode(_Input) ->
@@ -218,7 +218,7 @@ json_try_decode(_Input) ->
 
 -doc """
 Decode a JSON binary or iolist with options, returning `{ok, Term}` or
-`{error, {parse_error, Reason}}` instead of raising.
+`{error, Reason}` instead of raising.
 """.
 -spec json_try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, binary()}.
 json_try_decode(_Input, _Opts) ->
@@ -256,7 +256,7 @@ yaml_try_decode(_Input) ->
 
 -doc """
 Decode a YAML binary or iolist with options, returning `{ok, Term}` or
-`{error, {parse_error, Msg}}` instead of raising.
+`{error, Msg}` instead of raising.
 """.
 -spec yaml_try_decode(binary() | iolist(), yaml_decode_opts()) -> {ok, term()} | {error, binary()}.
 yaml_try_decode(_Input, _Opts) ->

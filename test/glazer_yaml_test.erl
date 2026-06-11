@@ -198,7 +198,7 @@ decode_opts_test_() ->
   ].
 
 %% ----------------------------------------------------------------------------
-%% yaml_try_decode/1,2 — {ok, Term} | {error, {parse_error, _}}
+%% yaml_try_decode/1,2 — {ok, Term} | {error, _}
 %% ----------------------------------------------------------------------------
 
 try_decode_test_() ->
@@ -386,7 +386,7 @@ literal_scalar_test_() ->
     ?_assertEqual(<<"x\n">>, glazer:yaml_decode(<<"|2\n  x\n">>)),
 
     %% Junk after the header is an error.
-    ?_assertMatch({error, {parse_error, _}},
+    ?_assertMatch({error, _},
                   glazer:yaml_try_decode(<<"a: |junk\n  x\n">>))
   ].
 
@@ -443,15 +443,15 @@ anchor_alias_test_() ->
 
     %% Undefined aliases (including cycles, whose anchor is not yet
     %% registered when the alias is reached) are errors.
-    ?_assertMatch({error, {parse_error, _}},
+    ?_assertMatch({error, _},
                   glazer:yaml_try_decode(<<"a: *nope\n">>)),
-    ?_assertMatch({error, {parse_error, _}},
+    ?_assertMatch({error, _},
                   glazer:yaml_try_decode(<<"a: &x [*x]\n">>)),
     %% Root-node anchors are rejected (cannot be referenced in a single
     %% document) rather than mis-parsed as scalars.
-    ?_assertMatch({error, {parse_error, _}},
+    ?_assertMatch({error, _},
                   glazer:yaml_try_decode(<<"&x\na: 1\n">>)),
-    ?_assertMatch({error, {parse_error, _}},
+    ?_assertMatch({error, _},
                   glazer:yaml_try_decode(<<"a: &\n">>))
   ].
 
@@ -465,17 +465,17 @@ seq_item_continuation_test_() ->
 
 flow_error_test_() ->
   [
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"[1, 2">>)),
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"{a: 1">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"[1, 2">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"{a: 1">>)),
     %% Block constructs are not allowed inside flow collections.
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"[- 1]">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"[- 1]">>)),
     %% Empty entries are invalid.
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"[,1]">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"[,1]">>)),
     %% Trailing junk after an inline flow collection.
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"a: [1] junk\n">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"a: [1] junk\n">>)),
     %% Flow-collection (complex) keys are not supported.
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"[x]: 1\n">>)),
-    ?_assertMatch({error, {parse_error, _}}, glazer:yaml_try_decode(<<"{[x]: 1}">>))
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"[x]: 1\n">>)),
+    ?_assertMatch({error, _}, glazer:yaml_try_decode(<<"{[x]: 1}">>))
   ].
 
 %% ----------------------------------------------------------------------------

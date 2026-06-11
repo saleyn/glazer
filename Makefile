@@ -99,7 +99,7 @@ doc docs:
 benchmark: bench
  
 bench bench-yaml bench-json bench-csv: deps
-	@MIX_ENV=bench mix $@
+	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
@@ -108,7 +108,7 @@ optimize:
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=generate clean all
 	@$(REBAR) compile
 	@echo "==> PGO step 2/3: collect profile data via test suite"
-	mix bench 1>/dev/null
+	MIX_ENV=bench mix bench-json 1>/dev/null
 	@echo "==> PGO step 3/3: rebuild with profile data"
 	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=use all

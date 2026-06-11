@@ -1,4 +1,4 @@
-![Banner](https://github.com/saleyn/glazer/blob/main/glazer.png?raw=true)
+![Banner](https://github.com/saleyn/glazer/blob/main/assets/glazer.png?raw=true)
 
 # Glazer
 
@@ -15,6 +15,31 @@ since matured into a standalone implementation with no external C++
 dependencies, and extended the same approach to YAML and CSV, with
 performance and features unmatched by other existing libraries for these
 formats.
+
+## Performance
+
+- **[JSON](#performance-1)**: faster encoding than every other library
+  benchmarked, and roughly on par with `torque` (Rust `sonic-rs` NIF) on
+  decoding — both well ahead of `simdjsone`, `jiffy`, and the pure-Elixir
+  libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
+- **[YAML](#benchmarking-yaml)**: an order of magnitude faster than
+  `yaml_rustler` and `fast_yaml`, and ~10-100x faster than the pure-Erlang
+  `yamerl`/`ymlr`.
+- **[CSV](#benchmarking-csv)**: 2-20x faster than `nimble_csv`, and tens to
+  hundreds of times faster than `csv` and `erl_csv` (which times out on
+  large inputs).
+
+<img src="assets/bench_small.svg" width="100%" alt="Small file benchmarks (JSON/YAML/CSV)"/>
+<img src="assets/bench_medium.svg" width="100%" alt="Medium file benchmarks (JSON/YAML/CSV)"/>
+<img src="assets/bench_large.svg" width="100%" alt="Large file benchmarks (JSON/YAML/CSV)"/>
+
+Each chart compares glazer against other libraries for JSON/YAML/CSV
+decode and encode on a representative small/medium/large file. Charts are
+generated from the tables below via `scripts/gen_bench_charts.py`.
+Benchmark tables:
+- [Benchmarking JSON](#benchmarking-json)
+- [Benchmarking YAML](#benchmarking-yaml)
+- [Benchmarking CSV](#benchmarking-csv)
 
 ## Features
 
@@ -61,15 +86,25 @@ duplicating it here with a different, opinionated term shape.
 
 ## Installation
 
-### Erlang
-
-Add `glazer` to your `rebar.config` deps:
+**Erlang (`rebar.config`)**:
 
 ```erlang
 {deps, [
-  {glazer, "~> 0.2"}
+  {glazer, "~> 0.3"}
 ]}.
 ```
+
+**Elixir (`mix.exs`)**:
+
+```elixir
+def deps do
+  [
+    {:glazer, "~> 0.3"}
+  ]
+end
+```
+
+### Building
 
 Building the NIF requires a C++23 compiler (GCC 12+ or Clang 16+) and
 `make`. There are no external C++ library dependencies — all C++ code is
@@ -80,7 +115,7 @@ make
 ```
 
 builds `priv/glazer.so` and compiles the Erlang sources. For the fastest
-possible binary, run a Profile-Guided Optimisation (PGO) build instead:
+performance, run a Profile-Guided Optimisation (PGO) build instead:
 
 ```sh
 make optimize
@@ -91,33 +126,19 @@ runs the test suite to collect real branch-frequency data, then recompiles
 with those profiles applied. The resulting `.so` typically outperforms a
 plain `-O3` build by 5–15% on realistic JSON workloads.
 
-### Elixir
-
-Add `glazer` to your `mix.exs` deps:
-
-```elixir
-def deps do
-  [
-    {:glazer, "~> 0.2"}
-  ]
-end
-```
-
-Then fetch and compile:
-
-```sh
-make
-```
-
 `glazer` is an Erlang application with a Rebar-based C++ NIF build;
 `mix` invokes the same top-level `Makefile`/`rebar3 compile` path
 described above, so the same C++23 compiler requirement applies.
 Once compiled, call it via the `:glazer` module from Elixir:
 
-```elixir
-iex> :glazer.json_decode(~s({"a":1,"b":[true,null,3.5]}))
-%{"a" => 1, "b" => [true, :null, 3.5]}
+**Erlang:**
+```erlang
+1> glazer:json_decode(~"{\"a\":1,\"b\":[true,null,3.5]}")
+#{<<"a">> => 1,<<"b">> => [true,null,3.5]}
+```
 
+**Elixir:**
+```elixir
 iex> :glazer.json_encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```

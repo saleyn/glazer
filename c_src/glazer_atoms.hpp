@@ -2,6 +2,7 @@
 #pragma once
 
 #include <erl_nif.h>
+#include <tuple>
 
 static ERL_NIF_TERM AM_OK;
 static ERL_NIF_TERM AM_ERROR;
