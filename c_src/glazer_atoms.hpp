@@ -26,6 +26,14 @@ static ERL_NIF_TERM AM_PRETTY;
 static ERL_NIF_TERM AM_UESCAPE;
 static ERL_NIF_TERM AM_FORCE_UTF8;
 
+// YAML option atoms
+static ERL_NIF_TERM AM_YAML_1_1_BOOLS;
+
+// YAML special-float atoms (Erlang floats can't represent inf/nan)
+static ERL_NIF_TERM AM_INFINITY;
+static ERL_NIF_TERM AM_NEG_INFINITY;
+static ERL_NIF_TERM AM_NAN;
+
 // Error atoms
 static ERL_NIF_TERM AM_PARSE_ERROR;
 static ERL_NIF_TERM AM_ENCODE_ERROR;
@@ -62,6 +70,12 @@ inline void init_atoms(ErlNifEnv* env)
   AM_PRETTY                = enif_make_atom(env, "pretty");
   AM_UESCAPE               = enif_make_atom(env, "uescape");
   AM_FORCE_UTF8            = enif_make_atom(env, "force_utf8");
+
+  AM_YAML_1_1_BOOLS        = enif_make_atom(env, "yaml_1_1_bools");
+
+  AM_INFINITY              = enif_make_atom(env, "infinity");
+  AM_NEG_INFINITY          = enif_make_atom(env, "neg_infinity");
+  AM_NAN                   = enif_make_atom(env, "nan");
 
   AM_PARSE_ERROR           = enif_make_atom(env, "parse_error");
   AM_ENCODE_ERROR          = enif_make_atom(env, "encode_error");

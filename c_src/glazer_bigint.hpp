@@ -8,6 +8,9 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
+#include <climits>
+#include <cstdint>
 #include <cstring>
 #include <algorithm>
 #include <erl_nif.h>

@@ -1,4 +1,4 @@
--module(glazer_test).
+-module(glazer_json_test).
 -include_lib("eunit/include/eunit.hrl").
 
 %% Basic scalar roundtrips

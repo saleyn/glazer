@@ -14,7 +14,8 @@ See also [https://github.com/stephenberry/glaze]
          encode/1, encode/2, minify/1, prettify/1,
          encode_integer/1, decode_integer/1, try_decode_integer/1,
          scan/1, scan/2,
-         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
+         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
+         decode_yaml/1, decode_yaml/2, try_decode_yaml/1, try_decode_yaml/2]).
 
 -on_load(init/0).
 
@@ -65,7 +66,27 @@ Encode options:
 """.
 -type encode_opts() :: [encode_opt()].
 
--export_type([decode_opts/0, encode_opts/0]).
+-type yaml_decode_opt() ::
+    use_nil
+  | {null_term, atom()}
+  | {keys, atom | existing_atom | binary}
+  | yaml_1_1_bools.
+
+-doc """
+YAML decode options:
+
+- `use_nil`             - use the atom `nil` for YAML `null`/`~`/empty values
+- `{null_term, Atom}`   - use `Atom` for YAML `null`/`~`/empty values
+- `{keys, atom}`        - decode mapping keys as atoms
+- `{keys, existing_atom}` - decode mapping keys as existing atoms, fall back to binary
+- `{keys, binary}`      - decode mapping keys as binaries (default)
+- `yaml_1_1_bools`      - additionally treat `yes`/`no`/`on`/`off` (and case
+  variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2
+  core schema) only `true`/`false` are recognized as booleans.
+""".
+-type yaml_decode_opts() :: [yaml_decode_opt()].
+
+-export_type([decode_opts/0, encode_opts/0, yaml_decode_opts/0]).
 
 -type scan_state() :: tuple().
 
@@ -127,6 +148,35 @@ try_decode(_Input) ->
 -doc "Decode a JSON binary or iolist with options, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising.".
 -spec try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, {parse_error, binary()}}.
 try_decode(_Input, _Opts) ->
+  ?NOT_LOADED_ERROR.
+
+-doc """
+Decode a YAML binary or iolist to an Erlang term. YAML mappings are returned
+as maps (default). Raises `{parse_error, Msg}` on invalid input.
+""".
+-spec decode_yaml(binary() | iolist()) -> term().
+decode_yaml(Input) ->
+  case try_decode_yaml(Input) of
+    {ok,    Term}   -> Term;
+    {error, Reason} -> error(Reason)
+  end.
+
+-doc "Decode a YAML binary or iolist to an Erlang term with options. Raises `{parse_error, Msg}` on invalid input.".
+-spec decode_yaml(binary() | iolist(), yaml_decode_opts()) -> term().
+decode_yaml(Input, Opts) ->
+  case try_decode_yaml(Input, Opts) of
+    {ok,    Term}   -> Term;
+    {error, Reason} -> error(Reason)
+  end.
+
+-doc "Decode a YAML binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising.".
+-spec try_decode_yaml(binary() | iolist()) -> {ok, term()} | {error, {parse_error, binary()}}.
+try_decode_yaml(_Input) ->
+  ?NOT_LOADED_ERROR.
+
+-doc "Decode a YAML binary or iolist with options, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising.".
+-spec try_decode_yaml(binary() | iolist(), yaml_decode_opts()) -> {ok, term()} | {error, {parse_error, binary()}}.
+try_decode_yaml(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
 -doc "Encode an Erlang term to a JSON binary.".
