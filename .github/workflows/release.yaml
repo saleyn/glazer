@@ -1,20 +1,12 @@
 name: Release
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "src/glazer.app.src"
-  # Allow manual triggering via the GitHub UI or API.
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (optional, uses current ref if not provided)"
-        required: false
-        default: ""
   schedule:
-    # Check hourly whether the latest version published to Hex.pm has a
-    # corresponding git tag yet, and create one if not.
+    # Check hourly whether the latest non-retired version published to
+    # Hex.pm has a corresponding git tag yet, and create one if its
+    # version-bump commit is at least 6 hours old. The age check gives
+    # room for amended re-publishes of the same version on Hex.pm before
+    # it gets tagged.
     - cron: "0 * * * *"
 
 jobs:
@@ -22,10 +14,9 @@ jobs:
     name: Detect Release
     runs-on: ubuntu-latest
     outputs:
-      should_release: ${{ steps.resolve.outputs.should_release }}
-      should_tag:     ${{ steps.resolve.outputs.should_tag }}
-      version:        ${{ steps.resolve.outputs.version }}
-      commit:         ${{ steps.resolve.outputs.commit }}
+      should_tag: ${{ steps.resolve.outputs.should_tag }}
+      version:    ${{ steps.resolve.outputs.version }}
+      commit:     ${{ steps.resolve.outputs.commit }}
 
     steps:
       - name: Checkout code
@@ -35,7 +26,6 @@ jobs:
           persist-credentials: false
 
       - name: Setup Elixir
-        if: github.event_name == 'schedule'
         uses: erlef/setup-beam@v1
         with:
           # Latest that excludes pre-releases
@@ -44,46 +34,13 @@ jobs:
             https://builds.hex.pm
             https://cdn.jsdelivr.net/hex
 
-      - name: Resolve release target
+      - name: Resolve release version
         id: resolve
         run: |
           get_version() { sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' "$1" | head -1; }
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ github.event.inputs.tag }}" ]; then
-              echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-              echo "commit=${{ github.event.inputs.tag }}"  >> $GITHUB_OUTPUT
-            else
-              VERSION=$(get_version src/glazer.app.src)
-              echo "version=$VERSION" >> $GITHUB_OUTPUT
-              echo "commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
-            fi
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "should_tag=false"    >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION=$(get_version src/glazer.app.src)
-            PARENT_VERSION=$(git show "HEAD^:src/glazer.app.src" 2>/dev/null | get_version /dev/stdin || echo "")
-
-            if [ "$VERSION" != "$PARENT_VERSION" ]; then
-              echo "Version changed: $PARENT_VERSION -> $VERSION"
-              echo "version=$VERSION" >> $GITHUB_OUTPUT
-              echo "commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
-              echo "should_release=true" >> $GITHUB_OUTPUT
-            else
-              echo "Version unchanged ($VERSION), skipping release"
-              echo "should_release=false" >> $GITHUB_OUTPUT
-            fi
-            echo "should_tag=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # schedule: check whether the latest version published to Hex.pm
-          # already has a matching git tag; if not, create one.
-          echo "should_release=false" >> $GITHUB_OUTPUT
-
+          # Check whether the latest version published to Hex.pm already has
+          # a matching git tag; if not, create one.
           APP="glazer"
           INFO=$(mix hex.info "$APP" 2>/dev/null)
           VSNS=$(printf '%s\n' "$INFO" | awk '
@@ -92,10 +49,11 @@ jobs:
             recent && /^[[:space:]]*[0-9]/ { sub(/^[[:space:]]*/, ""); print; next }
             recent && !/^[[:space:]]/ { exit }
           ')
-          PUBLISHED=$(printf '%s\n' "$VSNS" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | awk 'NR==1 {print $1}')
+          # Skip retired/deprecated releases — pick the latest non-retired one.
+          PUBLISHED=$(printf '%s\n' "$VSNS" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | grep -v '(retired)' | awk 'NR==1 {print $1}')
 
           if [ -z "$PUBLISHED" ]; then
-            echo "Could not determine latest published version, skipping"
+            echo "Could not determine latest published (non-retired) version, skipping"
             echo "should_tag=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -123,159 +81,30 @@ jobs:
             exit 0
           fi
 
+          # Only tag once the version-bump commit is at least 6 hours old, to
+          # allow several amended Hex.pm releases of the same version before
+          # it gets tagged.
+          COMMIT_TS=$(git show -s --format=%ct "$COMMIT")
+          NOW_TS=$(date +%s)
+          AGE=$((NOW_TS - COMMIT_TS))
+          MIN_AGE=$((6 * 3600))
+
+          if [ "$AGE" -lt "$MIN_AGE" ]; then
+            echo "Commit $COMMIT for version $PUBLISHED is only $((AGE / 60)) minutes old, waiting for $((MIN_AGE / 3600)) hours"
+            echo "should_tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           echo "Hex.pm has unreleased tag for version $PUBLISHED (commit $COMMIT)"
           echo "version=$PUBLISHED" >> $GITHUB_OUTPUT
           echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
           echo "should_tag=true"    >> $GITHUB_OUTPUT
 
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: [detect]
-    if: needs.detect.outputs.should_release == 'true'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.detect.outputs.commit }}
-
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          # Latest that excludes pre-releases
-          otp-version: "> 0"
-          hexpm-mirrors: |
-            https://builds.hex.pm
-            https://cdn.jsdelivr.net/hex
-
-      - name: Get changelog entry
-        id: changelog
-        run: |
-          # Extract changelog for this version
-          VERSION="${{ needs.detect.outputs.version }}"
-          # Look for the version in CHANGELOG.md or fall back to git log
-          if [ -f "CHANGELOG.md" ]; then
-            # Extract section between version header and next version header
-            awk "/^## ${VERSION#v}/{flag=1;next}/^## v[0-9]/{flag=0}flag" CHANGELOG.md > changelog.txt
-            if [ -s changelog.txt ]; then
-              echo "has_changelog=true" >> $GITHUB_OUTPUT
-            else
-              # Fallback to commit messages
-              echo "has_changelog=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "has_changelog=false" >> $GITHUB_OUTPUT
-          fi
-
-  publish-to-hex:
-    name: Publish to Hex.pm
-    runs-on: ubuntu-latest
-    needs: [detect]
-    if: needs.detect.outputs.should_release == 'true'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.detect.outputs.commit }}
-
-      - name: Setup Rebar3
-        uses: erlef/setup-beam@v1
-        with:
-          # Latest that excludes pre-releases
-          otp-version: "> 0"
-          elixir-version: "> 0"
-          rebar3-version: '3'
-          hexpm-mirrors: |
-            https://builds.hex.pm
-            https://cdn.jsdelivr.net/hex
-
-      - name: Check if version is already published
-        id: should_publish
-        run: |
-          VERSION="${{ needs.detect.outputs.version }}"
-          APP="glazer"
-          TODAY=$(date +%Y-%m-%d)
-
-          if mix hex.info "$APP" "$VERSION" 2>/dev/null | grep -q "Released: $TODAY"; then
-            echo "publish=replace" >> $GITHUB_OUTPUT
-            echo "Version $VERSION published today — will replace"
-          elif mix hex.info "$APP" "$VERSION" 2>/dev/null | grep -q "Released:"; then
-            echo "publish=false" >> $GITHUB_OUTPUT
-            echo "Version $VERSION already published on a prior day — skipping"
-          else
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "Version $VERSION not yet published — will publish"
-          fi
-
-      - name: Publish to Hex.pm
-        if: steps.should_publish.outputs.publish != 'false'
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-        run: |
-          VERSION="${{ needs.detect.outputs.version }}"
-          APP="glazer"
-          if [ "${{ steps.should_publish.outputs.publish }}" = "replace" ]; then
-            echo "Replacing $APP $VERSION (published today)"
-            rebar3 hex publish --repo hexpm --yes --replace
-          else
-            echo "Publishing $APP $VERSION"
-            rebar3 hex publish --repo hexpm --yes
-          fi
-
-      - name: Retire prior version
-        if: steps.should_publish.outputs.publish != 'false'
-        run: |
-          set +e
-          APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)
-
-          mix hex.info $APP
-
-          INFO=$(mix hex.info $APP)
-          VSNS=$(printf '%s\n' "$INFO" | awk '
-            /^Releases:/ { sub(/^Releases:[[:space:]]*/, ""); print; exit }
-            /^Recent releases:/ { recent=1; next }
-            recent && /^[[:space:]]*[0-9]/ { sub(/^[[:space:]]*/, ""); print; next }
-            recent && !/^[[:space:]]/ { exit }
-          ')
-
-          if [ -z "$VSNS" ]; then
-            echo "$APP: no releases were found on Hex"
-            exit 0
-          fi
-
-          RELEASES=$(printf '%s\n' "$VSNS" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$')
-          echo "Raw release lines:"
-          printf '%s\n' "$RELEASES"
-
-          KEEP=$(printf '%s\n' "$RELEASES" | awk 'NR==1 {print $1}')
-          TO_RETIRE=$(printf '%s\n' "$RELEASES" | tail -n +2 | grep -v '(retired)' | awk '{print $1}')
-
-          if [ -z "$TO_RETIRE" ]; then
-            echo "$APP: no prior versions need to be retired"
-            exit 0
-          fi
-
-          echo "Keeping latest version: $KEEP"
-          echo -n "Versions to retire:\n$TO_RETIRE\n"
-
-          for VSN in $TO_RETIRE; do
-            echo "Retiring version $VSN of $APP on Hex..."
-            mix hex.retire $APP $VSN deprecated --message "Deprecated"
-          done
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-
   create-tag:
     name: Create Tag
     runs-on: ubuntu-latest
     needs: [detect]
-    # The scheduled job tags the latest version that's already on Hex.pm
-    # but doesn't yet have a git tag.
-    if: github.event_name == 'schedule' && needs.detect.outputs.should_tag == 'true'
+    if: needs.detect.outputs.should_tag == 'true'
 
     steps:
       - name: Checkout code
