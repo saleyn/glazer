@@ -24,26 +24,65 @@ struct BigInt {
     return parse_decimal_string(env, begin, end);
   }
 
-  static std::string
-  encode(ErlNifEnv* env, ERL_NIF_TERM term)
+  // Adapts std::string to the `push(char)` / `push(const char*, size_t)`
+  // interface expected by `encode`.
+  struct StringOut {
+    std::string str;
+    void push(char c)                  { str.push_back(c); }
+    void push(const char* s, size_t n) { str.append(s, n); }
+  };
+
+  // Write the decimal representation of an integer term to `out` (anything
+  // with `push(char)` / `push(const char*, size_t)`), handling the int64,
+  // uint64, and arbitrary-precision bignum cases. Returns false if `term`
+  // isn't an integer.
+  template <class Out>
+  static bool encode(ErlNifEnv* env, ERL_NIF_TERM term, Out& out)
   {
-    ErlNifSInt64 small_val;
-    if (enif_get_int64(env, term, &small_val)) [[likely]]
-      return int64_to_string(small_val);
-    return bigint_to_string(env, term);
+    ErlNifSInt64 i;
+    if (enif_get_int64(env, term, &i)) [[likely]] {
+      char buf[22]; size_t n = int64_to_chars(buf, i);
+      out.push(buf, n);
+      return true;
+    }
+    ErlNifUInt64 u;
+    if (enif_get_uint64(env, term, &u)) {
+      char buf[20]; size_t n = uint64_to_chars(buf, u);
+      out.push(buf, n);
+      return true;
+    }
+    // bigint — doesn't fit in 64 bits
+    ErlNifBinary bin;
+    if (!enif_term_to_binary(env, term, &bin)) return false;
+    bool ok = binary_to_decimal(bin.data, bin.size, out);
+    enif_release_binary(&bin);
+    return ok;
   }
 
 private:
 
-  static std::string int64_to_string(ErlNifSInt64 value) {
-    if (value == 0) return "0";
+  // Writes the decimal representation of `value` into `buf` (>= 22 bytes),
+  // left-justified, and returns its length.
+  static size_t int64_to_chars(char* buf, ErlNifSInt64 value) {
     bool neg = value < 0;
     ErlNifUInt64 u = neg ? -static_cast<ErlNifUInt64>(value) : static_cast<ErlNifUInt64>(value);
-    char buf[22];
-    char* p = buf + sizeof(buf);
-    do { *--p = '0' + (u % 10); u /= 10; } while (u);
-    if (neg) *--p = '-';
-    return std::string(p, buf + sizeof(buf) - p);
+    char tmp[20];
+    size_t n = uint64_to_chars(tmp, u);
+    char* p = buf;
+    if (neg) *p++ = '-';
+    memcpy(p, tmp, n);
+    return (p - buf) + n;
+  }
+
+  // Writes the decimal representation of `value` into `buf` (>= 20 bytes),
+  // left-justified, and returns its length.
+  static size_t uint64_to_chars(char* buf, ErlNifUInt64 value) {
+    char tmp[20];
+    char* p = tmp + sizeof(tmp);
+    do { *--p = '0' + (value % 10); value /= 10; } while (value);
+    size_t n = tmp + sizeof(tmp) - p;
+    memcpy(buf, p, n);
+    return n;
   }
 
   static ERL_NIF_TERM parse_decimal_string(ErlNifEnv* env, const char* begin, const char* end) {
@@ -178,39 +217,34 @@ private:
     return result;
   }
 
-  // Encode: parse the external term in-place (no copy), then convert to decimal.
-  static std::string bigint_to_string(ErlNifEnv* env, ERL_NIF_TERM term) {
-    ErlNifBinary bin;
-    if (!enif_term_to_binary(env, term, &bin)) return {};
-    std::string result = binary_to_decimal(bin.data, bin.size);
-    enif_release_binary(&bin);
-    return result;
-  }
-
-  static std::string binary_to_decimal(const uint8_t* data, size_t size) {
-    if (size < 4 || data[0] != 131) return {};
+  // Parses an Erlang external-term-format bignum (SMALL_BIG_EXT/LARGE_BIG_EXT)
+  // and writes its decimal representation to `out`. Returns false on
+  // malformed input.
+  template <class Out>
+  static bool binary_to_decimal(const uint8_t* data, size_t size, Out& out) {
+    if (size < 4 || data[0] != 131) return false;
 
     const uint8_t* payload;
     size_t byte_len;
     bool negative;
 
     if (data[1] == 'n') {                            // SMALL_BIG_EXT
-      if (size < 4) return {};
+      if (size < 4) return false;
       byte_len = data[2];
       negative = data[3] != 0;
       payload  = data + 4;
     } else if (data[1] == 'o') {                     // LARGE_BIG_EXT
-      if (size < 7) return {};
+      if (size < 7) return false;
       byte_len = (size_t(data[2]) << 24) | (size_t(data[3]) << 16)
                | (size_t(data[4]) <<  8) |  size_t(data[5]);
       negative = data[6] != 0;
       payload  = data + 7;
     } else {
-      return {};
+      return false;
     }
 
-    if (byte_len == 0) return "0";
-    if (payload + byte_len > data + size) return {};
+    if (byte_len == 0) { out.push('0'); return true; }
+    if (payload + byte_len > data + size) return false;
 
     // Reinterpret payload as little-endian uint32 limbs (may have a partial
     // last limb if byte_len is not a multiple of 4).
@@ -233,9 +267,6 @@ private:
 
     // decimal digit count upper bound: ceil(byte_len * log10(256)) < byte_len * 2.41
     // Use (byte_len * 5 + 1) / 2 as a tight integer approximation.
-    std::string result;
-    result.reserve((byte_len * 5 + 1) / 2 + (negative ? 1 : 0));
-
     std::vector<char> digits;
     digits.reserve((byte_len * 5 + 1) / 2);
 
@@ -258,12 +289,12 @@ private:
       }
     }
 
-    if (negative) result += '-';
+    if (negative) out.push('-');
     // digits are LSdigit-first; reverse to get the number, trimming leading zeros.
     while (digits.size() > 1 && digits.back() == '0') digits.pop_back();
     std::reverse(digits.begin(), digits.end());
-    result.append(digits.begin(), digits.end());
-    return result;
+    out.push(digits.data(), digits.size());
+    return true;
   }
 };
 

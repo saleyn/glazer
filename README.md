@@ -21,7 +21,7 @@ performance and features unmatched by other existing JSON parsing libraries.
 - Configurable representation of JSON `null` and JSON object keys
 - `minify/1` and `prettify/1` helpers
 - Standalone big-integer encode/decode helpers
-  (`encode_bigint/1`, `decode_bigint/1`)
+  (`encode_bigint/1`, `decode_integer/1`, `try_decode_integer/1`)
 
 ## Installation
 
@@ -148,6 +148,25 @@ incomplete value:
 `stream_decoder/1` accepts the same options as `decode/2` (e.g.
 `{keys, atom}`, `use_nil`) and applies them to every decoded value.
 
+A typical read loop calls `stream_feed/2` for each chunk while more data
+may still arrive, and `stream_eof/1` once the socket closes to flush any
+trailing value:
+
+```erlang
+loop(Socket, D0) ->
+  case gen_tcp:recv(Socket, 0) of
+    {ok, Chunk} ->
+      {Vals, D1} = glazer:stream_feed(D0, Chunk),
+      handle_values(Vals),
+      loop(Socket, D1);
+    {error, closed} ->
+      case glazer:stream_eof(D0) of
+        {ok, Trailing}  -> handle_values(Trailing);
+        {error, Reason} -> handle_truncated_stream(Reason)
+      end
+  end.
+```
+
 #### Efficiency
 
 `stream_feed/2` only scans for value *boundaries* incrementally —
@@ -216,15 +235,18 @@ decimal JSON representation):
 <<"123456789012345678901234567890">>
 ```
 
-`encode_bigint/1` and `decode_bigint/1` expose the same conversion
-routines directly, independent of JSON parsing/encoding:
+`encode_bigint/1` and `decode_integer/1`/`try_decode_integer/1` expose the
+same conversion routines directly, independent of JSON parsing/encoding:
 
 ```erlang
 1> glazer:encode_bigint(123456789012345678901234567890).
-{ok, <<"123456789012345678901234567890">>}
+<<"123456789012345678901234567890">>
 
-2> glazer:decode_bigint(<<"123456789012345678901234567890">>).
-{ok, 123456789012345678901234567890}
+2> glazer:decode_integer(<<"123456789012345678901234567890">>).
+123456789012345678901234567890
+
+3> glazer:try_decode_integer(<<"not a number">>).
+{error, invalid_number_format}
 ```
 
 ## Options
@@ -301,7 +323,8 @@ undefined
 | `minify/1` | Remove unnecessary whitespace from a JSON document |
 | `prettify/1` | Pretty-print a JSON document with two-space indentation |
 | `encode_bigint/1` | Encode an integer to its JSON decimal-string representation |
-| `decode_bigint/1` | Decode a JSON number string to an Erlang integer |
+| `decode_integer/1` | Decode a JSON number string to an Erlang integer, raising on invalid input |
+| `try_decode_integer/1` | Decode a JSON number string to an Erlang integer, returning `{ok, Int}` or `{error, invalid_number_format}` |
 | `scan/1`, `scan/2` | Scan a buffer for the end offset of the next complete JSON value |
 | `stream_decoder/0`, `stream_decoder/1` | Create an incremental-decode state for chunked input |
 | `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
@@ -363,8 +386,8 @@ Where `glazer` has an edge over `torque`:
   output and sanitizing invalid UTF-8 — useful when targeting strict JSON
   consumers or transports that aren't UTF-8 clean.
 - **Standalone `minify/1`/`prettify/1` and big-integer helpers**
-  (`encode_bigint/1`/`decode_bigint/1`) that don't require a full
-  decode/encode round-trip.
+  (`encode_bigint/1`/`decode_integer/1`/`try_decode_integer/1`) that don't
+  require a full decode/encode round-trip.
 - **No external C++ dependencies.** The NIF is fully self-contained —
   no CMake, no `FetchContent`, no vendored third-party library to pull
   at build time — vs. `torque`'s reliance on a Rust toolchain and

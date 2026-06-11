@@ -12,7 +12,7 @@ See also [https://github.com/stephenberry/glaze]
 """.
 -export([decode/1, decode/2, try_decode/1, try_decode/2,
          encode/1, encode/2, minify/1, prettify/1,
-         encode_bigint/1, decode_bigint/1,
+         encode_bigint/1, decode_integer/1, try_decode_integer/1,
          scan/1, scan/2,
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
 
@@ -107,7 +107,7 @@ maps (default). Raises `{parse_error, Msg}` on invalid input.
 -spec decode(binary() | iolist()) -> term().
 decode(Input) ->
   case try_decode(Input) of
-    {ok, Term}    -> Term;
+    {ok,    Term}   -> Term;
     {error, Reason} -> error(Reason)
   end.
 
@@ -149,14 +149,22 @@ minify(_Input) ->
 prettify(_Input) ->
   ?NOT_LOADED_ERROR.
 
--doc "Encode a big integer to its JSON string representation.".
--spec encode_bigint(integer()) -> {ok, binary()} | {error, binary()}.
+-doc "Encode a big integer to its JSON string representation. Raises `badarg` if `BigInt` is not an integer.".
+-spec encode_bigint(integer()) -> binary().
 encode_bigint(_BigInt) ->
   ?NOT_LOADED_ERROR.
 
--doc "Decode a JSON number string to a big integer.".
--spec decode_bigint(binary() | iolist()) -> {ok, integer()} | {error, binary()}.
-decode_bigint(_NumberString) ->
+-doc "Decode a JSON number string to an integer. Raises `invalid_number_format` on invalid input.".
+-spec decode_integer(binary() | iolist()) -> integer().
+decode_integer(NumberString) ->
+  case try_decode_integer(NumberString) of
+    {ok,    Int}    -> Int;
+    {error, Reason} -> error(Reason)
+  end.
+
+-doc "Decode a JSON number string to an integer, returning `{ok, Int}` or `{error, invalid_number_format}` instead of raising.".
+-spec try_decode_integer(binary() | iolist()) -> {ok, integer()} | {error, invalid_number_format}.
+try_decode_integer(_NumberString) ->
   ?NOT_LOADED_ERROR.
 
 -doc """
@@ -174,6 +182,32 @@ Returns:
 
 This is the low-level primitive behind [`stream_feed/2`](`stream_feed/2`);
 most callers should use the `stream_*` API instead.
+
+## Example
+
+Slicing off complete values from a buffer of concatenated JSON:
+
+```erlang
+1> Buf0 = <<"{\"a\":1} {\"b\":2}">>,
+2> {complete, End1} = glazer:scan(Buf0).
+{complete, 7}
+3> <<Val1:End1/binary, Buf1/binary>> = Buf0,
+4> Val1.
+<<"{\"a\":1}">>
+5> Buf1.
+<<" {\"b\":2}">>
+6> {complete, End2} = glazer:scan(Buf1).
+{complete, 8}
+```
+
+Resuming a scan once more bytes arrive:
+
+```erlang
+1> {incomplete, S0} = glazer:scan(<<"{\"a\":">>).
+{incomplete, {6,1,false,false,true,false}}
+2> glazer:scan(<<"{\"a\":1}">>, S0).
+{complete, 7}
+```
 """.
 -spec scan(binary() | iolist()) -> {complete, non_neg_integer()} | {incomplete, scan_state()}.
 scan(_Bin) ->
@@ -204,7 +238,7 @@ byte-scanner that tracks nesting/string state across chunks.
 
 ```erlang
 1> D0 = glazer:stream_decoder(),
-2> {Vals1, D1} = glazer:stream_feed(D0, <<"{\\"a\\":1} {\\"b\\":">>),
+2> {Vals1, D1} = glazer:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
 3> Vals1.
 [#{<<"a">> => 1}]
 4> {Vals2, _D2} = glazer:stream_feed(D1, <<"2}">>),
@@ -228,6 +262,70 @@ found so far (in order) along with the updated decoder.
 Raises the same exceptions as [`decode/2`](`decode/2`) (e.g.
 `{parse_error, Reason}`) if a value that the scanner deemed complete fails
 to decode.
+
+## Example
+
+Call `stream_feed/2` for each chunk received from the source while more
+data may still arrive, and [`stream_eof/1`](`stream_eof/1`) once the source
+is exhausted to flush any trailing value:
+
+```erlang
+loop(Socket, D0) ->
+  case gen_tcp:recv(Socket, 0) of
+    {ok, Chunk} ->
+      {Vals, D1} = glazer:stream_feed(D0, Chunk),
+      handle_values(Vals),
+      loop(Socket, D1);
+    {error, closed} ->
+      case glazer:stream_eof(D0) of
+        {ok, Trailing}  -> handle_values(Trailing);
+        {error, Reason} -> handle_truncated_stream(Reason)
+      end
+  end.
+```
+
+The same decoder fits naturally into a `gen_server` driving an
+active-mode socket: keep the `stream_decoder()` in the process state,
+feed it from `handle_info({tcp, ...})`, and flush it on
+`{tcp_closed, ...}`:
+
+```erlang
+-module(json_conn).
+-behaviour(gen_server).
+-export([start_link/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-record(state, {socket, decoder}).
+
+start_link(Socket) ->
+  gen_server:start_link(?MODULE, Socket, []).
+
+init(Socket) ->
+  inet:setopts(Socket, [{active, once}]),
+  {ok, #state{socket = Socket, decoder = glazer:stream_decoder()}}.
+
+handle_info({tcp, Socket, Data}, #state{socket = Socket, decoder = D0} = State) ->
+  {Vals, D1} = glazer:stream_feed(D0, Data),
+  lists:foreach(fun handle_value/1, Vals),
+  inet:setopts(Socket, [{active, once}]),
+  {noreply, State#state{decoder = D1}};
+
+handle_info({tcp_closed, Socket}, #state{socket = Socket, decoder = D0} = State) ->
+  case glazer:stream_eof(D0) of
+    {ok, Trailing}  -> lists:foreach(fun handle_value/1, Trailing);
+    {error, Reason} -> handle_truncated_stream(Reason)
+  end,
+  {stop, normal, State};
+
+handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
+  {stop, Reason, State}.
+
+handle_call(_Request, _From, State) -> {reply, ok, State}.
+handle_cast(_Request, State)        -> {noreply, State}.
+
+handle_value(Val) ->
+  io:format("received: ~p~n", [Val]).
+```
 """.
 -spec stream_feed(stream_decoder(), binary() | iolist()) -> {[term()], stream_decoder()}.
 stream_feed(#stream_decoder{buffer = Buf} = D, Chunk) ->
@@ -256,6 +354,29 @@ being written to mid-chunk).
 
 Returns `{ok, [Term]}` with zero or one trailing value, or `{error,
 Reason}` if the remaining bytes don't form a complete value.
+
+## Example
+
+```erlang
+1> D0 = glazer:stream_decoder(),
+2> {Vals1, D1} = glazer:stream_feed(D0, <<"123">>),
+3> Vals1.
+[]
+4> glazer:stream_eof(D1).
+{ok, [123]}
+```
+
+A stream that ends mid-value (e.g. a dropped connection) yields an error
+instead of silently dropping the partial data:
+
+```erlang
+1> D0 = glazer:stream_decoder(),
+2> {Vals1, D1} = glazer:stream_feed(D0, <<"{\"a\":1, \"b\":">>),
+3> Vals1.
+[]
+4> glazer:stream_eof(D1).
+{error, {parse_error, _Reason}}
+```
 """.
 -spec stream_eof(stream_decoder()) -> {ok, [term()]} | {error, term()}.
 stream_eof(#stream_decoder{buffer = Buf, opts = Opts}) ->
@@ -419,14 +540,19 @@ bigint_test_() ->
   Big =  123456789012345678901234567890,
   Neg = -Big,
   [
-    ?_assertEqual({ok,  <<"123456789012345678901234567890">>}, encode_bigint(Big)),
-    ?_assertEqual({ok, <<"-123456789012345678901234567890">>}, encode_bigint(Neg)),
-    ?_assertEqual({ok, Big},                                   decode_bigint(<<"123456789012345678901234567890">>)),
-    ?_assertEqual({ok, Neg},                                   decode_bigint(<<"-123456789012345678901234567890">>)),
-    ?_assertEqual({ok, 123},                                   decode_bigint(<<"123">>)),
-    ?_assertEqual(Big,                                         decode(<<"123456789012345678901234567890">>)),
-    ?_assertEqual(<<"123456789012345678901234567890">>,        encode(Big)),
-    ?_assertEqual(Big,                                         decode(encode(Big)))
+    ?_assertEqual(<<"123456789012345678901234567890">>,  encode_bigint(Big)),
+    ?_assertEqual(<<"-123456789012345678901234567890">>, encode_bigint(Neg)),
+    ?_assertError(badarg,                                encode_bigint(<<"not an integer">>)),
+    ?_assertEqual({ok, Big},                             try_decode_integer(<<"123456789012345678901234567890">>)),
+    ?_assertEqual({ok, Neg},                             try_decode_integer(<<"-123456789012345678901234567890">>)),
+    ?_assertEqual({ok, 123},                             try_decode_integer(<<"123">>)),
+    ?_assertEqual(Big,                                   decode_integer(<<"123456789012345678901234567890">>)),
+    ?_assertEqual(123,                                   decode_integer(<<"123">>)),
+    ?_assertError(invalid_number_format,                 decode_integer(<<"not a number">>)),
+    ?_assertEqual({error, invalid_number_format},        try_decode_integer(<<"not a number">>)),
+    ?_assertEqual(Big,                                   decode(<<"123456789012345678901234567890">>)),
+    ?_assertEqual(<<"123456789012345678901234567890">>,  encode(Big)),
+    ?_assertEqual(Big,                                   decode(encode(Big)))
   ].
 
 scan_test_() ->
@@ -465,7 +591,7 @@ stream_decoder_test_() ->
       {[#{<<"b">> := 2}], _D2} = stream_feed(D1, <<"2}">>)
     end),
 
-    %% byte-at-a-time NDJSON feeding decodes every line
+    %% byte-at-a-time JSON feeding decodes every line
     ?_test(begin
       Doc = <<"{\"x\":1}\n{\"y\":[1,2,3]}\n{\"z\":\"hi\"}\n">>,
       {Vals, DLast} = lists:foldl(

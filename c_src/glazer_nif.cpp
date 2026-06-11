@@ -34,7 +34,6 @@
 #include "glazer_json_format.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
-#include "glazer_lltoa.hpp"
 
 // ---------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
@@ -108,39 +107,6 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, EncodeOpts& opt
     }
   }
   return true;
-}
-
-// ---------------------------------------------------------------------------
-// Fast integer → JSON digits  (lookup-table, no division on small values)
-// Adapted from https://github.com/jeaiii/itoa (MIT)
-// ---------------------------------------------------------------------------
-
-namespace lltoa_impl {
-  struct pair { char dd[2]; };
-  static constexpr pair digs[100] = {
-    {'0','0'},{'0','1'},{'0','2'},{'0','3'},{'0','4'},{'0','5'},{'0','6'},{'0','7'},{'0','8'},{'0','9'},
-    {'1','0'},{'1','1'},{'1','2'},{'1','3'},{'1','4'},{'1','5'},{'1','6'},{'1','7'},{'1','8'},{'1','9'},
-    {'2','0'},{'2','1'},{'2','2'},{'2','3'},{'2','4'},{'2','5'},{'2','6'},{'2','7'},{'2','8'},{'2','9'},
-    {'3','0'},{'3','1'},{'3','2'},{'3','3'},{'3','4'},{'3','5'},{'3','6'},{'3','7'},{'3','8'},{'3','9'},
-    {'4','0'},{'4','1'},{'4','2'},{'4','3'},{'4','4'},{'4','5'},{'4','6'},{'4','7'},{'4','8'},{'4','9'},
-    {'5','0'},{'5','1'},{'5','2'},{'5','3'},{'5','4'},{'5','5'},{'5','6'},{'5','7'},{'5','8'},{'5','9'},
-    {'6','0'},{'6','1'},{'6','2'},{'6','3'},{'6','4'},{'6','5'},{'6','6'},{'6','7'},{'6','8'},{'6','9'},
-    {'7','0'},{'7','1'},{'7','2'},{'7','3'},{'7','4'},{'7','5'},{'7','6'},{'7','7'},{'7','8'},{'7','9'},
-    {'8','0'},{'8','1'},{'8','2'},{'8','3'},{'8','4'},{'8','5'},{'8','6'},{'8','7'},{'8','8'},{'8','9'},
-    {'9','0'},{'9','1'},{'9','2'},{'9','3'},{'9','4'},{'9','5'},{'9','6'},{'9','7'},{'9','8'},{'9','9'},
-  };
-
-  inline char* u64toa(char* b, uint64_t n)
-  {
-    if (n < 100) {
-      if (n < 10) { b[0] = '0' + (char)n; return b + 1; }
-      memcpy(b, &digs[n], 2);
-      return b + 2;
-    }
-    return util::lltoa(b, n);
-  }
-
-  inline char* i64toa(char* b, int64_t v) { return util::lltoa(b, v); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,24 +1092,8 @@ struct Encoder {
         return true;
       }
 
-      case ERL_NIF_TERM_TYPE_INTEGER: {
-        ErlNifSInt64 i;
-        if (enif_get_int64(m_env, term, &i)) [[likely]] {
-          char buf[22]; char* e = lltoa_impl::i64toa(buf, i);
-          m_out.push(buf, e - buf);
-          return true;
-        }
-        ErlNifUInt64 u;
-        if (enif_get_uint64(m_env, term, &u)) {
-          char buf[21]; char* e = util::lltoa(buf, u);
-          m_out.push(buf, e - buf);
-          return true;
-        }
-        // bigint — doesn't fit in 64 bits
-        auto s = glazer::BigInt::encode(m_env, term);
-        if (!s.empty()) { m_out.push(s); return true; }
-        return false;
-      }
+      case ERL_NIF_TERM_TYPE_INTEGER:
+        return glazer::BigInt::encode(m_env, term, m_out);
 
       case ERL_NIF_TERM_TYPE_MAP: {
         m_out.push('{');
@@ -1460,25 +1410,20 @@ static ERL_NIF_TERM nif_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
 }
 
 // ---------------------------------------------------------------------------
-// NIF: encode_bigint / decode_bigint
+// NIF: encode_bigint / try_decode_integer
 // ---------------------------------------------------------------------------
 
-static ERL_NIF_TERM nif_encode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_encode_integer(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) [[unlikely]]
     return enif_make_badarg(env);
-  ErlNifSInt64 val;
-  if (enif_get_int64(env, argv[0], &val)) {
-    char buf[22]; char* e = lltoa_impl::i64toa(buf, val);
-    return enif_make_tuple2(env, AM_OK, make_binary(env, std::string_view(buf, e - buf)));
-  }
-  auto s = glazer::BigInt::encode(env, argv[0]);
-  if (s.empty())
-    return enif_make_tuple2(env, AM_ERROR, make_binary(env, std::string_view("invalid_bigint")));
-  return enif_make_tuple2(env, AM_OK, make_binary(env, s));
+  glazer::BigInt::StringOut out;
+  if (glazer::BigInt::encode(env, argv[0], out)) [[likely]]
+    return make_binary(env, out.str);
+  return enif_make_badarg(env);
 }
 
-static ERL_NIF_TERM nif_decode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM nif_try_decode_integer(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) [[unlikely]] return enif_make_badarg(env);
   ErlNifBinary bin;
@@ -1488,9 +1433,9 @@ static ERL_NIF_TERM nif_decode_bigint(ErlNifEnv* env, int argc, const ERL_NIF_TE
   auto r = glazer::BigInt::decode(env,
     reinterpret_cast<const char*>(bin.data),
     reinterpret_cast<const char*>(bin.data) + bin.size);
-  if (!r)
-    return enif_make_tuple2(env, AM_ERROR, make_binary(env, std::string_view("invalid_number_format")));
-  return enif_make_tuple2(env, AM_OK, r);
+  if (r) [[likely]]
+    return enif_make_tuple2(env, AM_OK, r);
+  return enif_make_tuple2(env, AM_ERROR, AM_INVALID_NUMBER_FORMAT);
 }
 
 // ---------------------------------------------------------------------------
@@ -1520,8 +1465,8 @@ static ErlNifFunc nif_funcs[] = {
   {"encode",        2, nif_encode,        0},
   {"minify",        1, nif_minify,        0},
   {"prettify",      1, nif_prettify,      0},
-  {"encode_bigint", 1, nif_encode_bigint, 0},
-  {"decode_bigint", 1, nif_decode_bigint, 0},
+  {"encode_bigint",      1, nif_encode_integer,      0},
+  {"try_decode_integer", 1, nif_try_decode_integer, 0},
 };
 
 ERL_NIF_INIT(glazer, nif_funcs, nif_load, NULL, NULL, NULL)

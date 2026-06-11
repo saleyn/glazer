@@ -29,6 +29,7 @@ static ERL_NIF_TERM AM_FORCE_UTF8;
 // Error atoms
 static ERL_NIF_TERM AM_PARSE_ERROR;
 static ERL_NIF_TERM AM_ENCODE_ERROR;
+static ERL_NIF_TERM AM_INVALID_NUMBER_FORMAT;
 
 // scan/2 result atoms
 static ERL_NIF_TERM AM_COMPLETE;
@@ -41,34 +42,35 @@ struct DeadProcError : public std::exception {};
 
 inline void init_atoms(ErlNifEnv* env)
 {
-  AM_OK                   = enif_make_atom(env, "ok");
-  AM_ERROR                = enif_make_atom(env, "error");
-  AM_TRUE                 = enif_make_atom(env, "true");
-  AM_FALSE                = enif_make_atom(env, "false");
-  AM_NULL                 = enif_make_atom(env, "null");
-  AM_NIL                  = enif_make_atom(env, "nil");
-  AM_ENOMEM               = enif_make_atom(env, "enomem");
+  AM_OK                    = enif_make_atom(env, "ok");
+  AM_ERROR                 = enif_make_atom(env, "error");
+  AM_TRUE                  = enif_make_atom(env, "true");
+  AM_FALSE                 = enif_make_atom(env, "false");
+  AM_NULL                  = enif_make_atom(env, "null");
+  AM_NIL                   = enif_make_atom(env, "nil");
+  AM_ENOMEM                = enif_make_atom(env, "enomem");
 
-  AM_OBJECT_AS_TUPLE      = enif_make_atom(env, "object_as_tuple");
-  AM_USE_NIL              = enif_make_atom(env, "use_nil");
-  AM_NULL_TERM            = enif_make_atom(env, "null_term");
-  AM_KEYS                 = enif_make_atom(env, "keys");
-  AM_LABEL_ATOM           = enif_make_atom(env, "atom");
-  AM_LABEL_EXISTING_ATOM  = enif_make_atom(env, "existing_atom");
-  AM_LABEL_BINARY         = enif_make_atom(env, "binary");
-  AM_DEDUPE_KEYS          = enif_make_atom(env, "dedupe_keys");
+  AM_OBJECT_AS_TUPLE       = enif_make_atom(env, "object_as_tuple");
+  AM_USE_NIL               = enif_make_atom(env, "use_nil");
+  AM_NULL_TERM             = enif_make_atom(env, "null_term");
+  AM_KEYS                  = enif_make_atom(env, "keys");
+  AM_LABEL_ATOM            = enif_make_atom(env, "atom");
+  AM_LABEL_EXISTING_ATOM   = enif_make_atom(env, "existing_atom");
+  AM_LABEL_BINARY          = enif_make_atom(env, "binary");
+  AM_DEDUPE_KEYS           = enif_make_atom(env, "dedupe_keys");
 
-  AM_PRETTY               = enif_make_atom(env, "pretty");
-  AM_UESCAPE              = enif_make_atom(env, "uescape");
-  AM_FORCE_UTF8           = enif_make_atom(env, "force_utf8");
+  AM_PRETTY                = enif_make_atom(env, "pretty");
+  AM_UESCAPE               = enif_make_atom(env, "uescape");
+  AM_FORCE_UTF8            = enif_make_atom(env, "force_utf8");
 
-  AM_PARSE_ERROR          = enif_make_atom(env, "parse_error");
-  AM_ENCODE_ERROR         = enif_make_atom(env, "encode_error");
+  AM_PARSE_ERROR           = enif_make_atom(env, "parse_error");
+  AM_ENCODE_ERROR          = enif_make_atom(env, "encode_error");
+  AM_INVALID_NUMBER_FORMAT = enif_make_atom(env, "invalid_number_format");
 
-  AM_COMPLETE             = enif_make_atom(env, "complete");
-  AM_INCOMPLETE           = enif_make_atom(env, "incomplete");
+  AM_COMPLETE              = enif_make_atom(env, "complete");
+  AM_INCOMPLETE            = enif_make_atom(env, "incomplete");
 
-  am_null                 = AM_NULL;
+  am_null                  = AM_NULL;
 }
 
 inline std::tuple<ERL_NIF_TERM, unsigned char*>
