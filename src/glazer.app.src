@@ -12,6 +12,6 @@
   {links, [{"GitHub", "https://github.com/saleyn/glazer"}]},
   {files, [
     "src", "c_src", "Makefile", "rebar.config", "rebar.lock",
-    "README.md", "LICENSE"
+    "README.md", "LICENSE", "assets"
   ]}
  ]}.
