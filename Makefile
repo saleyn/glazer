@@ -6,7 +6,7 @@ PRIV_DIR := $(abspath priv)
 OBJ_DIR  := $(abspath obj)
 DEBUG    ?= 0
 REBAR    ?= rebar3
-APP      := $(shell sed -n '/application,/{s/^.*, //; s/,.*$$//; p; q}' src/*.app.src)
+APP      := $(shell sed -nE 's/^\{application, ([a-zA-Z0-9_]+),.*/\1/p' src/*.app.src | head -n1)
 
 all: compile
 
