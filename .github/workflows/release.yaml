@@ -107,7 +107,7 @@ jobs:
           # github-actions[bot] (which lacks permission) instead of RELEASE_PAT.
           persist-credentials: false
 
-      - name: Create and push tag
+      - name: Create and push tag ${{ needs.detect.outputs.version }}
         env:
           RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
@@ -120,4 +120,44 @@ jobs:
 
           git tag "$VERSION" "$COMMIT"
           git push "$REMOTE" "$VERSION"
-          echo "### :label: Created tag \`$VERSION\` at \`$(git rev-parse --short "$COMMIT")\`" >> $GITHUB_STEP_SUMMARY
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [detect, create-tag]
+
+    steps:
+      - name: Get optional changelog entry
+        id: changelog
+        run: |
+          # Extract changelog for this version
+          VERSION="${{ needs.detect.outputs.version }}"
+          # Look for the version in CHANGELOG.md or fall back to generated notes
+          if [ -f "CHANGELOG.md" ]; then
+            # Extract section between version header and next version header
+            awk "/^## ${VERSION#v}/{flag=1;next}/^## v[0-9]/{flag=0}flag" CHANGELOG.md > changelog.txt
+            if [ -s changelog.txt ]; then
+              echo "has_changelog=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_changelog=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "has_changelog=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Github Release ${{ needs.detect.outputs.version }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.detect.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.has_changelog == 'true' && 'changelog.txt' || '' }}
+          generate_release_notes: ${{ steps.changelog.outputs.has_changelog != 'true' }}
+          draft: false
+          prerelease: ${{ contains(needs.detect.outputs.version, 'alpha') || contains(needs.detect.outputs.version, 'beta') || contains(needs.detect.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Summary for Release ${{ needs.detect.outputs.version }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          COMMIT="${{ needs.detect.outputs.commit }}"
+          echo "### :label: Created a tagged release \`$VERSION\` at \`${COMMIT:0:7}\`" >> $GITHUB_STEP_SUMMARY

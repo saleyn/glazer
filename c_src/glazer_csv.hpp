@@ -159,7 +159,8 @@ struct CsvDecoder {
 
   // Reads one record (row) into `fields`. Returns false at end of input with
   // no fields read (clean EOF). On a malformed quoted field, sets `err`.
-  bool read_record(SmallTermVec<16>& fields, bool& err)
+  template<size_t N>
+  bool read_record(SmallTermVec<N>& fields, bool& err)
   {
     err = false;
     fields.set_size(0);
@@ -172,7 +173,7 @@ struct CsvDecoder {
     for (;;) {
       bool ok;
       ERL_NIF_TERM field = read_field(ok);
-      if (!ok) { err = true; return false; }
+      if (!ok) [[unlikely]] { err = true; return false; }
       fields.push_back(field);
 
       if (m_p < m_end && *m_p == m_opts.delimiter) { ++m_p; continue; }
@@ -198,48 +199,49 @@ struct CsvDecoder {
          ? t : bin_term;
   }
 
-  ERL_NIF_TERM decode()
+  // Decodes the entire input into a list of rows (maps if `headers`).
+  // Returns:
+  //   - success: {true, Result :: list(map) | list(list)}
+  //   - failure: {false, Result :: atom | binary}
+  std::tuple<bool, ERL_NIF_TERM> decode()
   {
-    SmallTermVec<16> fields;
-    SmallTermVec<16> header;
+    SmallTermVec<64> fields;
+    SmallTermVec<64> header;
     std::vector<ERL_NIF_TERM> rows;
 
     bool err = false;
-    bool first = true;
-    while (read_record(fields, err)) {
-      if (m_opts.headers && first) {
-        for (size_t i = 0; i < fields.size(); ++i) header.push_back(make_header_key(fields.data()[i]));
-        first = false;
-        continue;
-      }
-      first = false;
+    auto rec = read_record(fields, err);
 
-      if (m_opts.headers) {
-        size_t n = std::min(header.size(), fields.size());
-        ERL_NIF_TERM map;
-        if (!enif_make_map_from_arrays(m_env, header.data(), fields.data(), (unsigned)n, &map))
-          return parse_error(AM_DUPLICATE_HEADER);
-        rows.push_back(map);
-      } else {
-        rows.push_back(enif_make_list_from_array(m_env, fields.data(), (unsigned)fields.size()));
-      }
+    if (!rec) [[unlikely]]
+      goto DONE;
+
+    // If `headers` is set, the first record becomes the column names.
+    // Otherwise, treat it as a data row and decode it as usual.
+    if (m_opts.headers) {
+      for (auto field : fields)
+        header.push_back(make_header_key(field));
+      rec = read_record(fields, err);
     }
 
-    if (err)
-      return parse_error(AM_UNTERMINATED_QUOTED_FIELD);
+    if (m_opts.headers) {
+      while (rec) {
+        auto map = fields.to_erl_map(m_env, header);
+        if (!map) [[unlikely]]
+          return std::make_tuple(false, AM_DUPLICATE_HEADER);
+        rows.push_back(map);
+        rec = read_record(fields, err);
+      }
+    } else {
+      do    { rows.push_back(fields.to_erl_list(m_env)); }
+      while (read_record(fields, err));
+    }
 
-    return enif_make_tuple2(m_env, AM_OK,
-      enif_make_list_from_array(m_env, rows.data(), (unsigned)rows.size()));
-  }
+  DONE:
+    if (err) [[unlikely]]
+      return std::make_tuple(false, AM_UNTERMINATED_QUOTED_FIELD);
 
-  ERL_NIF_TERM parse_error(std::string_view reason)
-  {
-    return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, reason));
-  }
-
-  ERL_NIF_TERM parse_error(ERL_NIF_TERM reason)
-  {
-    return enif_make_tuple2(m_env, AM_ERROR, reason);
+    return std::make_tuple(true,
+      enif_make_list_from_array(m_env, rows.data(), unsigned(rows.size())));
   }
 };
 

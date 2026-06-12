@@ -44,35 +44,37 @@
 <text x="190.0" y="66.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">JSON decode — 0.1K</text>
 <line x1="50.0" y1="148.0" x2="370.0" y2="148.0" class="grid" stroke-width="1"/>
 <text x="44.0" y="151.0" text-anchor="end" font-size="9" class="muted">0</text>
-<line x1="50.0" y1="121.3" x2="370.0" y2="121.3" class="grid" stroke-width="1"/>
-<text x="44.0" y="124.3" text-anchor="end" font-size="9" class="muted">1</text>
-<line x1="50.0" y1="94.7" x2="370.0" y2="94.7" class="grid" stroke-width="1"/>
-<text x="44.0" y="97.7" text-anchor="end" font-size="9" class="muted">2</text>
+<line x1="50.0" y1="128.0" x2="370.0" y2="128.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="131.0" text-anchor="end" font-size="9" class="muted">1</text>
+<line x1="50.0" y1="108.0" x2="370.0" y2="108.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="111.0" text-anchor="end" font-size="9" class="muted">2</text>
+<line x1="50.0" y1="88.0" x2="370.0" y2="88.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="91.0" text-anchor="end" font-size="9" class="muted">3</text>
 <line x1="50.0" y1="68.0" x2="370.0" y2="68.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="71.0" text-anchor="end" font-size="9" class="muted">3</text>
-<rect x="56.0" y="124.0" width="33.2" height="24.0" class="bar-glazer"><title>glazer: 0.9 (decode)</title></rect>
-<text x="72.6" y="121.0" text-anchor="middle" font-size="8" class="muted">0.9</text>
+<text x="44.0" y="71.0" text-anchor="end" font-size="9" class="muted">4</text>
+<rect x="56.0" y="130.0" width="33.2" height="18.0" class="bar-glazer"><title>glazer: 0.9 (decode)</title></rect>
+<text x="72.6" y="127.0" text-anchor="middle" font-size="8" class="muted">0.9</text>
 <text x="72.6" y="158.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 72.6,158.0)">glazer</text>
-<rect x="95.2" y="100.0" width="33.2" height="48.0" class="bar-1"><title>torque: 1.8 (decode)</title></rect>
-<text x="111.9" y="97.0" text-anchor="middle" font-size="8" class="muted">1.8</text>
+<rect x="95.2" y="112.0" width="33.2" height="36.0" class="bar-1"><title>torque: 1.8 (decode)</title></rect>
+<text x="111.9" y="109.0" text-anchor="middle" font-size="8" class="muted">1.8</text>
 <text x="111.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 111.9,158.0)">torque</text>
-<rect x="134.5" y="94.7" width="33.2" height="53.3" class="bar-2"><title>simdjsone: 2 (decode)</title></rect>
-<text x="151.1" y="91.7" text-anchor="middle" font-size="8" class="muted">2</text>
+<rect x="134.5" y="124.0" width="33.2" height="24.0" class="bar-2"><title>simdjsone: 1.2 (decode)</title></rect>
+<text x="151.1" y="121.0" text-anchor="middle" font-size="8" class="muted">1.2</text>
 <text x="151.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 151.1,158.0)">simdjsone</text>
-<rect x="173.8" y="68.0" width="33.2" height="80.0" class="bar-3"><title>jiffy: 3 (decode)</title></rect>
-<text x="190.4" y="65.0" text-anchor="middle" font-size="8" class="muted">3</text>
+<rect x="173.8" y="112.0" width="33.2" height="36.0" class="bar-3"><title>jiffy: 1.8 (decode)</title></rect>
+<text x="190.4" y="109.0" text-anchor="middle" font-size="8" class="muted">1.8</text>
 <text x="190.4" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 190.4,158.0)">jiffy</text>
-<rect x="213.0" y="76.0" width="33.2" height="72.0" class="bar-4"><title>jason: 2.7 (decode)</title></rect>
-<text x="229.6" y="73.0" text-anchor="middle" font-size="8" class="muted">2.7</text>
+<rect x="213.0" y="92.0" width="33.2" height="56.0" class="bar-4"><title>jason: 2.8 (decode)</title></rect>
+<text x="229.6" y="89.0" text-anchor="middle" font-size="8" class="muted">2.8</text>
 <text x="229.6" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 229.6,158.0)">jason</text>
-<rect x="252.2" y="78.7" width="33.2" height="69.3" class="bar-5"><title>thoas: 2.6 (decode)</title></rect>
-<text x="268.9" y="75.7" text-anchor="middle" font-size="8" class="muted">2.6</text>
+<rect x="252.2" y="96.0" width="33.2" height="52.0" class="bar-5"><title>thoas: 2.6 (decode)</title></rect>
+<text x="268.9" y="93.0" text-anchor="middle" font-size="8" class="muted">2.6</text>
 <text x="268.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 268.9,158.0)">thoas</text>
-<rect x="291.5" y="70.7" width="33.2" height="77.3" class="bar-6"><title>euneus: 2.9 (decode)</title></rect>
-<text x="308.1" y="67.7" text-anchor="middle" font-size="8" class="muted">2.9</text>
+<rect x="291.5" y="86.0" width="33.2" height="62.0" class="bar-6"><title>euneus: 3.1 (decode)</title></rect>
+<text x="308.1" y="83.0" text-anchor="middle" font-size="8" class="muted">3.1</text>
 <text x="308.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 308.1,158.0)">euneus</text>
-<rect x="330.8" y="86.7" width="33.2" height="61.3" class="bar-7"><title>json: 2.3 (decode)</title></rect>
-<text x="347.4" y="83.7" text-anchor="middle" font-size="8" class="muted">2.3</text>
+<rect x="330.8" y="98.0" width="33.2" height="50.0" class="bar-7"><title>json: 2.5 (decode)</title></rect>
+<text x="347.4" y="95.0" text-anchor="middle" font-size="8" class="muted">2.5</text>
 <text x="347.4" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 347.4,158.0)">json</text>
 <line x1="50.0" y1="148.0" x2="370.0" y2="148.0" class="axis" stroke-width="1"/>
 <text x="570.0" y="66.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">JSON encode — 0.1K</text>
@@ -90,23 +92,23 @@
 <rect x="475.2" y="110.7" width="33.2" height="37.3" class="bar-1"><title>torque: 1.4 (encode)</title></rect>
 <text x="491.9" y="107.7" text-anchor="middle" font-size="8" class="muted">1.4</text>
 <text x="491.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 491.9,158.0)">torque</text>
-<rect x="514.5" y="84.0" width="33.2" height="64.0" class="bar-2"><title>simdjsone: 2.4 (encode)</title></rect>
-<text x="531.1" y="81.0" text-anchor="middle" font-size="8" class="muted">2.4</text>
+<rect x="514.5" y="92.0" width="33.2" height="56.0" class="bar-2"><title>simdjsone: 2.1 (encode)</title></rect>
+<text x="531.1" y="89.0" text-anchor="middle" font-size="8" class="muted">2.1</text>
 <text x="531.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 531.1,158.0)">simdjsone</text>
-<rect x="553.8" y="92.0" width="33.2" height="56.0" class="bar-3"><title>jiffy: 2.1 (encode)</title></rect>
-<text x="570.4" y="89.0" text-anchor="middle" font-size="8" class="muted">2.1</text>
+<rect x="553.8" y="97.3" width="33.2" height="50.7" class="bar-3"><title>jiffy: 1.9 (encode)</title></rect>
+<text x="570.4" y="94.3" text-anchor="middle" font-size="8" class="muted">1.9</text>
 <text x="570.4" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 570.4,158.0)">jiffy</text>
 <rect x="593.0" y="89.3" width="33.2" height="58.7" class="bar-4"><title>jason: 2.2 (encode)</title></rect>
 <text x="609.6" y="86.3" text-anchor="middle" font-size="8" class="muted">2.2</text>
 <text x="609.6" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 609.6,158.0)">jason</text>
-<rect x="632.2" y="89.3" width="33.2" height="58.7" class="bar-5"><title>thoas: 2.2 (encode)</title></rect>
-<text x="648.9" y="86.3" text-anchor="middle" font-size="8" class="muted">2.2</text>
+<rect x="632.2" y="86.7" width="33.2" height="61.3" class="bar-5"><title>thoas: 2.3 (encode)</title></rect>
+<text x="648.9" y="83.7" text-anchor="middle" font-size="8" class="muted">2.3</text>
 <text x="648.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 648.9,158.0)">thoas</text>
 <rect x="671.5" y="92.0" width="33.2" height="56.0" class="bar-6"><title>euneus: 2.1 (encode)</title></rect>
 <text x="688.1" y="89.0" text-anchor="middle" font-size="8" class="muted">2.1</text>
 <text x="688.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 688.1,158.0)">euneus</text>
-<rect x="710.8" y="102.7" width="33.2" height="45.3" class="bar-7"><title>json: 1.7 (encode)</title></rect>
-<text x="727.4" y="99.7" text-anchor="middle" font-size="8" class="muted">1.7</text>
+<rect x="710.8" y="100.0" width="33.2" height="48.0" class="bar-7"><title>json: 1.8 (encode)</title></rect>
+<text x="727.4" y="97.0" text-anchor="middle" font-size="8" class="muted">1.8</text>
 <text x="727.4" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 727.4,158.0)">json</text>
 <line x1="430.0" y1="148.0" x2="750.0" y2="148.0" class="axis" stroke-width="1"/>
 <text x="190.0" y="204.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">YAML decode — 0.1K</text>

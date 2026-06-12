@@ -12,6 +12,7 @@ See also [https://github.com/stephenberry/glaze]
 """.
 -export([json_decode/1, json_decode/2, json_try_decode/1, json_try_decode/2,
          json_encode/1, json_encode/2, json_minify/1, json_prettify/1,
+         json_query/2, json_query/3,
          encode_integer/1, decode_integer/1, try_decode_integer/1,
          json_scan/1, json_scan/2,
          json_stream_decoder/0, json_stream_decoder/1, json_stream_feed/2, json_stream_eof/1,
@@ -138,8 +139,16 @@ CSV encode options:
 """.
 -type csv_encode_opts() :: [csv_encode_opt()].
 
+-type json_query_reason() ::
+    enomem
+  | jq_not_available
+  | jq_decode_error
+  | {jq_compile_error, binary()}
+  | invalid_input
+  | binary().
+
 -export_type([decode_opts/0, encode_opts/0, yaml_decode_opts/0, yaml_encode_opts/0,
-               csv_decode_opts/0, csv_encode_opts/0]).
+               csv_decode_opts/0, csv_encode_opts/0, json_query_reason/0]).
 
 -type scan_state() :: tuple().
 
@@ -157,7 +166,7 @@ CSV encode options:
 -record(csv_stream_decoder, {
   opts    = []        :: csv_decode_opts(),
   buffer  = <<>>      :: binary(),
-  header  = undefined :: [binary()] | undefined,
+  header  = undefined :: binary() | undefined,
   state   = {0, false} :: csv_scan_state()
 }).
 
@@ -537,6 +546,42 @@ json_prettify(_Input) ->
   ?NOT_LOADED_ERROR.
 
 -doc """
+Run a [jq](https://jqlang.org/) `Filter` program against a JSON binary or
+iolist `Input`, returning one Erlang term per value produced by the filter
+(in the order they are emitted by jq).
+
+Requires `glazer` to have been built against `libjq`; if `libjq` was not
+available at build time, this returns `{error, jq_not_available}`.
+
+A runtime error raised by the filter itself (e.g. via jq's `error/0,1`) is
+returned as `{error, Msg}` where `Msg` is the binary message produced by jq.
+
+```
+1> glazer:json_query(<<"{\\"a\\":[1,2,3]}">>, <<".a[]">>).
+{ok,[1,2,3]}
+
+2> glazer:json_query(<<"{\\"a\\":1}">>, <<".b">>).
+{ok,[null]}
+
+3> glazer:json_query(<<"not json">>, <<".">>).
+{error, invalid_input}
+```
+""".
+-spec json_query(binary() | iolist(), binary() | iolist()) ->
+  {ok, [term()]} | {error, json_query_reason()}.
+json_query(_Input, _Filter) ->
+  ?NOT_LOADED_ERROR.
+
+-doc """
+Like `json_query/2`, but decodes each result term using `DecodeOpts`
+(see `json_decode/2`).
+""".
+-spec json_query(binary() | iolist(), binary() | iolist(), decode_opts()) ->
+  {ok, [term()]} | {error, json_query_reason()}.
+json_query(_Input, _Filter, _DecodeOpts) ->
+  ?NOT_LOADED_ERROR.
+
+-doc """
 Encode an integer to its JSON string representation.
 Raises `badarg` if `Int` is not an integer.
 """.
@@ -734,12 +779,8 @@ json_stream_feed(#json_stream_decoder{buffer = Buf} = D, Chunk) ->
   NewBuf = iolist_to_binary([Buf, Chunk]),
   json_stream_drain(D#json_stream_decoder{buffer = NewBuf, state = undefined}, []).
 
-json_stream_drain(#json_stream_decoder{buffer = Buf, opts = Opts, state = St} = D, Acc) ->
-  ScanResult = case St of
-    undefined -> json_scan(Buf);
-    _         -> json_scan(Buf, St)
-  end,
-  case ScanResult of
+json_stream_drain(#json_stream_decoder{buffer = Buf, opts = Opts} = D, Acc) ->
+  case json_scan(Buf) of
     {complete, End} ->
       <<ValueBin:End/binary, Rest/binary>> = Buf,
       Term = json_decode(ValueBin, Opts),
@@ -849,6 +890,53 @@ prettify_test_() ->
     ?_assertMatch(<<"[\n", _/binary>>,  json_prettify(<<"[1,2,3]">>)),
     ?_assertMatch(<<"{\n", _/binary>>,  json_prettify(<<"{\"a\":1}">>))
   ].
+
+json_query_test_() ->
+  case json_query(<<"{\"a\":1}">>, <<".a">>) of
+    {error, jq_not_available} ->
+      %% libjq was not available at build time — skip.
+      [];
+    _ ->
+      [
+        ?_assertEqual({ok, [1, 2, 3]},
+                       json_query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>)),
+        ?_assertEqual({ok, [null]},
+                       json_query(<<"{\"a\":1}">>, <<".b">>)),
+        ?_assertEqual({ok, [#{a => #{b => 2}}]},
+                       json_query(<<"{\"a\":{\"b\":2}}">>, <<".">>, [{keys, atom}])),
+        ?_assertEqual({error, invalid_input},
+                       json_query(<<"not json">>, <<".">>)),
+        ?_assertMatch({error, {jq_compile_error, _}},
+                       json_query(<<"{\"a\":1}">>, <<"bad syntax (((">>)),
+
+        %% multiple emitted values, in order
+        ?_assertEqual({ok, [1, 2, 3]},
+                       json_query(<<"[1,2,3]">>, <<".[]">>)),
+
+        %% no emitted values at all
+        ?_assertEqual({ok, []},
+                       json_query(<<"[1,2,3]">>, <<".[] | select(. > 10)">>)),
+
+        %% iolist input/filter
+        ?_assertEqual({ok, [2]},
+                       json_query([<<"{\"a\":">>, <<"2}">>], [<<".">>, <<"a">>])),
+
+        %% scalar, string, boolean, and nested results
+        ?_assertEqual({ok, [<<"x">>, true, [1, 2]]},
+                       json_query(<<"{\"a\":\"x\",\"b\":true,\"c\":[1,2]}">>,
+                                   <<".a, .b, .c">>)),
+
+        %% runtime error raised by the filter itself
+        ?_assertMatch({error, Msg} when is_binary(Msg),
+                       json_query(<<"{\"a\":1}">>, <<".a | error(\"boom\")">>)),
+
+        %% decode options threaded through to each result
+        ?_assertEqual({ok, [#{<<"b">> => null}]},
+                       json_query(<<"{\"a\":{\"b\":null}}">>, <<".a">>)),
+        ?_assertEqual({ok, [#{<<"b">> => nil}]},
+                       json_query(<<"{\"a\":{\"b\":null}}">>, <<".a">>, [{null_term, nil}]))
+      ]
+  end.
 
 keys_test_() ->
   [

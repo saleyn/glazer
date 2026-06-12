@@ -78,6 +78,9 @@ else
   DETECT_LEAKS := 1
 endif
 
+check dialyzer:
+	$(REBAR) dialyzer
+
 memcheck:
 	@echo "==> Building NIF with AddressSanitizer"
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
@@ -97,7 +100,7 @@ doc docs:
 	$(REBAR) ex_doc
 
 benchmark: bench
- 
+
 bench bench-yaml bench-json bench-csv: deps
 	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix $@
 
@@ -143,10 +146,6 @@ bump-version:
 	echo ""; \
 	if [[ $$REPLY =~ ^[Yy]$$ ]] || [[ -z $$REPLY ]]; then \
 	  git commit -am "Bump version to $${NEW}"; \
-	else \
-	  echo "Aborted. Reverting rebar.config..."; \
-	  git checkout rebar.config; \
-	  exit 1; \
 	fi
 
 .PHONY: all help doc compile clean distclean test memcheck nif \

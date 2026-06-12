@@ -25,6 +25,7 @@
 #include "glazer_json.hpp"
 #include "glazer_yaml.hpp"
 #include "glazer_csv.hpp"
+#include "glazer_jq.hpp"
 
 // ---------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
@@ -47,7 +48,7 @@ static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return dec.decode(reinterpret_cast<const char*>(bin.data), bin.size);
+  return make_tuple(env, dec.decode(reinterpret_cast<const char*>(bin.data), bin.size));
 }
 
 static ERL_NIF_TERM nif_json_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -93,7 +94,7 @@ static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   YamlDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return dec.decode();
+  return make_tuple(env, dec.decode());
 }
 
 static ERL_NIF_TERM nif_yaml_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -138,7 +139,7 @@ static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int a
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return dec.decode();
+  return make_tuple(env, dec.decode());
 }
 
 static ERL_NIF_TERM nif_csv_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -413,6 +414,43 @@ static ERL_NIF_TERM nif_json_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TE
 }
 
 // ---------------------------------------------------------------------------
+// NIF: json_query (jq filter, optional — requires libjq at build time)
+// ---------------------------------------------------------------------------
+
+static ERL_NIF_TERM do_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  ErlNifBinary input, filter;
+  if (!enif_inspect_iolist_as_binary(env, argv[0], &input) ||
+      !enif_inspect_iolist_as_binary(env, argv[1], &filter)) [[unlikely]]
+    return enif_make_badarg(env);
+
+  DecodeOpts opts;
+  opts.null_term = am_null;
+  if (argc == 3 && (!enif_is_list(env, argv[2]) || !parse_decode_opts(env, argv[2], opts))) [[unlikely]]
+    return enif_make_badarg(env);
+
+  return jq_query(env, input, filter, opts);
+}
+
+static ERL_NIF_TERM nif_json_query_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  return do_json_query(env, argc, argv);
+}
+
+static ERL_NIF_TERM nif_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 2 || argc > 3) [[unlikely]]
+    return enif_make_badarg(env);
+
+  ERL_NIF_TERM sched_argv[3];
+  sched_argv[0] = argv[0];
+  sched_argv[1] = argv[1];
+  sched_argv[2] = argc > 2 ? argv[2] : enif_make_list(env, 0);
+  return enif_schedule_nif(env, "glazer_json_query", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                           nif_json_query_dirty, 3, sched_argv);
+}
+
+// ---------------------------------------------------------------------------
 // NIF: encode_integer / try_decode_integer
 // ---------------------------------------------------------------------------
 
@@ -476,6 +514,8 @@ static ErlNifFunc nif_funcs[] = {
   {"csv_encode",         2, nif_csv_encode,         0},
   {"json_minify",        1, nif_json_minify,        0},
   {"json_prettify",      1, nif_json_prettify,      0},
+  {"json_query",         2, nif_json_query,         0},
+  {"json_query",         3, nif_json_query,         0},
   {"encode_integer",     1, nif_encode_integer,     0},
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
 };

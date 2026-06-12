@@ -13,7 +13,6 @@
 #include <memory>
 #include <string>
 #include <string_view>
-
 #include <erl_nif.h>
 
 // ---------------------------------------------------------------------------
@@ -42,9 +41,43 @@ struct SmallTermVec {
     m_data[m_len++] = v;
   }
 
-  ERL_NIF_TERM* data() const { return m_data; }
-  size_t        size() const { return m_len;  }
-  void          set_size(size_t n) { m_len = n; }
+  ERL_NIF_TERM operator[](size_t i) const { return m_data[i]; }
+
+  const ERL_NIF_TERM* begin()       const { return m_data; }
+  const ERL_NIF_TERM* end()         const { return m_data + m_len; }
+
+  ERL_NIF_TERM*       begin()             { return m_data; }
+  ERL_NIF_TERM*       end()               { return m_data + m_len; }
+
+  ERL_NIF_TERM*       data()        const { return m_data; }
+  size_t              size()        const { return m_len;  }
+  void                set_size(size_t n)  { m_len = n; }
+
+  ERL_NIF_TERM  to_erl_list(ErlNifEnv* env) const {
+    return enif_make_list_from_array(env, m_data, unsigned(m_len));
+  }
+
+  // `this` holds values, `keys` holds the parallel array of keys.
+  // Returns 0 on error (i.e. duplicate keys) or ERL_NIF_TERM on success.
+  template <bool Dedupe = false, typename T = SmallTermVec<16>>
+  ERL_NIF_TERM to_erl_map(ErlNifEnv* env, const T& keys) const {
+    auto n = std::min(keys.size(), m_len);
+    ERL_NIF_TERM map;
+    if (!enif_make_map_from_arrays(env, keys.data(), m_data, unsigned(n), &map)) [[unlikely]]
+      map = 0;
+
+    if (Dedupe && !map) {
+      // Dedupe, keeping last value for duplicate keys.
+      map = enif_make_new_map(env);
+      for (auto p = m_data, q = keys.data(), e = p+n; p != e; ++p, ++q) {
+        ERL_NIF_TERM next;
+        enif_make_map_put(env, map, *q, *p, &next);
+        map = next;
+      }
+    }
+
+    return map;
+  }
 };
 
 // ---------------------------------------------------------------------------

@@ -54,6 +54,9 @@ Benchmark tables:
 - `json_minify/1` and `json_prettify/1` helpers
 - Standalone big-integer encode/decode helpers
   (`encode_integer/1`, `decode_integer/1`, `try_decode_integer/1`)
+- `json_query/2,3`: run a [jq](https://jqlang.org/) filter over a JSON
+  document, returning decoded Erlang terms (requires `glazer` to be built
+  with `libjq` available — see [jq filter support](#jq-filter-support))
 
 ### YAML
 
@@ -353,6 +356,36 @@ undefined
 <<"null">>
 ```
 
+### jq filter support
+
+If [`libjq`](https://jqlang.org/) and its headers (`jq.h`/`jv.h`) are
+available when `glazer` is built, `json_query/2,3` runs a jq filter
+program against a JSON document and returns one Erlang term per value
+produced by the filter (decoded using the same options as
+`json_decode/2`):
+
+```erlang
+1> glazer:json_query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>).
+{ok, [1, 2, 3]}
+
+2> glazer:json_query(<<"{\"a\":1}">>, <<".b">>).
+{ok, [null]}
+
+3> glazer:json_query(<<"{\"a\":{\"b\":2}}">>, <<".">>, [{keys, atom}]).
+{ok, [#{a => #{b => 2}}]}
+
+4> glazer:json_query(<<"not json">>, <<".">>).
+{error, invalid_input}
+
+5> glazer:json_query(<<"{\"a\":1}">>, <<"bad syntax (((">>).
+{error, jq_decode_error}
+```
+
+If `libjq` was not available at build time, `json_query/2,3` returns
+`{error, jq_not_available}`. Build detection is automatic — `make` probes
+for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
+still builds and works without `libjq` installed.
+
 ### API
 
 | Function | Description |
@@ -366,6 +399,7 @@ undefined
 | `json_stream_decoder/0`, `json_stream_decoder/1` | Create an incremental-decode state for chunked input |
 | `json_stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
 | `json_stream_eof/1` | Flush a stream decoder at end-of-input |
+| `json_query/2`, `json_query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
 
 ### Benchmarking JSON
 
@@ -381,14 +415,14 @@ $ PARALLEL=2 make bench
 JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
             decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      4158.8   1405.9     4966.3   2530.3        8.3      4.0        6.2      2.8        0.9      0.8
-torque      4694.4   1836.5     4718.4   5099.4        8.6      5.7        5.1      3.5        1.8      1.4
-simdjsone   5126.0   3579.8     7087.4   6531.0       10.7     14.4        8.3     14.1        2.0      2.4
-jiffy       6667.9   2355.0     8056.7   4797.6       11.9     12.1        9.5     11.2        3.0      2.1
-jason      10938.0   9451.3    18454.6  16953.9       29.0     20.4       14.4     15.6        2.7      2.2
-thoas      10988.5  10340.4    18770.8  17598.1       29.5     21.9       16.6     16.7        2.6      2.2
-euneus     11454.8   6995.1    14019.2  12668.1       22.4     17.3       11.4      9.1        2.9      2.1
-json       11161.7   6724.4    13357.1  12483.3       20.8     17.1       10.8      8.4        2.3      1.7
+glazer      3876.2   1205.8     4716.9   1971.3        9.1      3.7        5.8      2.9        0.9      0.8
+torque      5140.3   1333.7     4468.8   4411.4        9.3      5.5        4.9      3.5        1.8      1.4
+simdjsone   4652.9   3564.3     7426.9   6236.6       10.2     13.5        7.7      8.4        1.2      2.1
+jiffy       5921.4   2547.3     7974.6   4654.6       11.1     11.4        7.9      6.2        1.8      1.9
+jason      10040.8   8237.9    18594.6  17591.8       23.4     21.9       16.3     20.6        2.8      2.2
+thoas      10245.4   9117.9    19040.7  18598.2       23.7     23.5       19.6     21.2        2.6      2.3
+euneus     10446.2   6845.7    14069.1  12934.7       20.8     15.5       11.9      9.5        3.1      2.1
+json       10061.2   6563.0    13467.7  12629.6       19.6     16.0       11.1      8.3        2.5      1.8
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -567,11 +601,11 @@ $ PARALLEL=2 make bench-yaml
 YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
                 decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer           154.3     14.2       46.0     10.7        9.1      1.1
-yaml_rustler     248.0      n/a      134.8      n/a       14.4      n/a
-fast_yaml        250.4     65.1      183.6     46.6       29.9      8.3
-yamerl          2006.9      n/a     1418.3      n/a      753.5      n/a
-ymlr               n/a     58.2        n/a     37.1        n/a     14.8
+glazer            33.2      7.7       27.2      5.3        7.9      1.2
+yaml_rustler     126.5      n/a       78.0      n/a       11.8      n/a
+fast_yaml        180.0     45.1       97.2     40.6       18.8      6.1
+yamerl          1366.2      n/a      991.5      n/a      517.3      n/a
+ymlr               n/a     47.4        n/a     35.3        n/a      4.8
 ```
 
 ## CSV
@@ -690,10 +724,10 @@ $ PARALLEL=2 make bench-csv
 CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
                 decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer            17.2        7.3        810.1      483.4      30936.0    10496.8
-nimble_csv        45.7       31.3       3749.8     2709.7     168553.2    91117.8
-csv               89.8      182.0       6341.0    16959.9     345033.0   621974.4
-erl_csv          382.3      285.1      40115.1    23761.5      TIMEOUT    TIMEOUT
+glazer             8.3        4.9       1066.0      380.7      38298.9    12887.9
+nimble_csv        33.9       23.4       4202.3     2535.2     173790.7    94933.2
+csv               75.1      177.9       6250.8    15820.6      TIMEOUT    TIMEOUT
+erl_csv          370.6      266.1      39832.4    26145.4      TIMEOUT    TIMEOUT
 ```
 
 ## Big integers

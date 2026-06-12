@@ -66,6 +66,16 @@ jobs:
           CC:  ${{ matrix.compiler.CC }}
           CXX: ${{ matrix.compiler.CXX }}
         run:  make compile
+      - name: Cache Dialyzer PLT
+        uses: actions/cache@v4
+        with:
+          path: _build/default/*_plt
+          key: dialyzer-plt-${{ matrix.os }}-otp${{ matrix.otp }}-${{ hashFiles('rebar.config', 'rebar.lock') }}
+      - name: Check
+        env:
+          CC:  ${{ matrix.compiler.CC }}
+          CXX: ${{ matrix.compiler.CXX }}
+        run:  make check
       - name: Sanitize Memory
         env:
           CC:  ${{ matrix.compiler.CC }}
@@ -107,6 +117,16 @@ jobs:
           CC:  ${{ matrix.compiler.CC }}
           CXX: ${{ matrix.compiler.CXX }}
         run:  make compile
+      - name: Cache Dialyzer PLT
+        uses: actions/cache@v4
+        with:
+          path: _build/default/*_plt
+          key: dialyzer-plt-macos-otp${{ matrix.otp }}-${{ hashFiles('rebar.config', 'rebar.lock') }}
+      - name: Check
+        env:
+          CC:  ${{ matrix.compiler.CC }}
+          CXX: ${{ matrix.compiler.CXX }}
+        run:  make check
       - name: Test
         env:
           CC:  ${{ matrix.compiler.CC }}
@@ -152,6 +172,17 @@ jobs:
           CC:  gcc
           CXX: g++
         run:  make compile
+      - name: Cache Dialyzer PLT
+        uses: actions/cache@v4
+        with:
+          path: _build/default/*_plt
+          key: dialyzer-plt-windows-otp${{ matrix.otp }}-${{ hashFiles('rebar.config', 'rebar.lock') }}
+      - name: Check
+        shell: msys2 {0}
+        env:
+          CC:  gcc
+          CXX: g++
+        run:  make check
       - name: Test
         shell: msys2 {0}
         env:

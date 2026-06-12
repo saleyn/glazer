@@ -960,16 +960,8 @@ struct YamlDecoder {
       vs.push_back(val);
     }
 
-    ERL_NIF_TERM map;
-    if (enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map))
-      return map;
-    // Dedupe, keeping last value for duplicate keys.
-    map = enif_make_new_map(m_env);
-    for (size_t i = 0; i < ks.size(); ++i) {
-      ERL_NIF_TERM next;
-      enif_make_map_put(m_env, map, ks.data()[i], vs.data()[i], &next);
-      map = next;
-    }
+    [[maybe_unused]] auto map = vs.to_erl_map<true>(m_env, ks);
+    assert(map != 0);
     return map;
   }
 
@@ -1257,16 +1249,8 @@ struct YamlDecoder {
       return 0;
     }
 
-    ERL_NIF_TERM map;
-    if (enif_make_map_from_arrays(m_env, ks.data(), vs.data(), unsigned(ks.size()), &map))
-      return map;
-    // Dedupe, keeping last value for duplicate keys.
-    map = enif_make_new_map(m_env);
-    for (size_t i = 0; i < ks.size(); ++i) {
-      ERL_NIF_TERM next;
-      enif_make_map_put(m_env, map, ks.data()[i], vs.data()[i], &next);
-      map = next;
-    }
+    [[maybe_unused]] auto map = vs.to_erl_map<true>(m_env, ks);
+    assert(map);
     return map;
   }
 
@@ -1286,10 +1270,10 @@ struct YamlDecoder {
   // Entry point
   // -------------------------------------------------------------------------
 
-  ERL_NIF_TERM decode() {
+  std::tuple<bool, ERL_NIF_TERM> decode() {
     skip_blank_and_comment_lines();
-    if (at_end())
-      return enif_make_tuple2(m_env, AM_OK, m_opts.null_term);
+    if (at_end()) [[unlikely]]
+      return std::make_tuple(true, m_opts.null_term);
 
     size_t indent = peek_indent();
     ERL_NIF_TERM result;
@@ -1326,20 +1310,20 @@ struct YamlDecoder {
       }
     }
 
-    if (!result) {
+    if (!result) [[unlikely]] {
       std::string msg = m_err.empty()
         ? ("YAML parse error at offset " + std::to_string(m_p - m_beg))
         : (m_err + " at offset " + std::to_string(m_p - m_beg));
-      return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
+      return std::make_tuple(false, make_binary(m_env, msg));
     }
 
     skip_blank_and_comment_lines();
-    if (!at_end()) {
+    if (!at_end()) [[unlikely]] {
       std::string msg = "trailing content at offset " + std::to_string(m_p - m_beg);
-      return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
+      return std::make_tuple(false, make_binary(m_env, msg));
     }
 
-    return enif_make_tuple2(m_env, AM_OK, result);
+    return std::make_tuple(true, result);
   }
 
   // Heuristic: does the current line, read as a plain/quoted scalar key,

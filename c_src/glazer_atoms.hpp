@@ -45,6 +45,7 @@ static ERL_NIF_TERM AM_NAN;
 // Error atoms
 static ERL_NIF_TERM AM_ENCODE_ERROR;
 static ERL_NIF_TERM AM_INVALID_NUMBER_FORMAT;
+static ERL_NIF_TERM AM_INVALID_INPUT;
 
 // scan/2 result atoms
 static ERL_NIF_TERM AM_COMPLETE;
@@ -53,6 +54,11 @@ static ERL_NIF_TERM AM_INCOMPLETE;
 // CSV error atoms
 static ERL_NIF_TERM AM_DUPLICATE_HEADER;
 static ERL_NIF_TERM AM_UNTERMINATED_QUOTED_FIELD;
+
+// jq error atoms
+static ERL_NIF_TERM AM_JQ_NOT_AVAILABLE;
+static ERL_NIF_TERM AM_JQ_COMPILE_ERROR;
+static ERL_NIF_TERM AM_JQ_DECODE_ERROR;
 
 // The runtime null value (configurable via NIF load)
 static ERL_NIF_TERM am_null;
@@ -96,12 +102,17 @@ inline void init_atoms(ErlNifEnv* env)
 
   AM_ENCODE_ERROR              = enif_make_atom(env, "encode_error");
   AM_INVALID_NUMBER_FORMAT     = enif_make_atom(env, "invalid_number_format");
+  AM_INVALID_INPUT             = enif_make_atom(env, "invalid_input");
 
   AM_COMPLETE                  = enif_make_atom(env, "complete");
   AM_INCOMPLETE                = enif_make_atom(env, "incomplete");
 
   AM_DUPLICATE_HEADER          = enif_make_atom(env, "duplicate_header");
   AM_UNTERMINATED_QUOTED_FIELD = enif_make_atom(env, "unterminated_quoted_field");
+
+  AM_JQ_NOT_AVAILABLE          = enif_make_atom(env, "jq_not_available");
+  AM_JQ_COMPILE_ERROR          = enif_make_atom(env, "jq_compile_error");
+  AM_JQ_DECODE_ERROR           = enif_make_atom(env, "jq_decode_error");
 
   am_null                      = AM_NULL;
 }
@@ -124,4 +135,10 @@ inline ERL_NIF_TERM make_binary(ErlNifEnv* env, std::string_view sv)
 inline ERL_NIF_TERM make_binary(ErlNifEnv* env, const std::string& s)
 {
   return make_binary(env, std::string_view(s));
+}
+
+inline ERL_NIF_TERM make_tuple(ErlNifEnv* env, std::tuple<bool, ERL_NIF_TERM> result)
+{
+  auto [success, term] = result;
+  return enif_make_tuple2(env, success ? AM_OK : AM_ERROR, term);
 }

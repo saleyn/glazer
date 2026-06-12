@@ -406,39 +406,25 @@ struct Decoder {
     }
 
     for (;;) {
-      ERL_NIF_TERM v = parse_value(scratch);
+      auto v = parse_value(scratch);
       if (!v) [[unlikely]] return 0;
       items.push_back(v);
       skip_ws();
       if (m_p >= m_end) [[unlikely]] return 0;
-      if (*m_p == ']') { ++m_p; break; }
-      if (*m_p != ',') [[unlikely]] return 0;
+      if (*m_p == ']')  { ++m_p; break; }
+      if (*m_p != ',')  [[unlikely]] return 0;
       ++m_p;
     }
     return enif_make_list_from_array(m_env, items.data(), unsigned(items.size()));
   }
 
-  // Build a map from parallel key/value arrays that may contain duplicate
-  // keys, keeping the *last* value for each duplicate. enif_make_map_put
-  // overwrites on collision, so a single left-to-right pass naturally
-  // gives last-value-wins semantics with no explicit key comparison.
-  static ERL_NIF_TERM make_map_dedup(ErlNifEnv* env, SmallTermVec<16>& ks, SmallTermVec<16>& vs)
-  {
-    ERL_NIF_TERM map = enif_make_new_map(env);
-    for (size_t i = 0; i < ks.size(); ++i) {
-      ERL_NIF_TERM next;
-      enif_make_map_put(env, map, ks.data()[i], vs.data()[i], &next);
-      map = next;
-    }
-    return map;
-  }
-
   // Remove earlier duplicate {Key, Val} pairs in-place, keeping each key's
   // *last* occurrence (and its position). O(n^2) but objects are typically
-  // small (SmallTermVec inline capacity is 16) so this is cheaper than a
+  // small (SmallTermVec inline capacity is 32) so this is cheaper than a
   // hash set for the common case. Used for the object_as_tuple path, which
   // has no map-based shortcut.
-  static void dedupe_pairs_last(SmallTermVec<16>& pairs, ErlNifEnv* env)
+  template <size_t N>
+  static void dedupe_pairs_last(SmallTermVec<N>& pairs, ErlNifEnv* env)
   {
     size_t n = pairs.size();
     size_t out = 0;
@@ -464,7 +450,7 @@ struct Decoder {
     if (!guard.check()) [[unlikely]] return 0;
 
     if (m_opts.object_as_tuple) {
-      SmallTermVec<16> pairs;
+      SmallTermVec<32> pairs;
 
       if (m_p < m_end && *m_p == '}') { ++m_p;
         return enif_make_tuple1(m_env, enif_make_list_from_array(m_env, nullptr, 0)); }
@@ -500,15 +486,16 @@ struct Decoder {
       if (m_opts.dedupe_keys)
         dedupe_pairs_last(pairs, m_env);
 
-      auto list = enif_make_list_from_array(m_env, pairs.data(), (unsigned)pairs.size());
-      return enif_make_tuple1(m_env, list);
+      return enif_make_tuple1(m_env, pairs.to_erl_list(m_env));
     }
 
     // Map path
-    SmallTermVec<16> ks, vs;
+    SmallTermVec<32> ks, vs;
 
-    if (m_p < m_end && *m_p == '}') { ++m_p;
-      ERL_NIF_TERM m; enif_make_map_from_arrays(m_env, nullptr, nullptr, 0, &m); return m; }
+    if (m_p < m_end && *m_p == '}') {
+      ++m_p;
+      return enif_make_new_map(m_env);
+    }
 
     for (;;) {
       if (m_p >= m_end || *m_p != '"') [[unlikely]] return 0;
@@ -539,25 +526,24 @@ struct Decoder {
       skip_ws();
     }
 
-    ERL_NIF_TERM map;
-    return enif_make_map_from_arrays(m_env, ks.data(), vs.data(), (unsigned)ks.size(), &map)
-         ? map
-         : make_map_dedup(m_env, ks, vs); // Dedupe, keeping the last value for each key
+    [[maybe_unused]] auto map = vs.to_erl_map<true>(m_env, ks);
+    assert(map);
+    return map;
   }
 
-  // Always returns {ok, Term} | {error, {parse_error, Msg}}.
+  // Always returns {ok, Term} | {error, Msg}.
   // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
-  ERL_NIF_TERM decode(const char* data, size_t size)
+  std::tuple<bool, ERL_NIF_TERM> decode(const char* data, size_t size)
   {
     m_p = data; m_end = data + size; m_beg = data;
     std::string scratch;
     ERL_NIF_TERM result = parse_value(scratch);
     if (result) skip_ws();
     if (result && m_p == m_end) [[likely]]
-      return enif_make_tuple2(m_env, AM_OK, result);
+      return std::make_tuple(true, result);
 
     std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
-    return enif_make_tuple2(m_env, AM_ERROR, make_binary(m_env, msg));
+    return std::make_tuple(false, make_binary(m_env, msg));
   }
 };
 
