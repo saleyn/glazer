@@ -47,7 +47,7 @@ endif
 # probe since most distros don't ship a jq.pc pkg-config file. Falls back
 # to pkg-config first in case a future libjq release adds one.
 HAVE_JQ := $(shell pkg-config --exists jq 2>/dev/null && echo 1 || \
-  (printf '#include <jq.h>\nint main(){jq_init();return 0;}\n' | \
+  (printf '\#include <jq.h>\nint main(){jq_init();return 0;}\n' | \
    $(CXX) -xc++ - -ljq -o /dev/null >/dev/null 2>&1 && echo 1 || echo 0))
 ifeq ($(HAVE_JQ),1)
   CXXFLAGS += -DGLAZER_HAVE_JQ
