@@ -60,7 +60,7 @@ defmodule Mix.Tasks.BenchYaml do
 
   defp build_suites do
     base = [
-      {"glazer", &:glazer.yaml_decode/1, fn t -> :glazer.yaml_encode(t) end}
+      {"glazer", &:glazer_yaml.decode/1, fn t -> :glazer_yaml.encode(t) end}
     ]
 
     optional_candidates = [
@@ -155,7 +155,7 @@ defmodule Mix.Tasks.BenchYaml do
             try do
               {dt, decoded} =
                 case decode do
-                  :no_decode -> {:na, :glazer.yaml_decode(bin)}
+                  :no_decode -> {:na, :glazer_yaml.decode(bin)}
                   decode_fun -> {Mix.Tasks.Bench.Common.measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
                 end
               et =

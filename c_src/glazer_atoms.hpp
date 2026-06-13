@@ -76,6 +76,12 @@ static ERL_NIF_TERM AM_JQ_NOT_AVAILABLE;
 static ERL_NIF_TERM AM_JQ_COMPILE_ERROR;
 static ERL_NIF_TERM AM_JQ_DECODE_ERROR;
 
+// compile_path/1 path_step() atoms and error atoms
+static ERL_NIF_TERM AM_FIELD;
+static ERL_NIF_TERM AM_ITERATE;
+static ERL_NIF_TERM AM_INDEX;
+static ERL_NIF_TERM AM_INVALID_PATH;
+
 // The runtime null value (configurable via NIF load)
 static ERL_NIF_TERM am_null;
 
@@ -143,6 +149,11 @@ inline void init_atoms(ErlNifEnv* env)
   AM_JQ_NOT_AVAILABLE          = enif_make_atom(env, "jq_not_available");
   AM_JQ_COMPILE_ERROR          = enif_make_atom(env, "jq_compile_error");
   AM_JQ_DECODE_ERROR           = enif_make_atom(env, "jq_decode_error");
+
+  AM_FIELD                     = enif_make_atom(env, "field");
+  AM_ITERATE                   = enif_make_atom(env, "iterate");
+  AM_INDEX                     = enif_make_atom(env, "index");
+  AM_INVALID_PATH              = enif_make_atom(env, "invalid_path");
 
   am_null                      = AM_NULL;
 }

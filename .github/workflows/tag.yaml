@@ -2,12 +2,12 @@ name: Release
 
 on:
   schedule:
-    # Check hourly whether the latest non-retired version published to
-    # Hex.pm has a corresponding git tag yet, and create one if its
-    # version-bump commit is at least MIN_AGE_HOURS old (see env below).
+    # Check once a day at 06:00 UTC whether the latest non-retired version
+    # published to Hex.pm has a corresponding git tag yet, and create one if
+    # its version-bump commit is at least MIN_AGE_HOURS old (see env below).
     # The age check gives room for amended re-publishes of the same version
     # on Hex.pm before it gets tagged.
-    - cron: "0 * * * *"
+    - cron: "0 6 * * *"
 
 env:
   # Minimum age (in hours) of a version-bump commit before it gets tagged.

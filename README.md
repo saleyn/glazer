@@ -57,6 +57,9 @@ Benchmark tables:
 - `query/2,3`: run a [jq](https://jqlang.org/) filter over a JSON
   document, returning decoded Erlang terms (requires `glazer` to be built
   with `libjq` available — see [jq filter support](#jq-filter-support))
+- `glazer:find/2` and `glazer:compile_path/1`: look up value(s) in a
+  decoded term using a small subset of jq path syntax (`.a.b[].c[0]`),
+  with no `libjq` dependency
 
 ### YAML
 

@@ -63,8 +63,8 @@ defmodule Mix.Tasks.BenchJson do
   defp build_suites do
     base = [
       {"glazer",
-       &:glazer.json_decode/1,
-       fn t -> :glazer.json_encode(t) end}
+       &:glazer_json.decode/1,
+       fn t -> :glazer_json.encode(t) end}
     ]
 
     optional_candidates = [

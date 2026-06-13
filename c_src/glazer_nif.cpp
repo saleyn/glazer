@@ -14,8 +14,10 @@
 //-----------------------------------------------------------------------------
 
 #include <cassert>
+#include <cstdlib>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <erl_nif.h>
 
@@ -454,6 +456,123 @@ static ERL_NIF_TERM nif_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
 }
 
 //-----------------------------------------------------------------------------
+// NIF: compile_path — parse a small subset of jq path syntax into a list of
+// path_step() terms for glazer:find/2:
+//
+//   .              -> []
+//   .foo, .foo.bar -> [{field, <<"foo">>}, ...]
+//   .["foo bar"]   -> {field, <<"foo bar">>}
+//   .[]            -> iterate
+//   .[N], .[-N]    -> {index, N}
+//
+// Returns {ok, Path} or {error, {invalid_path, Filter}}.
+//-----------------------------------------------------------------------------
+
+namespace {
+
+// Parse the contents of a '[...]' segment (the '[' has already been
+// consumed). On success, advances `p` past the closing ']'.
+bool parse_bracket(ErlNifEnv* env, const char*& p, const char* end, ERL_NIF_TERM& step)
+{
+  if (p == end) [[unlikely]]
+    return false;
+
+  if (*p == ']') {
+    ++p;
+    step = AM_ITERATE;
+    return true;
+  }
+
+  if (*p == '"') {
+    const char* q = ++p;
+    while (q != end && *q != '"')
+      ++q;
+    if (q == end || q + 1 == end || q[1] != ']') [[unlikely]]
+      return false;
+    step = enif_make_tuple2(env, AM_FIELD, make_binary(env, std::string_view(p, q - p)));
+    p = q + 2;
+    return true;
+  }
+
+  // Integer index, possibly negative.
+  const char* q = p;
+  if (q != end && *q == '-')
+    ++q;
+  const char* digits_start = q;
+  while (q != end && *q >= '0' && *q <= '9')
+    ++q;
+  if (q == digits_start || q == end || *q != ']') [[unlikely]]
+    return false;
+
+  long val = std::strtol(std::string(p, q - p).c_str(), nullptr, 10);
+  step = enif_make_tuple2(env, AM_INDEX, enif_make_long(env, val));
+  p = q + 1;
+  return true;
+}
+
+// Parse a bare (unquoted) field name up to the next '.' or '['.
+bool parse_name(ErlNifEnv* env, const char*& p, const char* end, ERL_NIF_TERM& step)
+{
+  const char* q = p;
+  while (q != end && *q != '.' && *q != '[')
+    ++q;
+  if (q == p) [[unlikely]]
+    return false;
+  step = enif_make_tuple2(env, AM_FIELD, make_binary(env, std::string_view(p, q - p)));
+  p = q;
+  return true;
+}
+
+} // namespace
+
+static ERL_NIF_TERM nif_compile_path(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc != 1) [[unlikely]]
+    return enif_make_badarg(env);
+
+  ErlNifBinary filter;
+  if (!enif_inspect_binary(env, argv[0], &filter) &&
+      !enif_inspect_iolist_as_binary(env, argv[0], &filter)) [[unlikely]]
+    return enif_make_badarg(env);
+
+  auto invalid = [&]() {
+    return enif_make_tuple2(env, AM_ERROR,
+      enif_make_tuple2(env, AM_INVALID_PATH, make_binary(env, filter.data ?
+        std::string_view(reinterpret_cast<const char*>(filter.data), filter.size) :
+        std::string_view())));
+  };
+
+  const char* p   = reinterpret_cast<const char*>(filter.data);
+  const char* end = p + filter.size;
+
+  if (p == end || *p != '.') [[unlikely]]
+    return invalid();
+  ++p;
+
+  if (p == end)
+    return enif_make_tuple2(env, AM_OK, enif_make_list(env, 0));
+
+  std::vector<ERL_NIF_TERM> steps;
+  while (p != end) {
+    ERL_NIF_TERM step;
+    if (*p == '[') {
+      ++p;
+      if (!parse_bracket(env, p, end, step)) [[unlikely]]
+        return invalid();
+    } else if (*p == '.') {
+      ++p;
+      continue;
+    } else if (!parse_name(env, p, end, step)) [[unlikely]]
+      return invalid();
+
+    steps.push_back(step);
+  }
+
+  return enif_make_tuple2(env, AM_OK,
+    enif_make_list_from_array(env, steps.data(), static_cast<unsigned>(steps.size())));
+}
+
+//-----------------------------------------------------------------------------
 // NIF: encode_integer / try_decode_integer
 //-----------------------------------------------------------------------------
 
@@ -521,6 +640,7 @@ static ErlNifFunc nif_funcs[] = {
   {"json_query",         3, nif_json_query,         0},
   {"encode_integer",     1, nif_encode_integer,     0},
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
+  {"nif_compile_path",   1, nif_compile_path,       0},
 };
 
 } // namespace glz

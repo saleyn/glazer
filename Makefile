@@ -8,6 +8,13 @@ DEBUG    ?= 0
 REBAR    ?= rebar3
 APP      := $(shell sed -nE 's/^\{application, ([a-zA-Z0-9_]+),.*/\1/p' src/*.app.src | head -n1)
 
+OPTIMIZE ?= 0
+ifneq ($(filter $(OPTIMIZE),1 true),)
+override OPTIMIZE := 1
+else
+override OPTIMIZE := 0
+endif
+
 all: compile
 
 help:
@@ -24,7 +31,8 @@ help:
 	@echo "Development:"
 	@echo "  test         Run eunit test suite"
 	@echo "  cover        Run eunit with coverage analysis and print a summary"
-	@echo "  check        Run dialyzer"
+	@echo "  check        Run xref and dialyzer"
+	@echo "  dialyzer     Run dialyzer"
 	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit (leak=1 adds LSan)"
 	@echo "  benchmark    Run benchmarks via mix bench"
 	@echo "  deps         Fetch mix dependencies"
@@ -40,6 +48,7 @@ help:
 	@echo "  ASAN=1       Build with AddressSanitizer (implied by memcheck)"
 	@echo "  leak=1       Enable LeakSanitizer during memcheck (off by default)"
 	@echo "  VERBOSE=1    Show full compiler command lines"
+	@echo "  OPTIMIZE=1   Make all/compile run the PGO 'optimize' build (same as 'make optimize')"
 
 nif: $(PRIV_DIR)/glazer.so
 
@@ -47,8 +56,12 @@ $(PRIV_DIR)/glazer.so: $(wildcard c_src/*.cpp c_src/*.hpp)
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) \
 	  $(if $(VERBOSE),VERBOSE=1,) --no-print-directory
 
+ifeq ($(OPTIMIZE),1)
+compile: optimize
+else
 compile: $(PRIV_DIR)/glazer.so
 	$(REBAR) compile
+endif
 
 clean:
 	$(REBAR) clean
@@ -80,7 +93,8 @@ else
   DETECT_LEAKS := 1
 endif
 
-check dialyzer:
+check:
+	$(REBAR) xref
 	$(REBAR) dialyzer
 
 memcheck:
@@ -112,8 +126,8 @@ optimize:
 	@echo "==> PGO step 1/3: build instrumented binary"
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=generate clean all
 	@$(REBAR) compile
-	@echo "==> PGO step 2/3: collect profile data via test suite"
-	MIX_ENV=bench mix bench-json 1>/dev/null
+	@echo "==> PGO step 2/3: collect profile data"
+	@./bin/pgo-profile.es
 	@echo "==> PGO step 3/3: rebuild with profile data"
 	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=use all

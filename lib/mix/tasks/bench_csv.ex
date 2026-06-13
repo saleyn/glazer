@@ -61,8 +61,8 @@ defmodule Mix.Tasks.BenchCsv do
   defp build_suites do
     base = [
       {"glazer",
-       &:glazer.csv_decode/1,
-       fn t -> :glazer.csv_encode(t) end}
+       &:glazer_csv.decode/1,
+       fn t -> :glazer_csv.encode(t) end}
     ]
 
     optional_candidates = [
