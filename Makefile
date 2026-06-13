@@ -23,6 +23,8 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  test         Run eunit test suite"
+	@echo "  cover        Run eunit with coverage analysis and print a summary"
+	@echo "  check        Run dialyzer"
 	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit (leak=1 adds LSan)"
 	@echo "  benchmark    Run benchmarks via mix bench"
 	@echo "  deps         Fetch mix dependencies"
@@ -131,6 +133,9 @@ deprecate:
 	fi
 	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
 
+cover:
+	$(REBAR) cover --verbose
+
 bump-version:
 	@FILE=$$(ls -1 src/*.app.src | head -n1); \
 	CURRENT=$$(grep -m1 '{vsn,' $$FILE | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/'); \
@@ -148,5 +153,5 @@ bump-version:
 	  git commit -am "Bump version to $${NEW}"; \
 	fi
 
-.PHONY: all help doc compile clean distclean test memcheck nif \
+.PHONY: all help doc compile clean distclean test cover check dialyzer memcheck nif \
         optimize benchmark bench publish deprecate bump-version

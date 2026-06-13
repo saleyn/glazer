@@ -49,12 +49,12 @@ Benchmark tables:
   (including bignums), floats, booleans, and `null`
 - Encoding Erlang terms straight to JSON, including big integers
 - Incremental/streaming decoding of partial input (e.g. NDJSON over a
-  socket) via `json_stream_decoder/0,1`, `json_stream_feed/2`, `json_stream_eof/1`
+  socket) via `stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1`
 - Configurable representation of JSON `null` and JSON object keys
-- `json_minify/1` and `json_prettify/1` helpers
+- `minify/1` and `prettify/1` helpers
 - Standalone big-integer encode/decode helpers
   (`encode_integer/1`, `decode_integer/1`, `try_decode_integer/1`)
-- `json_query/2,3`: run a [jq](https://jqlang.org/) filter over a JSON
+- `query/2,3`: run a [jq](https://jqlang.org/) filter over a JSON
   document, returning decoded Erlang terms (requires `glazer` to be built
   with `libjq` available — see [jq filter support](#jq-filter-support))
 
@@ -68,10 +68,10 @@ Benchmark tables:
 
 ### CSV
 
-- RFC 4180 CSV encoding/decoding via `csv_decode/1,2` and `csv_encode/1,2`,
+- RFC 4180 CSV encoding/decoding via `decode/1,2` and `encode/1,2`,
   with optional header-row support
-- Incremental/streaming CSV decoding via `csv_stream_decoder/0,1`,
-  `csv_stream_feed/2`, `csv_stream_eof/1`
+- Incremental/streaming CSV decoding via `stream_decoder/0,1`,
+  `stream_feed/2`, `stream_eof/1`
 
 ## Scope
 
@@ -136,13 +136,13 @@ Once compiled, call it via the `:glazer` module from Elixir:
 
 **Erlang:**
 ```erlang
-1> glazer:json_decode(~"{\"a\":1,\"b\":[true,null,3.5]}")
+1> glazer_json:decode(~"{\"a\":1,\"b\":[true,null,3.5]}")
 #{<<"a">> => 1,<<"b">> => [true,null,3.5]}
 ```
 
 **Elixir:**
 ```elixir
-iex> :glazer.json_encode(%{"a" => 1, "b" => [true, :null, 3.5]})
+iex> :glazer_json.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
@@ -155,19 +155,19 @@ Elixir `nil` instead of the atom `:null`.
 ### Usage
 
 ```erlang
-1> glazer:json_decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
+1> glazer_json:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
 #{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
 
-2> glazer:json_encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
+2> glazer_json:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
 <<"{\"a\":1,\"b\":[true,null,3.5]}">>
 
-3> glazer:json_encode(#{a => 1}, [pretty]).
+3> glazer_json:encode(#{a => 1}, [pretty]).
 <<"{\n  \"a\": 1\n}">>
 
-4> glazer:json_minify(<<" { \"a\" : 1 } ">>).
+4> glazer_json:minify(<<" { \"a\" : 1 } ">>).
 {ok, <<"{\"a\":1}">>}
 
-5> glazer:json_prettify(<<"{\"a\":1}">>).
+5> glazer_json:prettify(<<"{\"a\":1}">>).
 {ok, <<"{\n  \"a\": 1\n}">>}
 ```
 
@@ -175,55 +175,55 @@ Elixir `nil` instead of the atom `:null`.
 
 For input that arrives in chunks — e.g. reading a large document
 incrementally, or consuming newline-delimited JSON (NDJSON) from a
-socket or file — `json_stream_decoder/0,1` provides a small stateful
+socket or file — `stream_decoder/0,1` provides a small stateful
 wrapper that buffers partial input and decodes each JSON value as soon
 as it's complete, without re-parsing bytes you've already seen:
 
 ```erlang
-1> D0 = glazer:json_stream_decoder(),
-2> {Vals1, D1} = glazer:json_stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
+1> D0 = glazer_json:stream_decoder(),
+2> {Vals1, D1} = glazer_json:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
 3> Vals1.
 [#{<<"a">> => 1}]
 
-4> {Vals2, D2} = glazer:json_stream_feed(D1, <<"2}">>),
+4> {Vals2, D2} = glazer_json:stream_feed(D1, <<"2}">>),
 5> Vals2.
 [#{<<"b">> => 2}]
 
-6> glazer:json_stream_eof(D2).
+6> glazer_json:stream_eof(D2).
 {ok, []}
 ```
 
-`json_stream_feed/2` returns the list of values completed by the chunk just
+`stream_feed/2` returns the list of values completed by the chunk just
 fed (possibly empty, possibly more than one if the chunk completes
 several values) along with the updated decoder state to pass to the
-next call. Once the input is exhausted, call `json_stream_eof/1` to flush
+next call. Once the input is exhausted, call `stream_eof/1` to flush
 any trailing bare scalar (numbers, strings, etc. have no closing
 delimiter of their own) and surface an error if the buffer holds an
 incomplete value:
 
 ```erlang
-1> D0 = glazer:json_stream_decoder(),
-2> {[], D1} = glazer:json_stream_feed(D0, <<"   42">>),
-3> glazer:json_stream_eof(D1).
+1> D0 = glazer_json:stream_decoder(),
+2> {[], D1} = glazer_json:stream_feed(D0, <<"   42">>),
+3> glazer_json:stream_eof(D1).
 {ok, [42]}
 ```
 
-`json_stream_decoder/1` accepts the same options as `json_decode/2` (e.g.
+`stream_decoder/1` accepts the same options as `decode/2` (e.g.
 `{keys, atom}`, `use_nil`) and applies them to every decoded value.
 
-A typical read loop calls `json_stream_feed/2` for each chunk while more data
-may still arrive, and `json_stream_eof/1` once the socket closes to flush any
+A typical read loop calls `stream_feed/2` for each chunk while more data
+may still arrive, and `stream_eof/1` once the socket closes to flush any
 trailing value:
 
 ```erlang
 loop(Socket, D0) ->
   case gen_tcp:recv(Socket, 0) of
     {ok, Chunk} ->
-      {Vals, D1} = glazer:json_stream_feed(D0, Chunk),
+      {Vals, D1} = glazer_json:stream_feed(D0, Chunk),
       handle_values(Vals),
       loop(Socket, D1);
     {error, closed} ->
-      case glazer:json_stream_eof(D0) of
+      case glazer_json:stream_eof(D0) of
         {ok, Trailing}  -> handle_values(Trailing);
         {error, Reason} -> handle_truncated_stream(Reason)
       end
@@ -232,43 +232,43 @@ loop(Socket, D0) ->
 
 #### Efficiency
 
-`json_stream_feed/2` only scans for value *boundaries* incrementally —
+`stream_feed/2` only scans for value *boundaries* incrementally —
 the scanner carries a small resumable cursor (`scan_state()`) that
 remembers how far it has already looked (nesting depth, whether it's
-inside a string, escape state, …), so each call to `json_scan/2` resumes
+inside a string, escape state, …), so each call to `scan/2` resumes
 from where the previous one left off rather than re-walking the whole
 buffer from byte zero. Once a complete value's end offset is known,
 that slice is decoded exactly once via the same NIF-backed decoder
-used by `json_decode/2` — there's no intermediate tokenization or tree
+used by `decode/2` — there's no intermediate tokenization or tree
 representation, and no byte is ever scanned or decoded twice. The only
 buffering cost is concatenating newly-arrived chunks onto the
 not-yet-complete tail of the input.
 
-This makes `json_stream_feed/2` well suited to byte-at-a-time or
+This makes `stream_feed/2` well suited to byte-at-a-time or
 small-chunk feeding (e.g. consuming a `gen_tcp`/`gen_statem` socket
 buffer as it fills) without the quadratic-rescan cost a naive
 "concatenate and retry full decode" loop would incur on large or
 slow-arriving documents.
 
-Under the hood, `json_stream_feed/2` is built on `json_scan/1,2` — a low-level
+Under the hood, `stream_feed/2` is built on `scan/1,2` — a low-level
 primitive that scans a buffer for the byte offset where the next JSON
 value ends (or reports that more input is needed) without doing a full
 decode. It's exposed directly for callers that want to implement their
 own framing/buffering strategy:
 
 ```erlang
-1> glazer:json_scan(<<"{\"a\":1} {\"b\":2}">>).
+1> glazer_json:scan(<<"{\"a\":1} {\"b\":2}">>).
 {complete, 7}
 
-2> glazer:json_scan(<<"{\"a\":">>).
+2> glazer_json:scan(<<"{\"a\":">>).
 {incomplete, ScanState}
 
-3> glazer:json_scan(<<"{\"a\":1}">>, ScanState).
+3> glazer_json:scan(<<"{\"a\":1}">>, ScanState).
 {complete, 7}
 ```
 
-`json_stream_decoder/0,1`, `json_stream_feed/2`, `json_stream_eof/1` and
-`json_scan/1,2` are JSON-only — see [YAML streaming](#streaming-1) and
+`stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1` and
+`scan/1,2` are JSON-only — see [YAML streaming](#streaming-1) and
 [CSV streaming](#streaming-2) below for the other formats.
 
 ### Null term configuration
@@ -292,11 +292,11 @@ overridden:
   ```
 
 - Per call, with the `use_nil` shorthand or the `{null_term, Atom}`
-  option (see [Decode options](#decode-options-json_decode2) below).
+  option (see [Decode options](#decode-options-glazer_jsondecode2) below).
   Per-call options always take precedence over the application-wide
   default.
 
-### Decode options (`json_decode/2`)
+### Decode options (`glazer_json:decode/2`)
 
 | Option | Description |
 |---|---|
@@ -309,25 +309,25 @@ overridden:
 | `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
 
 ```erlang
-1> glazer:json_decode(<<"{\"a\":1}">>, [object_as_tuple]).
+1> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
 {[{<<"a">>, 1}]}
 
-2> glazer:json_decode(<<"{\"a\":1}">>, [{keys, atom}]).
+2> glazer_json:decode(<<"{\"a\":1}">>, [{keys, atom}]).
 #{a => 1}
 
-3> glazer:json_decode(<<"null">>, [use_nil]).
+3> glazer_json:decode(<<"null">>, [use_nil]).
 nil
 
-4> glazer:json_decode(<<"null">>, [{null_term, undefined}]).
+4> glazer_json:decode(<<"null">>, [{null_term, undefined}]).
 undefined
 
-5> glazer:json_decode(<<"{\"a\":1,\"a\":2}">>).
+5> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>).
 #{<<"a">> => 2}
 
-6> glazer:json_decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple]).
+6> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple]).
 {[{<<"a">>, 1}, {<<"a">>, 2}]}
 
-7> glazer:json_decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple, dedupe_keys]).
+7> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple, dedupe_keys]).
 {[{<<"a">>, 2}]}
 ```
 
@@ -338,7 +338,7 @@ undefined
 > `object_as_tuple`, duplicate keys are preserved as-is unless `dedupe_keys`
 > is given.
 
-### Encode options (`json_encode/2`)
+### Encode options (`glazer_json:encode/2`)
 
 | Option | Description |
 |---|---|
@@ -349,60 +349,64 @@ undefined
 | `{null_term, Atom}` | Encode `Atom` as JSON `null` |
 
 ```erlang
-1> glazer:json_encode(#{a => 1}, [pretty]).
+1> glazer_json:encode(#{a => 1}, [pretty]).
 <<"{\n  \"a\": 1\n}">>
 
-2> glazer:json_encode(<<"héllo"/utf8>>, [uescape]).
+2> glazer_json:encode(<<"héllo"/utf8>>, [uescape]).
 <<"\"h\\u00e9llo\"">>
 
-3> glazer:json_encode(nil, [use_nil]).
+3> glazer_json:encode(nil, [use_nil]).
 <<"null">>
 ```
 
 ### jq filter support
 
 If [`libjq`](https://jqlang.org/) and its headers (`jq.h`/`jv.h`) are
-available when `glazer` is built, `json_query/2,3` runs a jq filter
+available when `glazer` is built, `query/2,3` runs a jq filter
 program against a JSON document and returns one Erlang term per value
 produced by the filter (decoded using the same options as
-`json_decode/2`):
+`decode/2`):
 
 ```erlang
-1> glazer:json_query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>).
+1> glazer_json:query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>).
 {ok, [1, 2, 3]}
 
-2> glazer:json_query(<<"{\"a\":1}">>, <<".b">>).
+2> glazer_json:query(<<"{\"a\":1}">>, <<".b">>).
 {ok, [null]}
 
-3> glazer:json_query(<<"{\"a\":{\"b\":2}}">>, <<".">>, [{keys, atom}]).
+3> glazer_json:query(<<"{\"a\":{\"b\":2}}">>, <<".">>, [{keys, atom}]).
 {ok, [#{a => #{b => 2}}]}
 
-4> glazer:json_query(<<"not json">>, <<".">>).
+4> glazer_json:query(<<"not json">>, <<".">>).
 {error, invalid_input}
 
-5> glazer:json_query(<<"{\"a\":1}">>, <<"bad syntax (((">>).
+5> glazer_json:query(<<"{\"a\":1}">>, <<"bad syntax (((">>).
 {error, jq_decode_error}
 ```
 
-If `libjq` was not available at build time, `json_query/2,3` returns
+If `libjq` was not available at build time, `query/2,3` returns
 `{error, jq_not_available}`. Build detection is automatic — `make` probes
 for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
 still builds and works without `libjq` installed.
 
 ### API
 
+All functions below are in `glazer_json`.
+
 | Function | Description |
 |---|---|
-| `json_decode/1`, `json_decode/2` | Decode a JSON binary or iolist to an Erlang term |
-| `json_try_decode/1`, `json_try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
-| `json_encode/1`, `json_encode/2` | Encode an Erlang term to a JSON binary |
-| `json_minify/1` | Remove unnecessary whitespace from a JSON document |
-| `json_prettify/1` | Pretty-print a JSON document with two-space indentation |
-| `json_scan/1`, `json_scan/2` | Scan a buffer for the end offset of the next complete JSON value |
-| `json_stream_decoder/0`, `json_stream_decoder/1` | Create an incremental-decode state for chunked input |
-| `json_stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
-| `json_stream_eof/1` | Flush a stream decoder at end-of-input |
-| `json_query/2`, `json_query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
+| `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
+| `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
+| `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary |
+| `minify/1` | Remove unnecessary whitespace from a JSON document |
+| `prettify/1` | Pretty-print a JSON document with two-space indentation |
+| `read_file/1`, `read_file/2` | Read a file and decode its contents as JSON |
+| `write_file/2`, `write_file/3` | Encode a term to JSON and write it to a file |
+| `scan/1`, `scan/2` | Scan a buffer for the end offset of the next complete JSON value |
+| `stream_decoder/0`, `stream_decoder/1` | Create an incremental-decode state for chunked input |
+| `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
+| `stream_eof/1` | Flush a stream decoder at end-of-input |
+| `query/2`, `query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
 
 ### Benchmarking JSON
 
@@ -456,7 +460,7 @@ Where `glazer` has an edge over `torque`:
 - **`uescape`/`force_utf8` encode options** for `\uXXXX`-escaping non-ASCII
   output and sanitizing invalid UTF-8 — useful when targeting strict JSON
   consumers or transports that aren't UTF-8 clean.
-- **Standalone `json_minify/1`/`json_prettify/1` and big-integer helpers**
+- **Standalone `minify/1`/`prettify/1` and big-integer helpers**
   (`encode_integer/1`/`decode_integer/1`/`try_decode_integer/1`) that don't
   require a full decode/encode round-trip.
 - **No external C++ dependencies.** The NIF is fully self-contained —
@@ -527,19 +531,19 @@ of the gap over the slower contenders:
 
 ### Usage
 
-`yaml_decode/1,2` decodes a YAML document to an Erlang term — mappings
+`decode/1,2` decodes a YAML document to an Erlang term — mappings
 become maps, sequences become lists, and scalars become the matching
 Erlang type (binaries, numbers, booleans, or `null`):
 
 ```erlang
-1> glazer:yaml_decode(<<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>).
+1> glazer_yaml:decode(<<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>).
 #{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
 
-2> glazer:yaml_encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
+2> glazer_yaml:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
 <<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>
 ```
 
-`yaml_encode/1,2` encodes an Erlang term to YAML in block style
+`encode/1,2` encodes an Erlang term to YAML in block style
 (2-space indentation, sequences at the same indentation as the mapping
 key that owns them).
 
@@ -548,11 +552,11 @@ key that owns them).
 There is no incremental YAML decoder. YAML's block styles have no
 closing delimiter — a mapping or sequence simply ends at a dedent or
 end-of-input — so there is no way to scan a partial buffer for "is this
-value complete yet?" the way [`json_scan/1,2`](#efficiency) does for
+value complete yet?" the way [`scan/1,2`](#efficiency) does for
 JSON's bracket-balanced syntax. Decode full YAML documents with
-`yaml_decode/1,2` once they are fully buffered.
+`decode/1,2` once they are fully buffered.
 
-### Decode options (`yaml_decode/2`)
+### Decode options (`glazer_yaml:decode/2`)
 
 | Option | Description |
 |---|---|
@@ -564,17 +568,17 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 | `yaml_1_1_bools` | Additionally treat `yes`/`no`/`on`/`off` (and case variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2 core schema) only `true`/`false` are recognized as booleans |
 
 ```erlang
-1> glazer:yaml_decode(<<"a: ~\n">>, [use_nil]).
+1> glazer_yaml:decode(<<"a: ~\n">>, [use_nil]).
 #{<<"a">> => nil}
 
-2> glazer:yaml_decode(<<"a: 1\n">>, [{keys, atom}]).
+2> glazer_yaml:decode(<<"a: 1\n">>, [{keys, atom}]).
 #{a => 1}
 
-3> glazer:yaml_decode(<<"a: yes\n">>, [yaml_1_1_bools]).
+3> glazer_yaml:decode(<<"a: yes\n">>, [yaml_1_1_bools]).
 #{<<"a">> => true}
 ```
 
-### Encode options (`yaml_encode/2`)
+### Encode options (`glazer_yaml:encode/2`)
 
 | Option | Description |
 |---|---|
@@ -582,17 +586,21 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 | `{null_term, Atom}` | Treat `Atom` as YAML `null` |
 
 ```erlang
-1> glazer:yaml_encode(#{<<"a">> => nil}, [use_nil]).
+1> glazer_yaml:encode(#{<<"a">> => nil}, [use_nil]).
 <<"a: null\n">>
 ```
 
 ### API
 
+All functions below are in `glazer_yaml`.
+
 | Function | Description |
 |---|---|
-| `yaml_decode/1`, `yaml_decode/2` | Decode a YAML binary or iolist to an Erlang term |
-| `yaml_try_decode/1`, `yaml_try_decode/2` | Decode YAML, returning `{ok, Term}` or `{error, Msg}` instead of raising |
-| `yaml_encode/1`, `yaml_encode/2` | Encode an Erlang term to a YAML binary in block style |
+| `decode/1`, `decode/2` | Decode a YAML binary or iolist to an Erlang term |
+| `try_decode/1`, `try_decode/2` | Decode YAML, returning `{ok, Term}` or `{error, Msg}` instead of raising |
+| `encode/1`, `encode/2` | Encode an Erlang term to a YAML binary in block style |
+| `read_file/1`, `read_file/2` | Read a file and decode its contents as YAML |
+| `write_file/2`, `write_file/3` | Encode a term to YAML and write it to a file |
 
 ### Benchmarking YAML
 
@@ -615,26 +623,26 @@ ymlr               n/a     47.4        n/a     35.3        n/a      4.8
 
 ### Usage
 
-`csv_decode/1,2` decodes an RFC 4180 CSV document to a list of rows, each
+`decode/1,2` decodes an RFC 4180 CSV document to a list of rows, each
 row a list of binary fields:
 
 ```erlang
-1> glazer:csv_decode(<<"name,age\nAlice,30\nBob,25\n">>).
+1> glazer_csv:decode(<<"name,age\nAlice,30\nBob,25\n">>).
 [[<<"name">>, <<"age">>], [<<"Alice">>, <<"30">>], [<<"Bob">>, <<"25">>]]
 
-2> glazer:csv_encode([[<<"name">>, <<"age">>], [<<"Alice">>, 30]]).
+2> glazer_csv:encode([[<<"name">>, <<"age">>], [<<"Alice">>, 30]]).
 <<"name,age\r\nAlice,30\r\n">>
 ```
 
 With the `headers` option, the first row is used as column names and each
-subsequent row decodes to a map; `csv_encode/2` with `headers` does the
+subsequent row decodes to a map; `encode/2` with `headers` does the
 reverse, deriving the header row from the first map's keys:
 
 ```erlang
-1> glazer:csv_decode(<<"name,age\nAlice,30\n">>, [headers]).
+1> glazer_csv:decode(<<"name,age\nAlice,30\n">>, [headers]).
 [#{<<"name">> => <<"Alice">>, <<"age">> => <<"30">>}]
 
-2> glazer:csv_encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
+2> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
 <<"name,age\r\nAlice,30\r\n">>
 ```
 
@@ -646,49 +654,49 @@ RFC 4180 and can be changed to `\n` via `{line_ending, lf}`.
 
 ### Streaming
 
-For input that arrives in chunks, `csv_stream_decoder/0,1` provides the
+For input that arrives in chunks, `stream_decoder/0,1` provides the
 same kind of stateful wrapper as [JSON streaming](#streaming): it buffers
 partial input and decodes each row as soon as its terminating line break
-is seen, via `csv_decode/2` on that single row. A small scanner tracks
+is seen, via `decode/2` on that single row. A small scanner tracks
 whether the cursor is inside a quoted field across chunks, so a `\n`/`\r\n`
 inside a quoted field doesn't end the row:
 
 ```erlang
-1> D0 = glazer:csv_stream_decoder(),
-2> {Rows1, D1} = glazer:csv_stream_feed(D0, <<"a,b\n1,2\n3,">>),
+1> D0 = glazer_csv:stream_decoder(),
+2> {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n3,">>),
 3> Rows1.
 [[<<"a">>,<<"b">>],[<<"1">>,<<"2">>]]
 
-4> {Rows2, D2} = glazer:csv_stream_feed(D1, <<"4\n">>),
+4> {Rows2, D2} = glazer_csv:stream_feed(D1, <<"4\n">>),
 5> Rows2.
 [[<<"3">>,<<"4">>]]
 
-6> glazer:csv_stream_eof(D2).
+6> glazer_csv:stream_eof(D2).
 {ok, []}
 ```
 
-`csv_stream_feed/2` returns the rows completed by the chunk just fed
+`stream_feed/2` returns the rows completed by the chunk just fed
 (possibly empty, possibly more than one) along with the updated decoder
-state. Once the input is exhausted, call `csv_stream_eof/1` to flush a
+state. Once the input is exhausted, call `stream_eof/1` to flush a
 trailing row that has no terminating line break, or surface an error if
 the buffered bytes don't form a valid row:
 
 ```erlang
-1> D0 = glazer:csv_stream_decoder(),
-2> {Rows1, D1} = glazer:csv_stream_feed(D0, <<"a,b\n1,2">>),
+1> D0 = glazer_csv:stream_decoder(),
+2> {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2">>),
 3> Rows1.
 [[<<"a">>,<<"b">>]]
 
-4> glazer:csv_stream_eof(D1).
+4> glazer_csv:stream_eof(D1).
 {ok, [[<<"1">>,<<"2">>]]}
 ```
 
-`csv_stream_decoder/1` accepts the same options as `csv_decode/2`. With
+`stream_decoder/1` accepts the same options as `decode/2`. With
 the `headers` option, the first complete row is captured as the header and
 used to decode every subsequent row as a map; no row is emitted for the
-header itself. Blank lines are skipped, matching `csv_decode/2`.
+header itself. Blank lines are skipped, matching `decode/2`.
 
-### Decode options (`csv_decode/2`)
+### Decode options (`glazer_csv:decode/2`)
 
 | Option | Description |
 |---|---|
@@ -708,7 +716,7 @@ the Nth spec applies to the Nth column, regardless of whether `headers` is
 set. Columns beyond the end of `Specs` are left as binaries.
 
 ```erlang
-1> glazer:csv_decode(<<"name,age,active,joined\nAlice,30,true,2024-01-15T10:30:00Z\n">>,
+1> glazer_csv:decode(<<"name,age,active,joined\nAlice,30,true,2024-01-15T10:30:00Z\n">>,
 ..                    [headers, {fields, [binary, integer, boolean,
 ..                                         {datetime, <<"%Y-%m-%dT%H:%M:%SZ">>}]}]).
 [#{<<"name">> => <<"Alice">>, <<"age">> => 30, <<"active">> => true,
@@ -748,20 +756,20 @@ Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
   | `on_failure` | Behavior |
   |---|---|
   | `binary` | Leave the field as the original binary (default) |
-  | `raise` | Raise `{invalid_field_value, Row, Column}` (1-based), or return `{error, Reason}` from `csv_try_decode/2` |
+  | `raise` | Raise `{invalid_field_value, Row, Column}` (1-based), or return `{error, Reason}` from `try_decode/2` |
   | `default` | Use the spec's `default` value (falls back to `binary` if no `default` is given) |
   | `null` | Use the configured null term: `{null_term, Atom}` if given, otherwise the library-wide null term (see [Null term configuration](#null-term-configuration) and `{null_term, Atom}` below) |
 
 ```erlang
-1> glazer:csv_decode(<<"1\nbad\n">>,
+1> glazer_csv:decode(<<"1\nbad\n">>,
 ..                    [{fields, [#{type => integer, on_failure => raise}]}]).
 ** exception error: {invalid_field_value,2,1}
 
-2> glazer:csv_decode(<<"1\nbad\n">>,
+2> glazer_csv:decode(<<"1\nbad\n">>,
 ..                    [{fields, [#{type => integer, default => 0, on_failure => default}]}]).
 [[1],[0]]
 
-3> glazer:csv_decode(<<"1\nbad\n">>,
+3> glazer_csv:decode(<<"1\nbad\n">>,
 ..                    [{null_term, nil},
 ..                     {fields, [#{type => integer, on_failure => null}]}]).
 [[1],[nil]]
@@ -773,7 +781,7 @@ by default, or whatever atom is configured via the
 [Null term configuration](#null-term-configuration)
 application env var (`{glazer, [{null, Atom}]}`).
 
-### Encode options (`csv_encode/2`)
+### Encode options (`glazer_csv:encode/2`)
 
 | Option | Description |
 |---|---|
@@ -783,14 +791,18 @@ application env var (`{glazer, [{null, Atom}]}`).
 
 ### API
 
+All functions below are in `glazer_csv`.
+
 | Function | Description |
 |---|---|
-| `csv_decode/1`, `csv_decode/2` | Decode a CSV binary or iolist to a list of rows (or maps with `headers`) |
-| `csv_try_decode/1`, `csv_try_decode/2` | Decode CSV, returning `{ok, Rows}` or `{error, Reason}` instead of raising |
-| `csv_encode/1`, `csv_encode/2` | Encode a list of rows (or maps with `headers`) to a CSV binary |
-| `csv_stream_decoder/0`, `csv_stream_decoder/1` | Create an incremental CSV decode state for chunked input |
-| `csv_stream_feed/2` | Feed a chunk to a CSV stream decoder, returning completed rows |
-| `csv_stream_eof/1` | Flush a CSV stream decoder at end-of-input |
+| `decode/1`, `decode/2` | Decode a CSV binary or iolist to a list of rows (or maps with `headers`) |
+| `try_decode/1`, `try_decode/2` | Decode CSV, returning `{ok, Rows}` or `{error, Reason}` instead of raising |
+| `encode/1`, `encode/2` | Encode a list of rows (or maps with `headers`) to a CSV binary |
+| `read_file/1`, `read_file/2` | Read a file and decode its contents as CSV |
+| `write_file/2`, `write_file/3` | Encode rows to CSV and write them to a file |
+| `stream_decoder/0`, `stream_decoder/1` | Create an incremental CSV decode state for chunked input |
+| `stream_feed/2` | Feed a chunk to a CSV stream decoder, returning completed rows |
+| `stream_eof/1` | Flush a CSV stream decoder at end-of-input |
 
 ### Benchmarking CSV
 
