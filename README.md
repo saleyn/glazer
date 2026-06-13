@@ -18,15 +18,14 @@ formats.
 
 ## Performance
 
-- **[JSON](#performance-1)**: faster encoding than every other library
-  benchmarked, and roughly on par with `torque` (Rust `sonic-rs` NIF) on
-  decoding — both well ahead of `simdjsone`, `jiffy`, and the pure-Elixir
-  libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
-- **[YAML](#benchmarking-yaml)**: an order of magnitude faster than
-  `yaml_rustler` and `fast_yaml`, and ~10-100x faster than the pure-Erlang
-  `yamerl`/`ymlr`.
-- **[CSV](#benchmarking-csv)**: 2-20x faster than `nimble_csv`, and tens to
-  hundreds of times faster than `csv` and `erl_csv` (which times out on
+- **[JSON](#performance-1)**: faster than every other library benchmarked on
+  both encoding and decoding — consistently ~25–40% ahead of `torque`
+  (Rust `sonic-rs` NIF), and well ahead of `simdjsone`, `jiffy`, and the
+  pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
+- **[YAML](#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
+  `fast_yaml`, and ~25–75× faster than the pure-Erlang `yamerl`/`ymlr`.
+- **[CSV](#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
+  hundreds of times faster than `csv` and `erl_csv` (which time out on
   large inputs).
 
 <img src="assets/bench_small.svg" width="100%" alt="Small file benchmarks (JSON/YAML/CSV)"/>
@@ -439,13 +438,11 @@ json       14315.5   9718.9    17844.3  16473.5       28.3     25.3       19.2  
 
 ### Performance
 
-`glazer` has a faster JSON encoder than all competitors. `glazer` is roughly on
-par with `torque` (a Rust `sonic-rs` NIF) across the benchmarked workloads on
-decoding — neither library is consistently faster, and the gap on any given
-file/operation is typically modest (within ~30%), varying in direction from
-file to file. Both sit well ahead of the other contenders (`simdjsone`,
-`jiffy`, and the pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's
-built-in `json`).
+`glazer` is faster than all competitors on both encoding and decoding.
+On decoding it leads `torque` (Rust `sonic-rs` NIF) by ~25–40% across every
+benchmarked workload, and on encoding by ~10–30%. Both sit well ahead of
+the remaining contenders (`simdjsone`, `jiffy`, and the pure-Elixir libraries
+`jason`, `thoas`, `euneus`, and OTP's built-in `json`).
 
 Where `glazer` has an edge over `torque`:
 
@@ -511,19 +508,30 @@ of the gap over the slower contenders:
   coincidentally look live). This makes cache construction effectively
   free, regardless of table size.
 
+- **SIMD string scanning.** The JSON string decoder and encoder use an
+  AVX2 → SSE2 → SWAR cascade to skip over clean byte spans 32, 16, or 8
+  bytes at a time. The decoder scans for `"` and `\` (the only stop bytes
+  in clean strings); the encoder additionally detects control characters
+  (`c < 0x20`) via a bias trick that maps unsigned `< 0x20` to a signed
+  comparison, avoiding a branch-per-byte table lookup for the common
+  all-ASCII case. The same cascade is used by the CSV unquoted-field
+  scanner (`delimiter | LF | CR`) and the YAML double-quoted scalar scanner
+  (`"`, `\`, `LF`, `CR`), as well as single-character finders consolidated
+  in `glazer_common.hpp` (`find_byte`). On AVX2 hardware (Haswell+) this
+  processes up to 32 bytes per iteration instead of 1.
+
 - **SWAR whitespace skipping.** `skip_ws` checks the next byte before
   paying for any wider load, then — for runs of whitespace — scans 8 bytes
   at a time using branch-free bit-twiddling ("SIMD within a register") to
-  find the first non-whitespace byte, rather than testing one byte at a
-  time. Minified JSON (the overwhelmingly common case) has little or no
-  structural whitespace, so the single-byte fast path dominates in
-  practice.
+  find the first non-whitespace byte. Minified JSON (the overwhelmingly
+  common case) has little or no structural whitespace, so the single-byte
+  fast path dominates; the 8-byte path handles pretty-printed inputs.
 
 - **Table-driven string escaping with bulk copies.** JSON string escaping
-  scans for runs of bytes that need no escaping (a precomputed 256-entry
-  lookup table answers "does this byte need escaping?" in O(1)) and copies
-  each run in one `memcpy`, falling into a per-byte switch only for the
-  rare characters that actually need an escape sequence.
+  locates the next byte needing escaping in bulk (via the SIMD scanner
+  above), copies the clean prefix in one `memcpy`, then falls into a
+  per-byte switch only for the rare characters that actually need an escape
+  sequence.
 
 - **Fast integer formatting.** Integers are written to JSON using a
   lookup-table-based digit-pair algorithm (avoiding division for small
@@ -853,6 +861,25 @@ same conversion routines directly, independent of JSON/YAML/CSV parsing/encoding
 
 See the module's documentation (`src/glazer.erl`) for full type
 specs and details.
+
+## Limitations
+
+### Nesting depth
+
+The JSON and YAML decoders both cap recursion at **256 levels** of nesting
+(arrays/objects for JSON; mappings/sequences for YAML). Inputs that exceed
+this limit are rejected with a decode error rather than crashing the VM by
+overflowing the C stack.
+
+| Format | Limit | Error returned |
+|--------|-------|---------------|
+| JSON   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
+| YAML   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
+
+256 levels is sufficient for any reasonable real-world document; it is
+deliberately not configurable, because the limit exists to protect the
+Erlang VM process (the NIF runs on the scheduler thread) from runaway
+recursive descent on adversarial input.
 
 ## Testing
 

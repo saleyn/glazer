@@ -133,9 +133,9 @@ try_decode_integer(_NumberString) ->
 -doc """
 Format an error message with `io_lib:format/2` and flatten to a binary.
 """.
--spec format_error(binary(), [term()]) -> binary().
+-spec format_error(io:format(), [term()]) -> binary().
 format_error(Format, Args) ->
-  lists:flatten(io_lib:format(Format, Args)).
+  iolist_to_binary(io_lib:format(Format, Args)).
 
 -doc """
 Compile a [jq](https://jqlang.org/)-style path expression into a `path()`

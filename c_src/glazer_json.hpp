@@ -105,6 +105,7 @@ struct Decoder {
   KeyCache          m_key_cache;
   bool              m_use_key_cache;
   unsigned          m_depth = 0;
+  std::string       m_err;
 
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
@@ -131,7 +132,10 @@ struct Decoder {
     ~DepthGuard() { --d->m_depth; }
 
     bool check() const {
-      if (d->m_depth > MAX_DEPTH) [[unlikely]] return false;
+      if (d->m_depth > MAX_DEPTH) [[unlikely]] {
+        d->m_err = "exceeded maximum nesting depth";
+        return false;
+      }
       ++d->m_p;
       d->skip_ws();
       return true;
@@ -573,7 +577,9 @@ struct Decoder {
     if (result && m_p == m_end) [[likely]]
       return std::make_tuple(true, result);
 
-    std::string msg = "JSON parse error at offset " + std::to_string(m_p - m_beg);
+    std::string msg = m_err.empty()
+      ? "JSON parse error at offset " + std::to_string(m_p - m_beg)
+      : m_err + " at offset " + std::to_string(m_p - m_beg);
     return std::make_tuple(false, make_binary(m_env, msg));
   }
 };

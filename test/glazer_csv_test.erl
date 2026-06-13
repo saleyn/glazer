@@ -7,22 +7,23 @@
 
 decode_basic_test_() ->
   [
-    ?_assertEqual([], glazer_csv:decode(<<>>)),
-    ?_assertEqual([[<<"a">>, <<"b">>, <<"c">>]],
+    ?_assertEqual(#{headers => nil, data => []},
+                  glazer_csv:decode(<<>>)),
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>, <<"c">>]]},
                   glazer_csv:decode(<<"a,b,c">>)),
-    ?_assertEqual([[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>)),
     %% CRLF line endings
-    ?_assertEqual([[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\r\n1,2\r\n">>)),
     %% trailing newline optional
-    ?_assertEqual([[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2">>)),
     %% empty fields
-    ?_assertEqual([[<<"a">>, <<>>, <<"c">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<>>, <<"c">>]]},
                   glazer_csv:decode(<<"a,,c">>)),
     %% blank lines are skipped
-    ?_assertEqual([[<<"a">>], [<<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>], [<<"b">>]]},
                   glazer_csv:decode(<<"a\n\nb\n">>))
   ].
 
@@ -32,26 +33,28 @@ decode_basic_test_() ->
 
 decode_quoting_test_() ->
   [
-    ?_assertEqual([[<<"hello, world">>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"hello, world">>, <<"b">>]]},
                   glazer_csv:decode(<<"\"hello, world\",b">>)),
     %% embedded double quote, doubled
-    ?_assertEqual([[<<"a \"quoted\" word">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a \"quoted\" word">>]]},
                   glazer_csv:decode(<<"\"a \"\"quoted\"\" word\"">>)),
     %% embedded newline inside quotes
-    ?_assertEqual([[<<"line1\nline2">>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"line1\nline2">>, <<"b">>]]},
                   glazer_csv:decode(<<"\"line1\nline2\",b">>)),
     %% embedded CRLF inside quotes
-    ?_assertEqual([[<<"line1\r\nline2">>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"line1\r\nline2">>, <<"b">>]]},
                   glazer_csv:decode(<<"\"line1\r\nline2\",b">>)),
     %% empty quoted field
-    ?_assertEqual([[<<>>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<>>, <<"b">>]]},
                   glazer_csv:decode(<<"\"\",b">>)),
     %% quoted field is the entire (only) field on the line
-    ?_assertEqual([[<<"a,b">>]], glazer_csv:decode(<<"\"a,b\"">>)),
+    ?_assertEqual(#{headers => nil, data => [[<<"a,b">>]]},
+                  glazer_csv:decode(<<"\"a,b\"">>)),
     %% quoted field containing only doubled quotes
-    ?_assertEqual([[<<"\"\"">>]], glazer_csv:decode(<<"\"\"\"\"\"\"">>)),
+    ?_assertEqual(#{headers => nil, data => [[<<"\"\"">>]]},
+                  glazer_csv:decode(<<"\"\"\"\"\"\"">>)),
     %% mixture of quoted and unquoted fields on one row
-    ?_assertEqual([[<<"a">>, <<"b,c">>, <<"d">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b,c">>, <<"d">>]]},
                   glazer_csv:decode(<<"a,\"b,c\",d">>))
   ].
 
@@ -61,43 +64,228 @@ decode_quoting_test_() ->
 
 decode_delimiter_test_() ->
   [
-    ?_assertEqual([[<<"a">>, <<"b">>, <<"c">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>, <<"c">>]]},
                   glazer_csv:decode(<<"a;b;c">>, [{delimiter, $;}])),
-    ?_assertEqual([[<<"a">>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>]]},
                   glazer_csv:decode(<<"a\tb">>, [{delimiter, $\t}])),
     %% quoting still applies with a custom delimiter
-    ?_assertEqual([[<<"a;b">>, <<"c">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a;b">>, <<"c">>]]},
                   glazer_csv:decode(<<"\"a;b\";c">>, [{delimiter, $;}])),
     %% a row consisting solely of delimiters yields empty fields
-    ?_assertEqual([[<<>>, <<>>, <<>>]], glazer_csv:decode(<<";;">>, [{delimiter, $;}]))
+    ?_assertEqual(#{headers => nil, data => [[<<>>, <<>>, <<>>]]},
+                  glazer_csv:decode(<<";;">>, [{delimiter, $;}]))
   ].
 
 %% ----------------------------------------------------------------------------
-%% headers option
+%% headers option — first row is extracted into `headers`, data rows stay lists
 %% ----------------------------------------------------------------------------
 
 decode_headers_test_() ->
   [
-    ?_assertEqual([#{<<"a">> => <<"1">>, <<"b">> => <<"2">>}],
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>, [headers])),
-    ?_assertEqual([#{<<"a">> => <<"1">>, <<"b">> => <<"2">>},
-                   #{<<"a">> => <<"3">>, <<"b">> => <<"4">>}],
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>], [<<"3">>, <<"4">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n3,4\n">>, [headers])),
     %% no data rows
-    ?_assertEqual([], glazer_csv:decode(<<"a,b\n">>, [headers])),
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => []},
+                  glazer_csv:decode(<<"a,b\n">>, [headers])),
     %% headers as atoms
-    ?_assertEqual([#{a => <<"1">>, b => <<"2">>}],
+    ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, atom}])),
     %% headers as existing_atom: known atoms become atom keys
-    ?_assertEqual([#{a => <<"1">>, b => <<"2">>}],
+    ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, existing_atom}])),
     %% existing_atom falls back to binary for atoms that don't already exist
-    ?_assertEqual([#{<<"zzzz_glazer_csv_no_such_atom">> => <<"1">>, b => <<"2">>}],
+    ?_assertEqual(#{headers => [<<"zzzz_glazer_csv_no_such_atom">>, b],
+                    data    => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"zzzz_glazer_csv_no_such_atom,b\n1,2\n">>,
                                     [headers, {keys, existing_atom}])),
-    %% short row: missing trailing fields are simply absent from the map
-    ?_assertEqual([#{<<"a">> => <<"1">>}],
+    %% short row: missing trailing fields produce a shorter list
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[<<"1">>]]},
                   glazer_csv:decode(<<"a,b\n1\n">>, [headers]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% {headers, Type} — header format control
+%% ----------------------------------------------------------------------------
+
+decode_headers_type_test_() ->
+  [
+    %% {headers, binary} is the same as bare `headers`
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, binary}])),
+    %% {headers, string} is an alias for binary
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, string}])),
+    %% {headers, existing_atom}: known atoms → atoms, unknown → binary
+    ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, existing_atom}])),
+    ?_assertEqual(#{headers => [<<"zzzz_no_such_atom">>, b],
+                    data    => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"zzzz_no_such_atom,b\n1,2\n">>,
+                                    [{headers, existing_atom}])),
+    %% {headers, charlist}: column names as lists of Unicode codepoints
+    ?_assertEqual(#{headers => ["ab", "cd"], data => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"ab,cd\n1,2\n">>, [{headers, charlist}]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% {headers, [List]} — explicit column names (no header row in data)
+%% ----------------------------------------------------------------------------
+
+decode_explicit_headers_test_() ->
+  [
+    %% explicit binary headers: all rows are data, none consumed as header
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>], [<<"3">>, <<"4">>]]},
+                  glazer_csv:decode(<<"1,2\n3,4\n">>,
+                                    [{headers, [<<"a">>, <<"b">>]}])),
+    %% explicit atom headers
+    ?_assertEqual(#{headers => [name, age],
+                    data    => [[<<"Alice">>, <<"30">>]]},
+                  glazer_csv:decode(<<"Alice,30\n">>,
+                                    [{headers, [name, age]}])),
+    %% {headers, [List]} + {return, map}: maps keyed by the provided names
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [#{<<"a">> => <<"1">>, <<"b">> => <<"2">>},
+                                #{<<"a">> => <<"3">>, <<"b">> => <<"4">>}]},
+                  glazer_csv:decode(<<"1,2\n3,4\n">>,
+                                    [{headers, [<<"a">>, <<"b">>]}, {return, map}])),
+    %% {headers, [atom, ...]} + {return, map}: atom-keyed maps
+    ?_assertEqual(#{headers => [name, age],
+                    data    => [#{name => <<"Alice">>, age => <<"30">>}]},
+                  glazer_csv:decode(<<"Alice,30\n">>,
+                                    [{headers, [name, age]}, {return, map}])),
+    %% {headers, [List]} + {fields, ...}: field conversion still applied positionally
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[1, <<"2">>]]},
+                  glazer_csv:decode(<<"1,2\n">>,
+                                    [{headers, [<<"a">>, <<"b">>]},
+                                     {fields, [integer]}])),
+    %% empty explicit header list
+    ?_assertEqual(#{headers => [], data => [[<<"a">>, <<"b">>]]},
+                  glazer_csv:decode(<<"a,b\n">>, [{headers, []}])),
+    %% streaming: {headers, [List]} pre-populates the header; data rows are field lists
+    ?_test(begin
+      D0 = glazer_csv:stream_decoder([{headers, [<<"x">>, <<"y">>]}]),
+      {Rows, D1} = glazer_csv:stream_feed(D0, <<"1,2\n3,4\n">>),
+      ?assertEqual([[<<"1">>, <<"2">>], [<<"3">>, <<"4">>]], Rows),
+      ?assertEqual({ok, []}, glazer_csv:stream_eof(D1))
+    end),
+    %% streaming: {headers, [List]} + {return, map}
+    ?_test(begin
+      D0 = glazer_csv:stream_decoder([{headers, [<<"x">>, <<"y">>]}, {return, map}]),
+      {Rows, _D1} = glazer_csv:stream_feed(D0, <<"1,2\n">>),
+      ?assertEqual([#{<<"x">> => <<"1">>, <<"y">> => <<"2">>}], Rows)
+    end)
+  ].
+
+%% ----------------------------------------------------------------------------
+%% {skip, N} and {skip, {From, To}} — row skipping
+%% ----------------------------------------------------------------------------
+
+decode_skip_test_() ->
+  %% 6-row CSV, no header
+  Csv = <<"r1\nr2\nr3\nr4\nr5\nr6\n">>,
+  [
+    %% skip 0 = no-op
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r1">>],[<<"r2">>],[<<"r3">>],
+                             [<<"r4">>],[<<"r5">>],[<<"r6">>]]},
+                  glazer_csv:decode(Csv, [{skip, 0}])),
+    %% skip first 2 rows
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r3">>],[<<"r4">>],[<<"r5">>],[<<"r6">>]]},
+                  glazer_csv:decode(Csv, [{skip, 2}])),
+    %% skip more rows than present → empty data
+    ?_assertEqual(#{headers => nil, data => []},
+                  glazer_csv:decode(Csv, [{skip, 10}])),
+    %% {skip, {3, 5}} → rows 3-5 (1-based): r3, r4, r5
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r3">>],[<<"r4">>],[<<"r5">>]]},
+                  glazer_csv:decode(Csv, [{skip, {3, 5}}])),
+    %% {skip, {1, 3}} → rows 1-3: r1, r2, r3
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r1">>],[<<"r2">>],[<<"r3">>]]},
+                  glazer_csv:decode(Csv, [{skip, {1, 3}}])),
+    %% {skip, {N, N}} → single row
+    ?_assertEqual(#{headers => nil, data => [[<<"r4">>]]},
+                  glazer_csv:decode(Csv, [{skip, {4, 4}}])),
+    %% skip interacts with headers: data rows after the header row are skipped
+    ?_assertEqual(#{headers => [<<"h">>], data => [[<<"r3">>],[<<"r4">>]]},
+                  glazer_csv:decode(<<"h\nr1\nr2\nr3\nr4\n">>,
+                                    [headers, {skip, 2}]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% {limit, N} — cap the number of returned rows
+%% ----------------------------------------------------------------------------
+
+decode_limit_test_() ->
+  Csv = <<"r1\nr2\nr3\nr4\nr5\n">>,
+  [
+    ?_assertEqual(#{headers => nil, data => [[<<"r1">>],[<<"r2">>]]},
+                  glazer_csv:decode(Csv, [{limit, 2}])),
+    %% limit > rows → returns all
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r1">>],[<<"r2">>],[<<"r3">>],
+                             [<<"r4">>],[<<"r5">>]]},
+                  glazer_csv:decode(Csv, [{limit, 100}])),
+    %% limit 0 = no limit
+    ?_assertEqual(#{headers => nil,
+                    data => [[<<"r1">>],[<<"r2">>],[<<"r3">>],
+                             [<<"r4">>],[<<"r5">>]]},
+                  glazer_csv:decode(Csv, [{limit, 0}])),
+    %% limit with headers: limit applies to data rows, not the header
+    ?_assertEqual(#{headers => [<<"h">>], data => [[<<"r1">>],[<<"r2">>]]},
+                  glazer_csv:decode(<<"h\nr1\nr2\nr3\nr4\n">>,
+                                    [headers, {limit, 2}])),
+    %% skip + limit: skip 2, then take 2 → r3, r4
+    ?_assertEqual(#{headers => nil, data => [[<<"r3">>],[<<"r4">>]]},
+                  glazer_csv:decode(Csv, [{skip, 2}, {limit, 2}]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% {return, map} option — data rows as maps keyed by the header names
+%% ----------------------------------------------------------------------------
+
+decode_return_map_test_() ->
+  [
+    %% basic: rows become maps keyed by binary header names
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [#{<<"a">> => <<"1">>, <<"b">> => <<"2">>}]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {return, map}])),
+    %% multiple rows
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [#{<<"a">> => <<"1">>, <<"b">> => <<"2">>},
+                                #{<<"a">> => <<"3">>, <<"b">> => <<"4">>}]},
+                  glazer_csv:decode(<<"a,b\n1,2\n3,4\n">>, [headers, {return, map}])),
+    %% no data rows
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => []},
+                  glazer_csv:decode(<<"a,b\n">>, [headers, {return, map}])),
+    %% {keys, atom} + {return, map}: atom keys
+    ?_assertEqual(#{headers => [a, b],
+                    data    => [#{a => <<"1">>, b => <<"2">>}]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, atom}, {return, map}])),
+    %% {return, map} with {fields, ...}: type conversion still applies
+    ?_assertEqual(#{headers => [<<"name">>, <<"age">>],
+                    data    => [#{<<"name">> => <<"Alice">>, <<"age">> => 30}]},
+                  glazer_csv:decode(<<"name,age\nAlice,30\n">>,
+                    [headers, {return, map}, {fields, [binary, integer]}])),
+    %% {return, list} is the explicit default — same as omitting the option
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {return, list}])),
+    %% {return, map} without headers: ignored, rows stay as lists
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>]]},
+                  glazer_csv:decode(<<"a,b">>, [{return, map}])),
+    %% duplicate header column raises duplicate_header when {return, map} is set
+    ?_assertEqual({error, duplicate_header},
+                  glazer_csv:try_decode(<<"a,a\n1,2\n">>, [headers, {return, map}]))
   ].
 
 %% ----------------------------------------------------------------------------
@@ -107,40 +295,44 @@ decode_headers_test_() ->
 decode_fields_test_() ->
   [
     %% integer
-    ?_assertEqual([[1, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[1, <<"b">>]]},
                   glazer_csv:decode(<<"1,b">>, [{fields, [integer]}])),
     %% negative integer and bignum
-    ?_assertEqual([[-5], [123456789012345678901234567890]],
+    ?_assertEqual(#{headers => nil,
+                    data    => [[-5], [123456789012345678901234567890]]},
                   glazer_csv:decode(<<"-5\n123456789012345678901234567890">>,
                                      [{fields, [integer]}])),
     %% {float, Precision} rounds to the given number of decimal digits
-    ?_assertEqual([[3.14]],
+    ?_assertEqual(#{headers => nil, data => [[3.14]]},
                   glazer_csv:decode(<<"3.14159">>, [{fields, [{float, 2}]}])),
-    ?_assertEqual([[3.0]],
+    ?_assertEqual(#{headers => nil, data => [[3.0]]},
                   glazer_csv:decode(<<"3.14159">>, [{fields, [{float, 0}]}])),
     %% boolean, case-insensitive
-    ?_assertEqual([[true], [false], [true]],
+    ?_assertEqual(#{headers => nil, data => [[true], [false], [true]]},
                   glazer_csv:decode(<<"true\nFALSE\nTrue">>, [{fields, [boolean]}])),
     %% datetime -> Unix epoch seconds (UTC)
-    ?_assertEqual([[1705314600]],
+    ?_assertEqual(#{headers => nil, data => [[1705314600]]},
                   glazer_csv:decode(<<"2024-01-15T10:30:00Z">>,
                                      [{fields, [{datetime, <<"%Y-%m-%dT%H:%M:%SZ">>}]}])),
     %% datetime with a numeric UTC offset
-    ?_assertEqual([[1705296600]],
+    ?_assertEqual(#{headers => nil, data => [[1705296600]]},
                   glazer_csv:decode(<<"2024-01-15T10:30:00+05:00">>,
                                      [{fields, [{datetime, <<"%Y-%m-%dT%H:%M:%S%z">>}]}])),
     %% datetime without a time component
-    ?_assertEqual([[1705276800]],
+    ?_assertEqual(#{headers => nil, data => [[1705276800]]},
                   glazer_csv:decode(<<"2024-01-15">>, [{fields, [{datetime, <<"%Y-%m-%d">>}]}])),
     %% binary (default / explicit no-op)
-    ?_assertEqual([[<<"abc">>]], glazer_csv:decode(<<"abc">>, [{fields, [binary]}])),
+    ?_assertEqual(#{headers => nil, data => [[<<"abc">>]]},
+                  glazer_csv:decode(<<"abc">>, [{fields, [binary]}])),
     %% charlist
-    ?_assertEqual([["abc"]], glazer_csv:decode(<<"abc">>, [{fields, [charlist]}])),
+    ?_assertEqual(#{headers => nil, data => [["abc"]]},
+                  glazer_csv:decode(<<"abc">>, [{fields, [charlist]}])),
     %% fewer types than columns: extra columns stay binaries
-    ?_assertEqual([[1, <<"2">>, <<"3">>]],
+    ?_assertEqual(#{headers => nil, data => [[1, <<"2">>, <<"3">>]]},
                   glazer_csv:decode(<<"1,2,3">>, [{fields, [integer]}])),
     %% applies positionally with headers, independent of the header names
-    ?_assertEqual([#{<<"name">> => <<"Alice">>, <<"age">> => 30, <<"active">> => true}],
+    ?_assertEqual(#{headers => [<<"name">>, <<"age">>, <<"active">>],
+                    data    => [[<<"Alice">>, 30, true]]},
                   glazer_csv:decode(<<"name,age,active\nAlice,30,true\n">>,
                                      [headers, {fields, [binary, integer, boolean]}]))
   ].
@@ -148,13 +340,13 @@ decode_fields_test_() ->
 decode_fields_error_test_() ->
   [
     %% non-numeric field with `integer` type: default on_failure is `binary`
-    ?_assertEqual([[<<"not_a_number">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"not_a_number">>]]},
                   glazer_csv:decode(<<"not_a_number">>, [{fields, [integer]}])),
     %% invalid boolean: left as binary
-    ?_assertEqual([[<<"maybe">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"maybe">>]]},
                   glazer_csv:decode(<<"maybe">>, [{fields, [boolean]}])),
     %% datetime that doesn't match the format: left as binary
-    ?_assertEqual([[<<"not-a-date">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"not-a-date">>]]},
                   glazer_csv:decode(<<"not-a-date">>, [{fields, [{datetime, <<"%Y-%m-%d">>}]}])),
     %% on_failure => raise: errors with row/col (1-based) of the failing field
     ?_assertEqual({error, {invalid_field_value, 1, 1}},
@@ -177,87 +369,88 @@ decode_fields_error_test_() ->
                   glazer_csv:decode(<<"x">>, [{fields, [#{type => integer, on_failure => raise}]}])),
 
     %% on_failure => default: use the spec's default value
-    ?_assertEqual([[-1]],
+    ?_assertEqual(#{headers => nil, data => [[-1]]},
                   glazer_csv:decode(<<"not_a_number">>,
                     [{fields, [#{type => integer, default => -1, on_failure => default}]}])),
     %% on_failure => default with no default given falls back to binary
-    ?_assertEqual([[<<"not_a_number">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"not_a_number">>]]},
                   glazer_csv:decode(<<"not_a_number">>,
                     [{fields, [#{type => integer, on_failure => default}]}])),
     %% on_failure => null: use the configured null term
-    ?_assertEqual([[null]],
+    ?_assertEqual(#{headers => nil, data => [[null]]},
                   glazer_csv:decode(<<"not_a_number">>,
                     [{fields, [#{type => integer, on_failure => null}]}])),
     %% on_failure => null with {null_term, Atom}: use the custom null term
-    ?_assertEqual([[nil]],
+    ?_assertEqual(#{headers => nil, data => [[nil]]},
                   glazer_csv:decode(<<"not_a_number">>,
                     [{null_term, nil},
                      {fields, [#{type => integer, on_failure => null}]}])),
     %% on_failure => null for boolean
-    ?_assertEqual([[null]],
+    ?_assertEqual(#{headers => nil, data => [[null]]},
                   glazer_csv:decode(<<"maybe">>,
                     [{fields, [#{type => boolean, on_failure => null}]}])),
     %% on_failure => null for {float, Precision}
-    ?_assertEqual([[null]],
+    ?_assertEqual(#{headers => nil, data => [[null]]},
                   glazer_csv:decode(<<"not_a_float">>,
                     [{fields, [#{type => {float, 2}, on_failure => null}]}])),
     %% on_failure => null for datetime
-    ?_assertEqual([[null]],
+    ?_assertEqual(#{headers => nil, data => [[null]]},
                   glazer_csv:decode(<<"not-a-date">>,
                     [{fields, [#{type => {datetime, <<"%Y-%m-%d">>}, on_failure => null}]}])),
-    %% on_failure => null leaves valid fields converted, only the failing
-    %% field becomes null
-    ?_assertEqual([[1, null]],
+    %% on_failure => null leaves valid fields converted, only the failing field becomes null
+    ?_assertEqual(#{headers => nil, data => [[1, null]]},
                   glazer_csv:decode(<<"1,bad">>,
                     [{fields, [integer, #{type => integer, on_failure => null}]}])),
-    %% on_failure => null with headers: the failing column becomes null
-    ?_assertEqual([#{<<"a">> => 1, <<"b">> => null}],
+    %% on_failure => null with headers: the failing column becomes null in the row list
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[1, null]]},
                   glazer_csv:decode(<<"a,b\n1,bad\n">>,
                     [headers, {fields, [integer, #{type => integer, on_failure => null}]}])),
     %% on_failure => null with {null_term, Atom} and headers
-    ?_assertEqual([#{<<"a">> => 1, <<"b">> => nil}],
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[1, nil]]},
                   glazer_csv:decode(<<"a,b\n1,bad\n">>,
                     [headers, {null_term, nil},
                      {fields, [integer, #{type => integer, on_failure => null}]}])),
     %% on_failure => null never fails csv_try_decode/2 (no error)
-    ?_assertEqual({ok, [[null]]},
+    ?_assertEqual({ok, #{headers => nil, data => [[null]]}},
                   glazer_csv:try_decode(<<"not_a_number">>,
                     [{fields, [#{type => integer, on_failure => null}]}])),
 
     %% empty field uses `default` regardless of on_failure
-    ?_assertEqual([[0, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[0, <<"b">>]]},
                   glazer_csv:decode(<<",b">>, [{fields, [#{type => integer, default => 0}]}])),
     %% empty field with default => null and {null_term, Atom}: uses the
     %% literal atom given as `default`, not the configured null_term
-    ?_assertEqual([[null, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[null, <<"b">>]]},
                   glazer_csv:decode(<<",b">>,
                     [{null_term, nil},
                      {fields, [#{type => integer, default => null}]}])),
     %% empty field with no `default` given: left as an empty binary
-    ?_assertEqual([[<<>>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<>>, <<"b">>]]},
                   glazer_csv:decode(<<",b">>, [{fields, [integer]}])),
 
     %% existing_atom: converts to an existing atom
-    ?_assertEqual([[ok]], glazer_csv:decode(<<"ok">>, [{fields, [existing_atom]}])),
+    ?_assertEqual(#{headers => nil, data => [[ok]]},
+                  glazer_csv:decode(<<"ok">>, [{fields, [existing_atom]}])),
     %% existing_atom: falls back to binary for unknown atoms
-    ?_assertEqual([[<<"zzzz_glazer_csv_no_such_atom">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"zzzz_glazer_csv_no_such_atom">>]]},
                   glazer_csv:decode(<<"zzzz_glazer_csv_no_such_atom">>, [{fields, [existing_atom]}])),
 
     %% {atom, ExistingAtoms}: converts only if the text matches one of ExistingAtoms
-    ?_assertEqual([[ok], [error]],
+    ?_assertEqual(#{headers => nil, data => [[ok], [error]]},
                   glazer_csv:decode(<<"ok\nerror">>, [{fields, [{atom, [ok, error]}]}])),
     %% {atom, ExistingAtoms}: falls back to binary if not in the whitelist
-    ?_assertEqual([[<<"other">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"other">>]]},
                   glazer_csv:decode(<<"other">>, [{fields, [{atom, [ok, error]}]}]))
   ].
 
 %% ----------------------------------------------------------------------------
-%% csv_try_decode/1,2 — {ok, Rows} | {error, Reason}
+%% csv_try_decode/1,2 — {ok, Result} | {error, Reason}
 %% ----------------------------------------------------------------------------
 
 try_decode_test_() ->
   [
-    ?_assertEqual({ok, [[<<"a">>, <<"b">>]]}, glazer_csv:try_decode(<<"a,b">>)),
+    ?_assertEqual({ok, #{headers => nil, data => [[<<"a">>, <<"b">>]]}},
+                  glazer_csv:try_decode(<<"a,b">>)),
     ?_assertEqual({error, unterminated_quoted_field},
                   glazer_csv:try_decode(<<"\"unterminated">>)),
     %% unterminated quote with no closing quote anywhere, multi-line input
@@ -353,20 +546,21 @@ encode_headers_test_() ->
 %% ----------------------------------------------------------------------------
 
 round_trip_test_() ->
+  Rows = [[<<"a">>, <<"b,c">>], [<<"1">>, <<"2">>]],
   [
-    ?_assertEqual([[<<"a">>, <<"b,c">>], [<<"1">>, <<"2">>]],
-                  glazer_csv:decode(glazer_csv:encode([[<<"a">>, <<"b,c">>], [<<"1">>, <<"2">>]]))),
+    ?_assertEqual(#{headers => nil, data => Rows},
+                  glazer_csv:decode(glazer_csv:encode(Rows))),
     %% round trip with embedded quotes and newlines
-    ?_assertEqual([[<<"a \"quoted\"\nvalue">>, <<"b">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a \"quoted\"\nvalue">>, <<"b">>]]},
                   glazer_csv:decode(glazer_csv:encode([[<<"a \"quoted\"\nvalue">>, <<"b">>]]))),
     %% round trip with headers and a custom delimiter
-    ?_assertEqual([#{<<"a">> => <<"1">>, <<"b">> => <<"x;y">>}],
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[<<"1">>, <<"x;y">>]]},
                   glazer_csv:decode(
                     glazer_csv:encode([#{<<"a">> => <<"1">>, <<"b">> => <<"x;y">>}],
                                        [headers, {delimiter, $;}]),
                     [headers, {delimiter, $;}])),
     %% round trip with lf line endings
-    ?_assertEqual([[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]],
+    ?_assertEqual(#{headers => nil, data => [[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]]},
                   glazer_csv:decode(
                     glazer_csv:encode([[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]], [{line_ending, lf}])))
   ].
@@ -381,8 +575,8 @@ large_input_test_() ->
   [
     %% input is large enough to cross the dirty-scheduler threshold (8192 bytes)
     ?_assert(byte_size(Csv) >= 8192),
-    ?_assertEqual(Rows, glazer_csv:decode(Csv)),
-    ?_assertEqual(1000, length(glazer_csv:decode(Csv)))
+    ?_assertEqual(#{headers => nil, data => Rows}, glazer_csv:decode(Csv)),
+    ?_assertEqual(1000, length(maps:get(data, glazer_csv:decode(Csv))))
   ].
 
 %% ----------------------------------------------------------------------------
@@ -452,20 +646,19 @@ stream_decoder_test_() ->
       ?assertEqual({ok, []}, glazer_csv:stream_eof(D1))
     end),
 
-    %% the headers option decodes subsequent rows as maps, with no row
-    %% emitted for the header itself
+    %% with the headers option, the first row is captured internally and data
+    %% rows are returned as field lists (not maps)
     ?_test(begin
       D0 = glazer_csv:stream_decoder([headers]),
       {Rows, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n3,4\n">>),
-      ?assertEqual([#{<<"a">> => <<"1">>, <<"b">> => <<"2">>},
-                     #{<<"a">> => <<"3">>, <<"b">> => <<"4">>}], Rows),
+      ?assertEqual([[<<"1">>, <<"2">>], [<<"3">>, <<"4">>]], Rows),
       ?assertEqual({ok, []}, glazer_csv:stream_eof(D1))
     end),
 
-    %% decode options are threaded through to every decoded row
+    %% {keys, atom} affects header names but not streaming field values
     ?_test(begin
       D0 = glazer_csv:stream_decoder([headers, {keys, atom}]),
-      {[#{a := <<"1">>, b := <<"2">>}], _D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n">>)
+      {[[<<"1">>, <<"2">>]], _D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n">>)
     end),
 
     %% malformed trailing bytes surface as an error from stream_eof/1
@@ -486,17 +679,18 @@ file_test_() ->
   [
     ?_test(begin
       ?assertEqual(ok, glazer_csv:write_file(Path, Rows)),
-      ?assertEqual(Rows, glazer_csv:read_file(Path)),
+      ?assertEqual(#{headers => nil, data => Rows}, glazer_csv:read_file(Path)),
       ok = file:delete(Path)
     end),
 
     ?_test(begin
       MapRows = [#{<<"a">> => <<"1">>, <<"b">> => <<"2">>}],
       ?assertEqual(ok, glazer_csv:write_file(Path, MapRows, [headers])),
-      ?assertEqual(MapRows, glazer_csv:read_file(Path, [headers])),
+      ?assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[<<"1">>, <<"2">>]]},
+                   glazer_csv:read_file(Path, [headers])),
       ok = file:delete(Path)
     end),
 
-    ?_assertError("nonexistent.csv: no such file or directory",
+    ?_assertError(<<"nonexistent.csv: no such file or directory">>,
                    glazer_csv:read_file("nonexistent.csv"))
   ].

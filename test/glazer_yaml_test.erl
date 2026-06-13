@@ -614,6 +614,6 @@ file_test_() ->
       ok = file:delete(Path)
     end),
 
-    ?_assertError("nonexistent.yaml: no such file or directory",
+    ?_assertError(<<"nonexistent.yaml: no such file or directory">>,
                    glazer_yaml:read_file("nonexistent.yaml"))
   ].

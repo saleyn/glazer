@@ -680,6 +680,6 @@ file_test_() ->
 
     ?_assertError({parse_error, _}, glazer_json:read_file(code:which(?MODULE))),
 
-    ?_assertError("nonexistent.json: no such file or directory",
+    ?_assertError(<<"nonexistent.json: no such file or directory">>,
                    glazer_json:read_file("nonexistent.json"))
   ].

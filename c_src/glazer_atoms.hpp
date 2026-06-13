@@ -35,6 +35,13 @@ static ERL_NIF_TERM AM_YAML_1_1_BOOLS;
 // CSV option atoms
 static ERL_NIF_TERM AM_DELIMITER;
 static ERL_NIF_TERM AM_HEADERS;
+static ERL_NIF_TERM AM_DATA;
+static ERL_NIF_TERM AM_RETURN;
+static ERL_NIF_TERM AM_MAP;
+static ERL_NIF_TERM AM_LIST;
+static ERL_NIF_TERM AM_STRING;
+static ERL_NIF_TERM AM_SKIP;
+static ERL_NIF_TERM AM_LIMIT;
 static ERL_NIF_TERM AM_LINE_ENDING;
 static ERL_NIF_TERM AM_LF;
 static ERL_NIF_TERM AM_CRLF;
@@ -114,6 +121,13 @@ inline void init_atoms(ErlNifEnv* env)
 
   AM_DELIMITER                 = enif_make_atom(env, "delimiter");
   AM_HEADERS                   = enif_make_atom(env, "headers");
+  AM_DATA                      = enif_make_atom(env, "data");
+  AM_RETURN                    = enif_make_atom(env, "return");
+  AM_MAP                       = enif_make_atom(env, "map");
+  AM_LIST                      = enif_make_atom(env, "list");
+  AM_STRING                    = enif_make_atom(env, "string");
+  AM_SKIP                      = enif_make_atom(env, "skip");
+  AM_LIMIT                     = enif_make_atom(env, "limit");
   AM_LINE_ENDING               = enif_make_atom(env, "line_ending");
   AM_LF                        = enif_make_atom(env, "lf");
   AM_CRLF                      = enif_make_atom(env, "crlf");

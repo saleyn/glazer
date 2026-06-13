@@ -231,11 +231,17 @@ inline std::optional<int64_t> parse(std::string_view input, std::string_view for
 
 struct CsvDecodeOpts {
   char delimiter           = ',';
-  bool headers             = false;
-  bool label_atom          = false;
-  bool label_existing_atom = false;
-  ERL_NIF_TERM null_term   = 0; // for {fields, [...]} entries with on_failure => null
-  std::vector<CsvFieldSpec> fields; // {fields, [Type, ...]} — empty if unset
+  bool headers             = false;          // bare `headers` atom or {headers, ...}
+  bool label_atom          = false;          // {keys, atom} or legacy
+  bool label_existing_atom = false;          // {keys, existing_atom} / {headers, existing_atom}
+  bool label_charlist      = false;          // {headers, charlist}
+  bool return_map          = false;          // {return, map}: rows as maps (requires headers)
+  bool explicit_headers    = false;          // {headers, [List]}: no header row in data
+  ERL_NIF_TERM null_term   = 0;
+  std::vector<ERL_NIF_TERM> header_list;    // populated when explicit_headers is true
+  std::vector<CsvFieldSpec> fields;
+  size_t skip_rows         = 0;             // {skip, N}: skip first N data rows
+  size_t limit             = 0;             // {limit, N}: max data rows (0 = unlimited)
 };
 
 // Parses a `field_type()`:
@@ -339,6 +345,52 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
       if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
       else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
       else if (enif_is_identical(tp[1], AM_LABEL_BINARY))      { opts.label_atom = false; opts.label_existing_atom = false; }
+    } else if (enif_is_identical(tp[0], AM_RETURN)) {
+      if      (enif_is_identical(tp[1], AM_MAP))  opts.return_map = true;
+      else if (enif_is_identical(tp[1], AM_LIST)) opts.return_map = false;
+    } else if (enif_is_identical(tp[0], AM_HEADERS)) {
+      // {headers, [List]}  — explicit column names, no header row in data
+      // {headers, binary | string} — 1st row → binary keys
+      // {headers, existing_atom}   — 1st row → existing-atom keys
+      // {headers, charlist}        — 1st row → charlist keys
+      if (enif_is_list(env, tp[1])) {
+        opts.headers          = true;
+        opts.explicit_headers = true;
+        ERL_NIF_TERM hhead, htail = tp[1];
+        while (enif_get_list_cell(env, htail, &hhead, &htail))
+          opts.header_list.push_back(hhead);
+      } else if (enif_is_identical(tp[1], AM_BINARY) || enif_is_identical(tp[1], AM_STRING)) {
+        opts.headers          = true;
+        opts.label_atom          = false;
+        opts.label_existing_atom = false;
+        opts.label_charlist      = false;
+      } else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) {
+        opts.headers             = true;
+        opts.label_existing_atom = true;
+      } else if (enif_is_identical(tp[1], AM_CHARLIST)) {
+        opts.headers         = true;
+        opts.label_charlist  = true;
+      }
+    } else if (enif_is_identical(tp[0], AM_SKIP)) {
+      // {skip, N} or {skip, {From, To}} (1-based, inclusive)
+      ErlNifUInt64 n;
+      if (enif_get_uint64(env, tp[1], &n)) {
+        opts.skip_rows = static_cast<size_t>(n);
+      } else {
+        int arity2; const ERL_NIF_TERM* tp2;
+        if (enif_get_tuple(env, tp[1], &arity2, &tp2) && arity2 == 2) {
+          ErlNifUInt64 from, to;
+          if (enif_get_uint64(env, tp2[0], &from) && enif_get_uint64(env, tp2[1], &to)
+              && from >= 1 && to >= from) {
+            opts.skip_rows = static_cast<size_t>(from - 1);
+            opts.limit     = static_cast<size_t>(to - from + 1);
+          }
+        }
+      }
+    } else if (enif_is_identical(tp[0], AM_LIMIT)) {
+      ErlNifUInt64 n;
+      if (enif_get_uint64(env, tp[1], &n))
+        opts.limit = static_cast<size_t>(n);
     } else if (enif_is_identical(tp[0], AM_FIELDS)) {
       if (!enif_is_list(env, tp[1])) return false;
       ERL_NIF_TERM fhead, ftail = tp[1];
@@ -670,7 +722,8 @@ struct CsvDecoder {
 
   ERL_NIF_TERM make_header_key(ERL_NIF_TERM bin_term)
   {
-    if (!m_opts.label_atom && !m_opts.label_existing_atom) return bin_term;
+    if (!m_opts.label_atom && !m_opts.label_existing_atom && !m_opts.label_charlist)
+      return bin_term;
 
     ErlNifBinary bin;
     if (!enif_inspect_binary(m_env, bin_term, &bin)) return bin_term;
@@ -679,21 +732,39 @@ struct CsvDecoder {
     if (m_opts.label_atom)
       return enif_make_atom_len(m_env, sv.data(), sv.size());
 
-    ERL_NIF_TERM t;
-    return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
-         ? t : bin_term;
+    if (m_opts.label_existing_atom) {
+      ERL_NIF_TERM t;
+      return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
+           ? t : bin_term;
+    }
+
+    // charlist: decode UTF-8 bytes to a list of Unicode codepoints
+    std::vector<ERL_NIF_TERM> cps;
+    const char* p   = sv.data();
+    const char* end = p + sv.size();
+    while (p < end)
+      cps.push_back(enif_make_uint(m_env, decode_utf8(p, end)));
+    return enif_make_list_from_array(m_env, cps.data(), unsigned(cps.size()));
   }
 
-  // Decodes the entire input into a list of rows (maps if `headers`).
+  // Decodes the entire input.
   // Returns:
-  //   - success: {true, Result :: list(map) | list(list)}
-  //   - failure: {false, Result :: atom | binary}
+  //   - success: {true, #{headers => nil|[binary()|atom()], data => [[term()]]|[map()]}}
+  //   - failure: {false, atom | binary}
+  //
+  // When `headers` is set the first row is extracted as the `headers` value
+  // (applying `{keys, atom|existing_atom}` if requested). Subsequent rows are
+  // emitted as field lists (default) or as maps keyed by the header names when
+  // {return, map} is also set. duplicate_header is returned if a header row
+  // contains duplicate column names and map output is requested.
   std::tuple<bool, ERL_NIF_TERM> decode()
   {
     SmallTermVec<64> fields;
     SmallTermVec<64> header;
     std::vector<ERL_NIF_TERM> rows;
-    size_t row_num = 0;
+    size_t row_num  = 0;
+    // Hoist as_map before any goto so no initialization is jumped over.
+    const bool as_map = m_opts.return_map && m_opts.headers;
 
     bool err = false;
     auto rec = read_record(fields, err);
@@ -701,48 +772,62 @@ struct CsvDecoder {
     if (!rec) [[unlikely]]
       goto DONE;
 
-    // If `headers` is set, the first record becomes the column names.
-    // Otherwise, treat it as a data row and decode it as usual.
-    if (m_opts.headers) {
+    // Populate header: explicit list beats reading a header row from the data.
+    if (m_opts.explicit_headers) {
+      for (auto h : m_opts.header_list)
+        header.push_back(h);
+      // Do NOT consume a data row as the header.
+    } else if (m_opts.headers) {
       for (auto field : fields)
         header.push_back(make_header_key(field));
       rec = read_record(fields, err);
     }
 
-    if (m_opts.headers) {
-      while (rec) {
-        ++row_num;
-        if (!m_opts.fields.empty()) {
-          if (size_t col = convert_fields(fields))
-            return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                                             enif_make_uint64(m_env, row_num),
-                                                             enif_make_uint64(m_env, col)));
-        }
-        auto map = fields.to_erl_map(m_env, header);
+    // Skip the requested number of leading data rows.
+    {
+      size_t skipped = 0;
+      while (rec && skipped < m_opts.skip_rows) {
+        rec = read_record(fields, err);
+        ++skipped;
+      }
+    }
+
+    // Data rows: maps when {return, map} + headers, field lists otherwise.
+    while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+      ++row_num;
+      if (!m_opts.fields.empty()) {
+        if (size_t col = convert_fields(fields))
+          return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                                           enif_make_uint64(m_env, row_num),
+                                                           enif_make_uint64(m_env, col)));
+      }
+      if (as_map) {
+        ERL_NIF_TERM map = fields.to_erl_map(m_env, header);
         if (!map) [[unlikely]]
           return std::make_tuple(false, AM_DUPLICATE_HEADER);
         rows.push_back(map);
-        rec = read_record(fields, err);
-      }
-    } else {
-      do {
-        ++row_num;
-        if (!m_opts.fields.empty()) {
-          if (size_t col = convert_fields(fields))
-            return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                                             enif_make_uint64(m_env, row_num),
-                                                             enif_make_uint64(m_env, col)));
-        }
+      } else {
         rows.push_back(fields.to_erl_list(m_env));
-      } while (read_record(fields, err));
+      }
+      rec = read_record(fields, err);
     }
 
   DONE:
     if (err) [[unlikely]]
       return std::make_tuple(false, AM_UNTERMINATED_QUOTED_FIELD);
 
-    return std::make_tuple(true,
-      enif_make_list_from_array(m_env, rows.data(), unsigned(rows.size())));
+    ERL_NIF_TERM headers_term = m_opts.headers
+      ? enif_make_list_from_array(m_env, header.data(), unsigned(header.size()))
+      : AM_NIL;
+    ERL_NIF_TERM data_term =
+      enif_make_list_from_array(m_env, rows.data(), unsigned(rows.size()));
+
+    ERL_NIF_TERM keys[2] = { AM_HEADERS, AM_DATA };
+    ERL_NIF_TERM vals[2] = { headers_term, data_term };
+    ERL_NIF_TERM result;
+    enif_make_map_from_arrays(m_env, keys, vals, 2, &result);
+
+    return std::make_tuple(true, result);
   }
 };
 

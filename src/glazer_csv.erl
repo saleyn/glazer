@@ -87,42 +87,91 @@ A single element of the `{fields, Specs}` CSV decode option: either a
       default     => term(),
       on_failure  => field_on_failure()}.
 
+-doc """
+How the header row should be represented when using `{headers, Type}`:
+
+- `existing_atom` - column names are converted to existing atoms (binaries if not found)
+- `binary`        - column names are kept as binaries (default)
+- `string`        - alias for `binary`
+- `charlist`      - column names are converted to lists of Unicode codepoints
+""".
+-type headers_type() :: existing_atom | binary | string | charlist.
+
+-doc """
+A single CSV decode option.  See `t:decode_opts/0` for the full reference
+table of all available options and their effects.
+""".
 -type decode_opt() ::
     {delimiter, char()}
   | headers
+  | {headers, [atom() | binary()] | headers_type()}
   | {keys, atom | existing_atom | binary}
   | {fields, [field_spec()]}
-  | {null_term, atom()}.
+  | {null_term, atom()}
+  | {return, list | map}
+  | {skip, non_neg_integer() | {pos_integer(), pos_integer()}}
+  | {limit, pos_integer()}.
 
 -doc """
 CSV decode options:
 
-- `{delimiter, Char}`   - field delimiter (default `$,`)
-- `headers`             - treat the first row as column names and decode
-  each subsequent row as a map keyed by those names, instead of returning
-  every row as a list of fields
-- `{keys, atom}`        - with `headers`, decode column names as atoms
-- `{keys, existing_atom}` - with `headers`, decode column names as existing
-  atoms, falling back to binaries for unknown atoms
-- `{keys, binary}`      - with `headers`, decode column names as binaries
-  (default)
-- `{fields, Specs}`     - convert each column's field from a binary,
-  positionally (the Nth spec applies to the Nth column, regardless of
-  `headers`). Columns beyond the end of `Specs`, or given type `binary`,
-  are left as binaries. See `field_spec/0` and `field_type/0` for
-  the available types and the `default`/`on_failure` options
-- `{null_term, Atom}`   - use `Atom` as the value produced by
-  `on_failure => null`, overriding the library-wide `null` term for this
-  call (default: the library-wide `null` term, see the `null` application
-  env var)
+| Option | Description |
+|--------|-------------|
+| `{delimiter, Char}` | Field delimiter character (default `$,`) |
+| `headers` | Treat the first row as column names (shorthand for `{headers, binary}`) |
+| `{headers, [Name, ...]}` | Use the given list of atoms or binaries as column names; the first data row is **not** consumed as a header |
+| `{headers, binary}` | First row → binary column names (same as bare `headers`) |
+| `{headers, string}` | Alias for `{headers, binary}` |
+| `{headers, existing_atom}` | First row → existing-atom column names (fall back to binary for unknown atoms) |
+| `{headers, charlist}` | First row → column names as lists of Unicode codepoints |
+| `{keys, atom}` | (Legacy) With `headers`, decode column names as atoms |
+| `{keys, existing_atom}` | (Legacy) With `headers`, decode column names as existing atoms |
+| `{keys, binary}` | (Legacy) With `headers`, decode column names as binaries (default) |
+| `{return, list}` | Data rows are lists of field values (default) |
+| `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |
+| `{fields, Specs}` | Per-column type conversion, applied positionally; see `field_spec/0` |
+| `{skip, N}` | Skip the first `N` data rows (after any header row) |
+| `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
+| `{limit, N}` | Process at most `N` data rows (after skipping) |
+| `{null_term, Atom}` | Atom to use for `on_failure => null`; overrides the library-wide `null` env var |
 """.
 -type decode_opts() :: [decode_opt()].
 
+-doc """
+The result of a successful CSV decode: a map with two keys.
+
+- `headers` - `nil` when the `headers` option was not given; otherwise a list
+  of column names (binaries by default, atoms with `{keys, atom}` or
+  `{keys, existing_atom}`)
+- `data`    - list of data rows; each row is a list of field values by default,
+  or a map keyed by the column names when both `headers` and `{return, map}`
+  are given
+""".
+-type csv_result() :: #{
+    headers := nil | [binary() | atom()],
+    data    := [[term()]] | [map()]
+}.
+
+-doc """
+Error reasons returned by `try_decode/1,2` or raised by `decode/1,2`:
+
+- `unterminated_quoted_field` — input ended inside a `"..."` field with no
+  closing quote
+- `duplicate_header` — two columns share the same name and `{return, map}`
+  was requested (map keys must be unique)
+- `{invalid_field_value, Row, Column}` — a field at the given 1-based
+  row/column position failed to convert to the type requested by
+  `{fields, Specs}` with `on_failure => raise`
+""".
 -type decode_error() ::
     unterminated_quoted_field
   | duplicate_header
   | {invalid_field_value, Row :: pos_integer(), Column :: pos_integer()}.
 
+-doc """
+A single CSV encode option.  See `t:encode_opts/0` for descriptions of all
+available options.
+""".
 -type encode_opt() ::
     {delimiter, char()}
   | headers
@@ -140,9 +189,16 @@ CSV encode options:
 -type encode_opts() :: [encode_opt()].
 
 -export_type([decode_opt/0, decode_opts/0, encode_opt/0, encode_opts/0, decode_error/0,
-               field_type/0, field_spec/0, field_on_failure/0,
+               csv_result/0, headers_type/0, field_type/0, field_spec/0, field_on_failure/0,
                scan_state/0, stream_decoder/0]).
 
+-doc """
+Resumable state of the incremental row-boundary scanner used inside a
+`t:stream_decoder/0`.  Carries the current byte offset and a flag
+indicating whether the scanner is currently inside a quoted field.
+Exposed so the state can be serialised or inspected; normal usage does
+not require direct access to this type.
+""".
 -type scan_state() :: {non_neg_integer(), boolean()}.
 
 -record(stream_decoder, {
@@ -152,47 +208,116 @@ CSV encode options:
   state   = {0, false} :: scan_state()
 }).
 
+-doc """
+Opaque handle for incremental CSV decoding.  Created by
+`stream_decoder/0,1` and threaded through successive `stream_feed/2`
+calls; call `stream_eof/1` to flush any remaining buffered bytes at the
+end of the input.
+""".
 -opaque stream_decoder() :: #stream_decoder{}.
 
 -doc """
-Decode a CSV binary or iolist to a list of rows.
+Decode a CSV binary or iolist.
 
-By default each row is a list of binary fields. With the `headers` option,
-the first row is used as column names and each subsequent row is decoded
-as a map. Raises `unterminated_quoted_field` or `duplicate_header` on
-invalid input.
+Returns a `t:csv_result/0` map `#{headers => nil, data => Rows}` where
+`Rows` is a list of rows, each row a list of binary fields.  With the
+`headers` option the first row is captured as column names in `headers`
+instead of appearing in `data`.
+Raises `Reason :: t:decode_error/0` on invalid input.
+
+## Examples
+
+```erlang
+1> glazer_csv:decode(<<"a,b\n1,2\n3,4\n">>).
+#{headers => nil, data => [[<<"a">>,<<"b">>],[<<"1">>,<<"2">>],[<<"3">>,<<"4">>]]}
+
+2> glazer_csv:decode(<<>>).
+#{headers => nil, data => []}
+
+3> glazer_csv:decode(<<"\"hello, world\",42\n">>).
+#{headers => nil, data => [[<<"hello, world">>,<<"42">>]]}
+```
 """.
--spec decode(binary() | iolist()) -> [[binary()]] | [#{binary() => binary()}].
+-spec decode(binary() | iolist()) -> csv_result().
 decode(Input) ->
   decode(Input, []).
 
 -doc """
-Decode a CSV binary or iolist to a list of rows, with options.
-Raises `Reason::decode_error()` on invalid input.
+Decode a CSV binary or iolist with options (see `t:decode_opts/0`).
+Returns a `t:csv_result/0`.
+Raises `Reason :: t:decode_error/0` on invalid input.
+
+## Examples
+
+```erlang
+%% First row as binary column names
+1> glazer_csv:decode(<<"name,age\nAlice,30\nBob,25\n">>, [headers]).
+#{headers => [<<"name">>,<<"age">>],
+  data    => [[<<"Alice">>,<<"30">>],[<<"Bob">>,<<"25">>]]}
+
+%% Explicit column names — no header row expected in the data
+2> glazer_csv:decode(<<"Alice,30\n">>, [{headers, [name, age]}, {return, map}]).
+#{headers => [name,age], data => [#{age => <<"30">>, name => <<"Alice">>}]}
+
+%% Per-column type conversion
+3> glazer_csv:decode(<<"Alice,30\n">>, [{fields, [binary, integer]}]).
+#{headers => nil, data => [[<<"Alice">>,30]]}
+
+%% Semi-colon delimiter, skip first 2 rows, limit to 3
+4> glazer_csv:decode(<<"h1;h2\nr1a;r1b\nr2a;r2b\nr3a;r3b\nr4a;r4b\n">>,
+                     [{delimiter, $;}, headers, {skip, 1}, {limit, 2}]).
+#{headers => [<<"h1">>,<<"h2">>],
+  data    => [[<<"r2a">>,<<"r2b">>],[<<"r3a">>,<<"r3b">>]]}
+
+%% Rows as maps with atom keys
+5> glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, existing_atom}, {return, map}]).
+#{headers => [a,b], data => [#{a => <<"1">>, b => <<"2">>}]}
+```
 """.
--spec decode(binary() | iolist(), decode_opts()) -> [[binary()]] | [map()].
+-spec decode(binary() | iolist(), decode_opts()) -> csv_result().
 decode(Input, Opts) ->
   case try_decode(Input, Opts) of
-    {ok,    Rows}   -> Rows;
+    {ok,    Result} -> Result;
     {error, Reason} -> error(Reason)
   end.
 
 -doc """
-Decode a CSV binary or iolist, returning `{ok, Rows}` or
-`{error, Reason}` instead of raising, where `Reason` is a
-`decode_error()`.
+Decode a CSV binary or iolist, returning `{ok, Result}` or
+`{error, Reason}` instead of raising.
+`Result` is a `t:csv_result/0`; `Reason` is a `t:decode_error/0`.
+
+## Examples
+
+```erlang
+1> glazer_csv:try_decode(<<"a,b\n1,2\n">>).
+{ok, #{headers => nil, data => [[<<"a">>,<<"b">>],[<<"1">>,<<"2">>]]}}
+
+2> glazer_csv:try_decode(<<"\"unterminated">>).
+{error, unterminated_quoted_field}
+```
 """.
--spec try_decode(binary() | iolist()) -> {ok, [[binary()]]} | {error, decode_error()}.
+-spec try_decode(binary() | iolist()) -> {ok, csv_result()} | {error, decode_error()}.
 try_decode(Input) ->
   glazer:csv_try_decode(Input).
 
 -doc """
-Decode a CSV binary or iolist with options, returning `{ok, Rows}` or
-`{error, Reason}` instead of raising, where `Reason` is a
-`decode_error()`.
+Decode a CSV binary or iolist with options (see `t:decode_opts/0`),
+returning `{ok, Result}` or `{error, Reason}` instead of raising.
+`Result` is a `t:csv_result/0`; `Reason` is a `t:decode_error/0`.
+
+## Examples
+
+```erlang
+1> glazer_csv:try_decode(<<"name,age\nAlice,30\n">>, [headers]).
+{ok, #{headers => [<<"name">>,<<"age">>], data => [[<<"Alice">>,<<"30">>]]}}
+
+2> glazer_csv:try_decode(<<"x">>,
+                         [{fields, [#{type => integer, on_failure => raise}]}]).
+{error, {invalid_field_value, 1, 1}}
+```
 """.
 -spec try_decode(binary() | iolist(), decode_opts()) ->
-  {ok, [[binary()]] | [map()]} | {error, decode_error()}.
+  {ok, csv_result()} | {error, decode_error()}.
 try_decode(Input, Opts) ->
   glazer:csv_try_decode(Input, Opts).
 
@@ -202,6 +327,19 @@ Encode a list of rows to a CSV binary.
 Each row is a list of fields (binaries, atoms, integers, or floats).
 Fields containing the delimiter, a double quote, or a line break are
 quoted per RFC 4180, with embedded quotes doubled.
+
+## Examples
+
+```erlang
+1> glazer_csv:encode([[<<"a">>, <<"b">>], [1, 2]]).
+<<"a,b\r\n1,2\r\n">>
+
+2> glazer_csv:encode([[<<"hello, world">>, <<"say \"hi\"">>]]).
+<<"\"hello, world\",\"say \"\"hi\"\"\"\r\n">>
+
+3> glazer_csv:encode([]).
+<<>>
+```
 """.
 -spec encode([[term()]] | [map()]) -> binary().
 encode(Data) ->
@@ -213,6 +351,19 @@ Encode a list of rows to a CSV binary, with options.
 With the `headers` option, `Data` is a list of maps: the first map's keys
 become the header row (in iteration order), and each map is encoded as a
 row in that column order.
+
+## Examples
+
+```erlang
+%% Maps to CSV with a header row
+1> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
+<<"age,name\r\n30,Alice\r\n">>
+
+%% Semicolon delimiter with LF line endings
+2> glazer_csv:encode([[<<"a">>, <<"b">>], [1, 2]],
+                     [{delimiter, $;}, {line_ending, lf}]).
+<<"a;b\n1;2\n">>
+```
 """.
 -spec encode([[term()]] | [map()], encode_opts()) -> binary().
 encode(Data, Opts) ->
@@ -225,22 +376,39 @@ Raises `Reason::decode_error()` if the file's contents aren't valid CSV, or
 a binary `"Filename: Reason"` message (see `file:format_error/1`) if the
 file can't be read.
 
-## Example
+## Examples
 
 ```erlang
+%% File contains: name,age\nAlice,30\n
 1> glazer_csv:read_file("data.csv").
-[[<<"a">>,<<"b">>],[<<"1">>,<<"2">>]]
+#{headers => nil, data => [[<<"name">>,<<"age">>],[<<"Alice">>,<<"30">>]]}
+
+2> glazer_csv:read_file("missing.csv").
+** exception error: <<"missing.csv: no such file or directory">>
 ```
 """.
--spec read_file(file:name_all()) -> [[binary()]] | [map()].
+-spec read_file(file:name_all()) -> csv_result().
 read_file(Filename) ->
   read_file(Filename, []).
 
 -doc """
 Read `Filename` and decode its contents as CSV, with decode options
 (see `decode/2`).
+
+## Examples
+
+```erlang
+%% File contains: name,age\nAlice,30\nBob,25\n
+1> glazer_csv:read_file("data.csv", [headers, {return, map}]).
+#{headers => [<<"name">>,<<"age">>],
+  data    => [#{<<"age">> => <<"30">>,  <<"name">> => <<"Alice">>},
+              #{<<"age">> => <<"25">>,  <<"name">> => <<"Bob">>}]}
+
+2> glazer_csv:read_file("data.csv", [headers, {fields, [binary, integer]}]).
+#{headers => [<<"name">>,<<"age">>], data => [[<<"Alice">>,30],[<<"Bob">>,25]]}
+```
 """.
--spec read_file(file:name_all(), decode_opts()) -> [[binary()]] | [map()].
+-spec read_file(file:name_all(), decode_opts()) -> csv_result().
 read_file(Filename, Opts) ->
   case file:read_file(Filename) of
     {ok, Bin}       -> decode(Bin, Opts);
@@ -254,11 +422,14 @@ file.
 Raises a binary `"Filename: Reason"` message (see `file:format_error/1`)
 if the file can't be written.
 
-## Example
+## Examples
 
 ```erlang
-1> glazer_csv:write_file("data.csv", [[<<"a">>,<<"b">>],[1,2]]).
+1> glazer_csv:write_file("out.csv", [[<<"name">>,<<"age">>],[<<"Alice">>,30]]).
 ok
+
+2> glazer_csv:write_file("/read-only/out.csv", []).
+** exception error: <<"/read-only/out.csv: permission denied">>
 ```
 """.
 -spec write_file(file:name_all(), [[term()]] | [map()]) -> ok.
@@ -268,6 +439,22 @@ write_file(Filename, Data) ->
 -doc """
 Encode `Data` to CSV with encode options (see `encode/2`) and write it to
 `Filename`, overwriting any existing file.
+
+## Examples
+
+```erlang
+%% Write maps as CSV with a header row and LF line endings
+1> glazer_csv:write_file("out.csv",
+                         [#{<<"name">> => <<"Alice">>, <<"score">> => 99}],
+                         [headers, {line_ending, lf}]).
+ok
+
+%% Write with a semicolon delimiter
+2> glazer_csv:write_file("out.csv",
+                         [[<<"a">>, <<"b">>], [1, 2]],
+                         [{delimiter, $;}]).
+ok
+```
 """.
 -spec write_file(file:name_all(), [[term()]] | [map()], encode_opts()) -> ok.
 write_file(Filename, Data, Opts) ->
@@ -290,21 +477,23 @@ boundary detection* is incremental — a small byte-scanner tracks whether
 the cursor is inside a quoted field across chunks, so that `\n`/`\r\n`
 inside quoted fields doesn't end a row.
 
-With the `headers` option, the first complete row is captured as the header
-and used to decode every subsequent row as a map; no row is emitted for the
-header itself.
+With the `headers` option, the first complete row is captured as the header;
+no row is emitted for it. Passes the same options as `decode/2` to every
+row decode internally (see `stream_decoder/1` to supply options).
 
-## Example
+## Examples
 
 ```erlang
 1> D0 = glazer_csv:stream_decoder(),
-2> {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n3,">>),
-3> Rows1.
+   {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n3,">>),
+   Rows1.
 [[<<"a">>,<<"b">>],[<<"1">>,<<"2">>]]
-4> {Rows2, D2} = glazer_csv:stream_feed(D1, <<"4\n">>),
-5> Rows2.
+
+2> {Rows2, D2} = glazer_csv:stream_feed(D1, <<"4\n">>),
+   Rows2.
 [[<<"3">>,<<"4">>]]
-6> glazer_csv:stream_eof(D2).
+
+3> glazer_csv:stream_eof(D2).
 {ok, []}
 ```
 """.
@@ -314,11 +503,55 @@ stream_decoder() ->
 
 -doc """
 Create a new incremental CSV decoder, passing `Opts` through to every
-[`decode/2`](`decode/2`) call.
+internal [`decode/2`](`decode/2`) call.
+
+All options from `decode/2` are accepted except `{skip, ...}` and
+`{limit, ...}`, which are ignored in streaming mode (the caller controls
+which rows to process by consuming the output of `stream_feed/2`).
+
+When `{headers, [List]}` is given, the explicit header names are
+pre-populated and no header row is consumed from the stream.
+
+## Examples
+
+```erlang
+%% Headers option: first row captured, data rows returned as field lists
+1> D0 = glazer_csv:stream_decoder([headers]),
+   {Rows, D1} = glazer_csv:stream_feed(D0, <<"name,age\nAlice,30\n">>),
+   Rows.
+[[<<"Alice">>,<<"30">>]]
+
+%% Explicit headers + map output
+2> D0 = glazer_csv:stream_decoder([{headers, [name, age]}, {return, map}]),
+   {Rows, _D1} = glazer_csv:stream_feed(D0, <<"Alice,30\n">>),
+   Rows.
+[#{age => <<"30">>, name => <<"Alice">>}]
+
+%% Semicolon delimiter
+3> D0 = glazer_csv:stream_decoder([{delimiter, $;}]),
+   {Rows, _D1} = glazer_csv:stream_feed(D0, <<"a;b\n1;2\n">>),
+   Rows.
+[[<<"a">>,<<"b">>],[<<"1">>,<<"2">>]]
+```
 """.
 -spec stream_decoder(decode_opts()) -> stream_decoder().
 stream_decoder(Opts) when is_list(Opts) ->
-  #stream_decoder{opts = Opts}.
+  %% {headers, [ExplicitList]}: encode the list as a CSV header row so the
+  %% streaming machinery can prepend it to each data-row decode call, exactly
+  %% as if that row had been read from the stream.
+  Delim = proplists:get_value(delimiter, Opts, $,),
+  {Header, Opts2} = case proplists:get_value(headers, Opts) of
+    List when is_list(List) ->
+      Encoded = encode([List], [{delimiter, Delim}]),
+      %% encode/2 always appends CRLF; strip it to get a bare header line.
+      HeaderBin = binary:part(Encoded, 0, byte_size(Encoded) - 2),
+      %% Normalise {headers, List} → bare `headers` atom for internal decode calls.
+      Opts3 = [headers | [O || O <- Opts, case O of {headers, _} -> false; _ -> true end]],
+      {HeaderBin, Opts3};
+    _ ->
+      {undefined, Opts}
+  end,
+  #stream_decoder{opts = Opts2, header = Header}.
 
 -doc """
 Feed a chunk of bytes into the decoder, returning any complete CSV rows
@@ -327,9 +560,23 @@ found so far (in order) along with the updated decoder.
 Raises the same exceptions as [`decode/2`](`decode/2`) if a row that
 the scanner deemed complete fails to decode.
 
-## Example
+## Examples
 
 ```erlang
+%% Rows split across two feed calls
+1> D0 = glazer_csv:stream_decoder(),
+   {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,">>),
+   Rows1.
+[[<<"a">>,<<"b">>]]
+
+2> {Rows2, D2} = glazer_csv:stream_feed(D1, <<"2\n">>),
+   Rows2.
+[[<<"1">>,<<"2">>]]
+
+3> glazer_csv:stream_eof(D2).
+{ok, []}
+
+%% Typical socket-reading loop
 loop(Socket, D0) ->
   case gen_tcp:recv(Socket, 0) of
     {ok, Chunk} ->
@@ -345,7 +592,7 @@ loop(Socket, D0) ->
 ```
 """.
 -spec stream_feed(stream_decoder(), binary() | iolist()) ->
-  {[[binary()]] | [map()], stream_decoder()}.
+  {[[term()]] | [map()], stream_decoder()}.
 stream_feed(#stream_decoder{buffer = Buf} = D, Chunk) ->
   NewBuf = iolist_to_binary([Buf, Chunk]),
   stream_drain(D#stream_decoder{buffer = NewBuf}, []).
@@ -372,10 +619,12 @@ stream_decode_row(#stream_decoder{opts = Opts, header = undefined} = D, RowBin) 
   case is_blank(RowBin) of
     true -> {skip, D};
     false ->
-      case proplists:get_bool(headers, Opts) of
+      %% has_headers/1 recognises both bare `headers` and {headers, Type}.
+      case has_headers(Opts) of
         true  -> {skip, D#stream_decoder{header = RowBin}};
         false ->
-          [Row] = decode(RowBin, Opts -- [headers]),
+          SafeOpts = stream_safe_opts(strip_headers_opt(Opts)),
+          #{data := [Row]} = decode(RowBin, SafeOpts),
           {Row, D}
       end
   end;
@@ -383,9 +632,30 @@ stream_decode_row(#stream_decoder{opts = Opts, header = Header} = D, RowBin) ->
   case is_blank(RowBin) of
     true -> {skip, D};
     false ->
-      [Row] = decode(<<Header/binary, "\n", RowBin/binary>>, Opts),
+      #{data := [Row]} = decode(<<Header/binary, "\n", RowBin/binary>>,
+                                 stream_safe_opts(Opts)),
       {Row, D}
   end.
+
+%% True when the opts specify that the first data row should be treated as headers.
+has_headers(Opts) ->
+  proplists:get_value(headers, Opts) =/= undefined.
+
+%% Strip {headers, ...} and bare `headers` from opts (for no-header row decodes).
+strip_headers_opt(Opts) ->
+  [O || O <- Opts, case O of
+    headers      -> false;
+    {headers, _} -> false;
+    _            -> true
+  end].
+
+%% Strip {skip, ...} and {limit, ...}: meaningless inside per-row streaming decodes.
+stream_safe_opts(Opts) ->
+  [O || O <- Opts, case O of
+    {skip,  _} -> false;
+    {limit, _} -> false;
+    _          -> true
+  end].
 
 -doc """
 Signal end-of-stream: decode any remaining buffered bytes as a final row
@@ -394,19 +664,33 @@ Signal end-of-stream: decode any remaining buffered bytes as a final row
 Returns `{ok, Rows}` with zero or one trailing row, or `{error, Reason}` if
 the remaining bytes don't form a valid row.
 
-## Example
+## Examples
 
 ```erlang
+%% Input without a trailing newline
 1> D0 = glazer_csv:stream_decoder(),
-2> {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2">>),
-3> Rows1.
+   {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2">>),
+   Rows1.
 [[<<"a">>,<<"b">>]]
-4> glazer_csv:stream_eof(D1).
+
+2> glazer_csv:stream_eof(D1).
 {ok, [[<<"1">>,<<"2">>]]}
+
+%% Input ending with a newline — nothing left at EOF
+3> D0 = glazer_csv:stream_decoder(),
+   {_Rows, D1} = glazer_csv:stream_feed(D0, <<"a,b\n">>),
+   glazer_csv:stream_eof(D1).
+{ok, []}
+
+%% Unterminated quoted field surfaces here
+4> D0 = glazer_csv:stream_decoder(),
+   {[], D1} = glazer_csv:stream_feed(D0, <<"\"unterminated">>),
+   glazer_csv:stream_eof(D1).
+{error, unterminated_quoted_field}
 ```
 """.
 -spec stream_eof(stream_decoder()) ->
-  {ok, [[binary()]] | [map()]} | {error, term()}.
+  {ok, [[term()]] | [map()]} | {error, term()}.
 stream_eof(#stream_decoder{buffer = Buf} = D) ->
   case is_blank(Buf) of
     true  -> {ok, []};
