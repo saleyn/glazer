@@ -8,7 +8,14 @@ a bar chart comparing libraries for that format's representative file at that
 size category.
 
 Usage:
-    bin/gen-bench-charts.py [README.md] [output_dir]
+    bin/gen-bench-charts.py [bench.txt] [README.md] [output_dir]
+
+If a .txt file is given as the first argument the script first updates the
+matching (numbers in µs) tables in README.md with the data found in that file,
+then regenerates the charts.  The file may contain one or more benchmark
+sections (JSON / YAML / CSV) in any order; each section is identified by the
+format keyword (JSON, YAML, or CSV) that appears on the line immediately after
+"(numbers in µs)".
 
 Defaults: README.md in the repo root, output to assets/.
 """
@@ -325,12 +332,101 @@ def render_page(size_category, format_data):
     return "\n".join(svg)
 
 
+def extract_bench_blocks(text):
+    """
+    Find every (numbers in µs) table block in `text`.
+
+    Returns [(format_name, table_text), ...] where format_name is one of
+    JSON / YAML / CSV.  The table_text starts at "(numbers in" and ends at
+    the first blank line (benchmark tables have no internal blank lines), so
+    any shell-command preamble that follows the table in the same file is
+    automatically excluded.
+    """
+    starts = [m.start() for m in re.finditer(r"\(numbers in [^)]+\)", text)]
+    blocks = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        candidate = text[start:end]
+
+        # Stop at the first blank line — tables have no internal blank lines,
+        # so this trims any trailing preamble for the next section.
+        table_lines = []
+        for line in candidate.splitlines():
+            if not line.strip() and table_lines:
+                break
+            table_lines.append(line)
+        block = "\n".join(table_lines).rstrip()
+
+        fmt = None
+        for line in table_lines[1:]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            tok = stripped.split()[0]
+            if tok in ("JSON", "YAML", "CSV"):
+                fmt = tok
+                break
+
+        if fmt:
+            blocks.append((fmt, block))
+        else:
+            print(f"warning: could not determine format for block at offset {start}",
+                  file=sys.stderr)
+
+    return blocks
+
+
+def replace_bench_table(readme_text, fmt, new_table):
+    """
+    Replace the (numbers in µs) table inside the fenced block that follows
+    '### Benchmarking {fmt}' in readme_text.  Everything before the table
+    marker (the shell-command preamble) is preserved.
+    """
+    heading = f"### Benchmarking {fmt}"
+    try:
+        hi = readme_text.index(heading)
+    except ValueError:
+        print(f"warning: {heading!r} not found in README — skipping", file=sys.stderr)
+        return readme_text
+
+    fence_open = readme_text.index("```", hi)
+    fence_close = readme_text.index("\n```", fence_open + 3)
+    block = readme_text[fence_open:fence_close]
+
+    try:
+        table_idx = block.index("(numbers in")
+    except ValueError:
+        print(f"warning: '(numbers in' not found in {heading!r} block — skipping",
+              file=sys.stderr)
+        return readme_text
+
+    new_block = block[:table_idx] + new_table
+    return readme_text[:fence_open] + new_block + readme_text[fence_close:]
+
+
 def main():
-    readme = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "README.md"
-    out_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "assets"
+    args = list(sys.argv[1:])
+
+    bench_file = None
+    if args and args[0].endswith(".txt"):
+        bench_file = Path(args.pop(0))
+
+    readme  = Path(args[0]) if args       else ROOT / "README.md"
+    out_dir = Path(args[1]) if len(args) > 1 else ROOT / "assets"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    text = readme.read_text()
+    if bench_file is not None:
+        blocks = extract_bench_blocks(bench_file.read_text())
+        if not blocks:
+            print(f"error: no (numbers in µs) tables found in {bench_file}", file=sys.stderr)
+            sys.exit(1)
+        text = readme.read_text()
+        for fmt, table in blocks:
+            text = replace_bench_table(text, fmt, table)
+            print(f"updated ### Benchmarking {fmt} in {readme.name}")
+        readme.write_text(text)
+    else:
+        text = readme.read_text()
 
     parsed = {}
     for table in TABLES:
@@ -349,7 +445,11 @@ def main():
         svg = render_page(size_category, format_data)
         out_path = out_dir / f"bench_{size_category}.svg"
         out_path.write_text(svg)
-        print(f"wrote {out_path.relative_to(ROOT)}")
+        try:
+            label = out_path.relative_to(ROOT)
+        except ValueError:
+            label = out_path
+        print(f"wrote {label}")
 
 
 if __name__ == "__main__":

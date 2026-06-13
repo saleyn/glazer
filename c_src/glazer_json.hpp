@@ -184,10 +184,51 @@ struct Decoder {
   }
 
   // ---- string reading — returns view into raw input (no unescaping for pure-ASCII keys) ----
+
+  // Advance m_p past bytes that are neither '"' nor '\' using the widest
+  // SIMD tier available (AVX2: 32 B, SSE2: 16 B), then SWAR (8 B).
+  // On return m_p is at the first potential special byte or in the scalar
+  // cleanup zone (fewer than one chunk-width from m_end).
+  void bulk_skip_to_special() noexcept {
+#if defined(__AVX2__)
+    {
+      const __m256i vq = _mm256_set1_epi8('"');
+      const __m256i vb = _mm256_set1_epi8('\\');
+      while (m_p + 32 <= m_end) {
+        __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(m_p));
+        uint32_t mask = (uint32_t)_mm256_movemask_epi8(
+          _mm256_or_si256(_mm256_cmpeq_epi8(v, vq), _mm256_cmpeq_epi8(v, vb)));
+        if (mask) { m_p += __builtin_ctz(mask); return; }
+        m_p += 32;
+      }
+    }
+#endif
+#if defined(__SSE2__)
+    {
+      const __m128i vq = _mm_set1_epi8('"');
+      const __m128i vb = _mm_set1_epi8('\\');
+      while (m_p + 16 <= m_end) {
+        __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_p));
+        unsigned mask = (unsigned)_mm_movemask_epi8(
+          _mm_or_si128(_mm_cmpeq_epi8(v, vq), _mm_cmpeq_epi8(v, vb)));
+        if (mask) { m_p += __builtin_ctz(mask); return; }
+        m_p += 16;
+      }
+    }
+#endif
+    // SWAR fallback (8 B/iter): leaves m_p at the word boundary before a hit.
+    while (m_p + 8 <= m_end) {
+      uint64_t w;
+      memcpy(&w, m_p, 8);
+      if (has_byte(w, '"') | has_byte(w, '\\')) break;
+      m_p += 8;
+    }
+  }
+
   // Returns false on error; sets p past the closing quote.
   // If has_escape is set the caller must unescape before using as binary.
-  // Bulk-scans 8 bytes at a time with SWAR; scalar fallback only on the word
-  // containing a '"' or '\', then returns to SWAR for the next clean run.
+  // Bulk-scans with SIMD (AVX2→SSE2→SWAR); scalar fallback only for the
+  // few bytes around each '"' or '\'.
   bool read_string_raw(const char*& begin_out, size_t& len_out, bool& has_escape)
   {
     if (m_p >= m_end || *m_p != '"')
@@ -197,24 +238,12 @@ struct Decoder {
     const char* s = m_p;
     has_escape = false;
     for (;;) {
-      // SWAR phase: skip words with no special bytes.
-      while (m_p + 8 <= m_end) {
-        uint64_t w;
-        memcpy(&w, m_p, 8);
-        if (has_byte(w, '"') | has_byte(w, '\\')) break;
-        m_p += 8;
-      }
-      // Scalar phase: advance byte-by-byte until we hit '"', '\', or end.
+      bulk_skip_to_special();
       while (m_p < m_end) {
         char c = *m_p;
         if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
         if (c == '\\') [[unlikely]] { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; break; }
         ++m_p;
-        // If the next char is also not special, return to SWAR.
-        if (m_p + 8 <= m_end) {
-          uint64_t w; memcpy(&w, m_p, 8);
-          if (!(has_byte(w, '"') | has_byte(w, '\\'))) { m_p += 8; break; }
-        }
       }
       if (m_p >= m_end) return false; // unterminated string
     }
@@ -712,22 +741,69 @@ static constexpr std::array<bool, 256> build_needs_escape_tab() {
 }
 static constexpr std::array<bool, 256> NEEDS_ESCAPE_TAB = build_needs_escape_tab();
 
+// Return a pointer to the first byte in [p, end) that needs JSON escaping
+// (control char < 0x20, '"', or '\').  Returns end if none found.
+// Uses AVX2 (32 B/iter) → SSE2 (16 B/iter) → byte table, whichever the
+// CPU supports.  The bias trick converts unsigned c < 0x20 to a signed
+// comparison: (c ^ 0x80) < 0xA0 (signed), which SSE2 _cmpgt handles.
+static const char* find_escape_pos(const char* p, const char* end) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vq    = _mm256_set1_epi8('"');
+    const __m256i vbs   = _mm256_set1_epi8('\\');
+    const __m256i vbias = _mm256_set1_epi8(-128);   // XOR: unsigned→signed shift
+    const __m256i vcmp  = _mm256_set1_epi8(-96);    // 0xA0: biased < this ↔ c < 0x20
+    while (p + 32 <= end) {
+      __m256i  v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      __m256i  biased = _mm256_xor_si256(v, vbias);
+      uint32_t mask   = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(_mm256_or_si256(
+        _mm256_cmpgt_epi8(vcmp, biased),
+        _mm256_cmpeq_epi8(v, vq)),
+        _mm256_cmpeq_epi8(v, vbs)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vq    = _mm_set1_epi8('"');
+    const __m128i vbs   = _mm_set1_epi8('\\');
+    const __m128i vbias = _mm_set1_epi8(-128);
+    const __m128i vcmp  = _mm_set1_epi8(-96);
+    while (p + 16 <= end) {
+      __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      __m128i  biased = _mm_xor_si128(v, vbias);
+      unsigned mask   = (unsigned)_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(
+        _mm_cmpgt_epi8(vcmp, biased),
+        _mm_cmpeq_epi8(v, vq)),
+        _mm_cmpeq_epi8(v, vbs)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p]) ++p;
+  return p;
+}
+
 // JSON-escape a UTF-8 byte sequence into out.
-// Fast path: scan for runs of bytes that need no escaping and bulk-copy them;
-// only fall into the per-byte switch for the rare escape characters.
+// Uses find_escape_pos to bulk-skip clean runs (AVX2/SSE2/table); only the
+// per-byte switch runs for the rare escape characters.
 static void json_escape_string(std::string_view sv, OutBuf& out)
 {
   out.push('"');
   const char* p   = sv.data();
   const char* end = p + sv.size();
-  const char* run = p;
 
   while (p < end) {
-    unsigned char c = (unsigned char)*p;
-    if (!NEEDS_ESCAPE_TAB[c]) [[likely]] { ++p; continue; }
+    const char* special = find_escape_pos(p, end);
+    if (special > p) out.push(p, special - p);
+    p = special;
+    if (p >= end) break;
 
-    if (p > run) out.push(run, p - run);
-
+    unsigned char c = (unsigned char)*p++;
     switch (c) {
       case '"':  out.push("\\\"", 2); break;
       case '\\': out.push("\\\\", 2); break;
@@ -742,10 +818,7 @@ static void json_escape_string(std::string_view sv, OutBuf& out)
         break;
       }
     }
-    ++p;
-    run = p;
   }
-  if (p > run) out.push(run, p - run);
   out.push('"');
 }
 

@@ -34,6 +34,89 @@
 namespace glz {
 
 //-----------------------------------------------------------------------------
+// SIMD helpers for the YAML decoder/encoder.
+//
+// find_break:      first '\n' or '\r'          (end-of-line scan)
+// find_dq_special: first '"', '\', '\n', '\r'  (double-quoted scalar scan)
+// find_byte (glazer_common.hpp): first '\''    (single-quoted scalar encoder)
+//
+// AVX2 (32 B/iter) → SSE2 (16 B/iter) → scalar fallback.
+//-----------------------------------------------------------------------------
+
+static const char* find_break(const char* p, const char* end) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vn = _mm256_set1_epi8('\n');
+    const __m256i vr = _mm256_set1_epi8('\r');
+    while (p + 32 <= end) {
+      __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      uint32_t mask = (uint32_t)_mm256_movemask_epi8(
+        _mm256_or_si256(_mm256_cmpeq_epi8(v, vn), _mm256_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vn = _mm_set1_epi8('\n');
+    const __m128i vr = _mm_set1_epi8('\r');
+    while (p + 16 <= end) {
+      __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      unsigned mask = (unsigned)_mm_movemask_epi8(
+        _mm_or_si128(_mm_cmpeq_epi8(v, vn), _mm_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && *p != '\n' && *p != '\r') ++p;
+  return p;
+}
+
+// Returns a pointer to the first byte in [p, end) that is '"', '\', '\n',
+// or '\r' — the four characters that require special handling inside a
+// double-quoted YAML scalar.
+static const char* find_dq_special(const char* p, const char* end) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vq  = _mm256_set1_epi8('"');
+    const __m256i vbs = _mm256_set1_epi8('\\');
+    const __m256i vn  = _mm256_set1_epi8('\n');
+    const __m256i vr  = _mm256_set1_epi8('\r');
+    while (p + 32 <= end) {
+      __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
+        _mm256_or_si256(_mm256_cmpeq_epi8(v, vq), _mm256_cmpeq_epi8(v, vbs)),
+        _mm256_or_si256(_mm256_cmpeq_epi8(v, vn), _mm256_cmpeq_epi8(v, vr))));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vq  = _mm_set1_epi8('"');
+    const __m128i vbs = _mm_set1_epi8('\\');
+    const __m128i vn  = _mm_set1_epi8('\n');
+    const __m128i vr  = _mm_set1_epi8('\r');
+    while (p + 16 <= end) {
+      __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      unsigned mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(
+        _mm_or_si128(_mm_cmpeq_epi8(v, vq), _mm_cmpeq_epi8(v, vbs)),
+        _mm_or_si128(_mm_cmpeq_epi8(v, vn), _mm_cmpeq_epi8(v, vr))));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && *p != '"' && *p != '\\' && *p != '\n' && *p != '\r') ++p;
+  return p;
+}
+
+//-----------------------------------------------------------------------------
 // Options
 //-----------------------------------------------------------------------------
 
@@ -142,7 +225,7 @@ struct YamlDecoder {
   // verified we're not inside a quoted scalar. A '#' only starts a comment
   // if it's at the start of the line or preceded by whitespace.
   void skip_comment_to_eol() {
-    while (m_p < m_end && !is_break(*m_p)) ++m_p;
+    m_p = find_break(m_p, m_end);
   }
 
   // Skip blank lines and comment-only lines, and any line whose content
@@ -359,6 +442,11 @@ struct YamlDecoder {
     std::string cur;
 
     for (;;) {
+      // SIMD: bulk-append all bytes up to the next '"', '\', '\n', or '\r'.
+      {
+        const char* safe = find_dq_special(m_p, m_end);
+        if (safe > m_p) { cur.append(m_p, safe - m_p); m_p = safe; }
+      }
       if (at_end()) { m_err = "unterminated double-quoted scalar"; return false; }
       char c = *m_p;
       if (c == '"') { ++m_p; break; }
@@ -410,6 +498,7 @@ struct YamlDecoder {
         while (m_p < m_end && *m_p == ' ') ++m_p;
         continue;
       }
+      // Unreachable: find_dq_special() already stops at any of '"', '\', '\n', '\r'.
       cur.push_back(c);
       ++m_p;
     }
@@ -1464,10 +1553,38 @@ struct YamlEncoder {
 
   // Returns true if `s` contains a byte that forces double-quoting (control
   // characters other than plain printable text — single-quoted scalars
-  // cannot represent these).
-  static bool needs_double_quote(std::string_view s) {
-    for (unsigned char c : s)
-      if (c < 0x20) return true;
+  // cannot represent these).  Uses SIMD to scan for c < 0x20 (unsigned)
+  // via the bias trick: (c ^ 0x80) < 0xA0 in signed comparison.
+  static bool needs_double_quote(std::string_view s) noexcept {
+    const char* p   = s.data();
+    const char* end = p + s.size();
+#if defined(__AVX2__)
+    {
+      const __m256i vbias = _mm256_set1_epi8(-128);
+      const __m256i vcmp  = _mm256_set1_epi8(-96);   // 0xA0 as signed
+      while (p + 32 <= end) {
+        __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+        uint32_t mask = (uint32_t)_mm256_movemask_epi8(
+          _mm256_cmpgt_epi8(vcmp, _mm256_xor_si256(v, vbias)));
+        if (mask) return true;
+        p += 32;
+      }
+    }
+#endif
+#if defined(__SSE2__)
+    {
+      const __m128i vbias = _mm_set1_epi8(-128);
+      const __m128i vcmp  = _mm_set1_epi8(-96);
+      while (p + 16 <= end) {
+        __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+        unsigned mask = (unsigned)_mm_movemask_epi8(
+          _mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)));
+        if (mask) return true;
+        p += 16;
+      }
+    }
+#endif
+    while (p < end) { if ((unsigned char)*p < 0x20) return true; ++p; }
     return false;
   }
 
@@ -1496,22 +1613,18 @@ struct YamlEncoder {
   }
 
   // Emit `s` single-quoted, doubling embedded single quotes.
+  // SIMD locates each '\'' for bulk-copy runs between them.
   void emit_single_quoted(std::string_view s) {
     m_out.push('\'');
-    const char* p = s.data();
+    const char* p   = s.data();
     const char* end = p + s.size();
-    const char* run = p;
-    while (p < end) {
-      if (*p == '\'') {
-        if (p > run) m_out.push(run, p - run);
-        m_out.push("''", 2);
-        ++p;
-        run = p;
-      } else {
-        ++p;
-      }
+    for (;;) {
+      const char* q = find_byte(p, end, '\'');
+      m_out.push(p, q - p);   // bulk-copy bytes up to (not including) the quote
+      if (q >= end) break;
+      m_out.push("''", 2);    // double the embedded single quote
+      p = q + 1;
     }
-    if (p > run) m_out.push(run, p - run);
     m_out.push('\'');
   }
 

@@ -383,6 +383,93 @@ static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvEncodeOp
 }
 
 //-----------------------------------------------------------------------------
+// SIMD helpers — field scanners used by both decoder and encoder.
+//
+// find_field_end:   first of delimiter | '\n' | '\r'  (unquoted-field boundary)
+// find_csv_special: first of delimiter | '"' | '\n' | '\r'  (needs-quoting check)
+// find_byte (glazer_common.hpp): first '"'            (quoted-field / encoder)
+//
+// find_field_end and find_csv_special cascade AVX2 → SSE2 → scalar.
+// find_byte is the shared single-byte scanner from glazer_common.hpp.
+//-----------------------------------------------------------------------------
+
+static const char* find_field_end(const char* p, const char* end, char delim) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vd = _mm256_set1_epi8(delim);
+    const __m256i vn = _mm256_set1_epi8('\n');
+    const __m256i vr = _mm256_set1_epi8('\r');
+    while (p + 32 <= end) {
+      __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
+        _mm256_or_si256(_mm256_cmpeq_epi8(v, vd), _mm256_cmpeq_epi8(v, vn)),
+        _mm256_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vd = _mm_set1_epi8(delim);
+    const __m128i vn = _mm_set1_epi8('\n');
+    const __m128i vr = _mm_set1_epi8('\r');
+    while (p + 16 <= end) {
+      __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      unsigned mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(
+        _mm_or_si128(_mm_cmpeq_epi8(v, vd), _mm_cmpeq_epi8(v, vn)),
+        _mm_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && *p != delim && *p != '\n' && *p != '\r') ++p;
+  return p;
+}
+
+// Finds the first byte in [p, end) that requires the field to be quoted:
+// the delimiter, a double-quote, a newline, or a carriage return.
+static const char* find_csv_special(const char* p, const char* end, char delim) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vd = _mm256_set1_epi8(delim);
+    const __m256i vq = _mm256_set1_epi8('"');
+    const __m256i vn = _mm256_set1_epi8('\n');
+    const __m256i vr = _mm256_set1_epi8('\r');
+    while (p + 32 <= end) {
+      __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(_mm256_or_si256(
+        _mm256_or_si256(_mm256_cmpeq_epi8(v, vd), _mm256_cmpeq_epi8(v, vq)),
+        _mm256_cmpeq_epi8(v, vn)), _mm256_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vd = _mm_set1_epi8(delim);
+    const __m128i vq = _mm_set1_epi8('"');
+    const __m128i vn = _mm_set1_epi8('\n');
+    const __m128i vr = _mm_set1_epi8('\r');
+    while (p + 16 <= end) {
+      __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      unsigned mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(
+        _mm_or_si128(_mm_cmpeq_epi8(v, vd), _mm_cmpeq_epi8(v, vq)),
+        _mm_cmpeq_epi8(v, vn)), _mm_cmpeq_epi8(v, vr)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && *p != delim && *p != '"' && *p != '\n' && *p != '\r') ++p;
+  return p;
+}
+
+//-----------------------------------------------------------------------------
 // Decoder
 //-----------------------------------------------------------------------------
 
@@ -434,20 +521,20 @@ struct CsvDecoder {
       const char* start = m_p;
       bool has_escape = false;
       for (;;) {
+        // SIMD: jump directly to the next '"' (or end) in one scan.
+        m_p = find_byte(m_p, m_end, '"');
         if (m_p >= m_end) { ok = false; return 0; } // unterminated quoted field
-        if (*m_p == '"') {
-          if (m_p + 1 < m_end && m_p[1] == '"') { has_escape = true; m_p += 2; continue; }
-          break; // closing quote
-        }
-        ++m_p;
+        if (m_p + 1 < m_end && m_p[1] == '"') { has_escape = true; m_p += 2; continue; }
+        break; // closing quote
       }
       std::string_view sv(start, static_cast<size_t>(m_p - start));
       ++m_p; // closing quote
       return make_field_term(sv, has_escape);
     }
 
+    // SIMD: advance past bytes that are not the delimiter, '\n', or '\r'.
     const char* start = m_p;
-    while (m_p < m_end && *m_p != m_opts.delimiter && !is_eol(*m_p)) ++m_p;
+    m_p = find_field_end(m_p, m_end, m_opts.delimiter);
     return make_binary(m_env, std::string_view(start, static_cast<size_t>(m_p - start)));
   }
 
@@ -674,22 +761,22 @@ struct CsvEncoder {
 
   void push_field_raw(std::string_view sv)
   {
-    bool needs_quotes = false;
-    for (char c : sv) {
-      if (c == m_opts.delimiter || c == '"' || c == '\n' || c == '\r') { needs_quotes = true; break; }
-    }
-    if (!needs_quotes) { m_out.push(sv); return; }
+    const char* p   = sv.data();
+    const char* end = p + sv.size();
 
+    // SIMD: check whether quoting is needed at all.
+    if (find_csv_special(p, end, m_opts.delimiter) == end) { m_out.push(sv); return; }
+
+    // Field contains a special byte — wrap in double quotes and double any
+    // embedded '"' characters. SIMD locates each '"' for bulk-copy runs.
     m_out.push('"');
-    size_t start = 0;
-    for (size_t i = 0; i < sv.size(); ++i) {
-      if (sv[i] == '"') {
-        m_out.push(sv.data() + start, i - start + 1);
-        m_out.push('"'); // double the quote
-        start = i + 1;
-      }
+    for (;;) {
+      const char* q = find_byte(p, end, '"');
+      m_out.push(p, q - p);    // bulk-copy bytes up to (not including) the quote
+      if (q >= end) break;
+      m_out.push("\"\"", 2);   // double the embedded quote
+      p = q + 1;
     }
-    m_out.push(sv.data() + start, sv.size() - start);
     m_out.push('"');
   }
 

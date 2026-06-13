@@ -14,6 +14,9 @@
 #include <string>
 #include <string_view>
 #include <erl_nif.h>
+#if defined(__SSE2__)
+#  include <immintrin.h>
+#endif
 
 namespace glz {
 
@@ -291,6 +294,42 @@ inline uint32_t decode_utf8(const char*& p, const char* end)
 
   ++p;
   return 0xFFFD;
+}
+
+//-----------------------------------------------------------------------------
+// SIMD byte scanner — shared by the JSON, YAML, and CSV modules.
+//
+// find_byte: return a pointer to the first occurrence of `c` in [p, end),
+//            or `end` if not found.
+// Cascades AVX2 (32 B/iter) → SSE2 (16 B/iter) → scalar.
+//-----------------------------------------------------------------------------
+
+inline const char* find_byte(const char* p, const char* end, char c) noexcept
+{
+#if defined(__AVX2__)
+  {
+    const __m256i vc = _mm256_set1_epi8(c);
+    while (p + 32 <= end) {
+      __m256i  v    = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vc));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vc = _mm_set1_epi8(c);
+    while (p + 16 <= end) {
+      __m128i  v    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      unsigned mask = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, vc));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && *p != c) ++p;
+  return p;
 }
 
 } // namespace glz

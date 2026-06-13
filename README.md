@@ -422,17 +422,17 @@ $ PARALLEL=2 make bench
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
-            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
+JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)   
+            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode  
 -------------------------------------------------------------------------------------------------------------
-glazer      3876.2   1205.8     4716.9   1971.3        9.1      3.7        5.8      2.9        0.9      0.8
-torque      5140.3   1333.7     4468.8   4411.4        9.3      5.5        4.9      3.5        1.8      1.4
-simdjsone   4652.9   3564.3     7426.9   6236.6       10.2     13.5        7.7      8.4        1.2      2.1
-jiffy       5921.4   2547.3     7974.6   4654.6       11.1     11.4        7.9      6.2        1.8      1.9
-jason      10040.8   8237.9    18594.6  17591.8       23.4     21.9       16.3     20.6        2.8      2.2
-thoas      10245.4   9117.9    19040.7  18598.2       23.7     23.5       19.6     21.2        2.6      2.3
-euneus     10446.2   6845.7    14069.1  12934.7       20.8     15.5       11.9      9.5        3.1      2.1
-json       10061.2   6563.0    13467.7  12629.6       19.6     16.0       11.1      8.3        2.5      1.8
+glazer      4379.2   1143.4     5132.9   2586.7        7.5      8.7        6.7      4.0        1.2      1.0  
+torque      6089.2   1643.8     8087.6   3091.0       10.7      9.8        9.3      6.2        1.7      1.3  
+simdjsone   5847.3   5019.7     8719.8   8620.6       14.4     17.7       12.1     12.6        1.9      3.6  
+jiffy       7868.6   3615.6     9779.9   6532.6       16.8     15.2       12.4      9.1        2.5      3.8  
+jason      13509.0  11248.6    25267.6  20837.6       33.5     30.0       19.7     25.0        4.4      2.9  
+thoas      13679.7  12466.1    25638.7  22607.2       31.2     33.0       25.1     29.9        3.2      3.9  
+euneus     14699.8  10247.2    18646.5  16886.6       29.1     25.2       16.7     14.6        4.0      4.6  
+json       14315.5   9718.9    17844.3  16473.5       28.3     25.3       19.2     12.3        4.0      4.5
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -612,14 +612,14 @@ $ PARALLEL=2 make bench-yaml
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
-                decode   encode     decode   encode     decode   encode
+YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)   
+                decode   encode     decode   encode     decode   encode  
 -------------------------------------------------------------------------
-glazer            33.2      7.7       27.2      5.3        7.9      1.2
-yaml_rustler     126.5      n/a       78.0      n/a       11.8      n/a
-fast_yaml        180.0     45.1       97.2     40.6       18.8      6.1
-yamerl          1366.2      n/a      991.5      n/a      517.3      n/a
-ymlr               n/a     47.4        n/a     35.3        n/a      4.8
+glazer            81.0     14.7       19.9      7.9       11.5      2.2  
+yaml_rustler     195.3      n/a      103.9      n/a       16.9      n/a  
+fast_yaml        254.9     69.5      141.4     54.4       26.7      7.6  
+yamerl          2014.4      n/a     1486.2      n/a      676.1      n/a  
+ymlr               n/a     62.6        n/a     46.1        n/a      5.9
 ```
 
 ## CSV
@@ -814,13 +814,13 @@ $ PARALLEL=2 make bench-csv
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
-                decode     encode       decode     encode       decode     encode
+CSV               small (1.3K)          medium (130.9K)         large (3433.1K)    
+                decode     encode       decode     encode       decode     encode  
 -----------------------------------------------------------------------------------
-glazer             8.3        4.9       1066.0      380.7      38298.9    12887.9
-nimble_csv        33.9       23.4       4202.3     2535.2     173790.7    94933.2
-csv               75.1      177.9       6250.8    15820.6      TIMEOUT    TIMEOUT
-erl_csv          370.6      266.1      39832.4    26145.4      TIMEOUT    TIMEOUT
+glazer            10.7        3.3       1289.6      469.5      42617.2    16240.1  
+nimble_csv        44.8       38.8       4582.9     3204.4     238366.4   120585.9  
+csv               99.3      257.3       8335.2    24393.9      TIMEOUT    TIMEOUT  
+erl_csv          705.5      427.4      54950.5    34607.9      TIMEOUT    TIMEOUT
 ```
 
 ## Big integers
