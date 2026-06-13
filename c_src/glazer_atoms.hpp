@@ -4,6 +4,8 @@
 #include <erl_nif.h>
 #include <tuple>
 
+namespace glz {
+
 static ERL_NIF_TERM AM_OK;
 static ERL_NIF_TERM AM_ERROR;
 static ERL_NIF_TERM AM_TRUE;
@@ -36,6 +38,19 @@ static ERL_NIF_TERM AM_HEADERS;
 static ERL_NIF_TERM AM_LINE_ENDING;
 static ERL_NIF_TERM AM_LF;
 static ERL_NIF_TERM AM_CRLF;
+static ERL_NIF_TERM AM_FIELDS;
+static ERL_NIF_TERM AM_INTEGER;
+static ERL_NIF_TERM AM_FLOAT;
+static ERL_NIF_TERM AM_BOOLEAN;
+static ERL_NIF_TERM AM_DATETIME;
+static ERL_NIF_TERM AM_BINARY;
+static ERL_NIF_TERM AM_CHARLIST;
+static ERL_NIF_TERM AM_EXISTING_ATOM;
+static ERL_NIF_TERM AM_ATOM;
+static ERL_NIF_TERM AM_TYPE;
+static ERL_NIF_TERM AM_DEFAULT;
+static ERL_NIF_TERM AM_ON_FAILURE;
+static ERL_NIF_TERM AM_RAISE;
 
 // YAML special-float atoms (Erlang floats can't represent inf/nan)
 static ERL_NIF_TERM AM_INFINITY;
@@ -54,6 +69,7 @@ static ERL_NIF_TERM AM_INCOMPLETE;
 // CSV error atoms
 static ERL_NIF_TERM AM_DUPLICATE_HEADER;
 static ERL_NIF_TERM AM_UNTERMINATED_QUOTED_FIELD;
+static ERL_NIF_TERM AM_INVALID_FIELD_VALUE;
 
 // jq error atoms
 static ERL_NIF_TERM AM_JQ_NOT_AVAILABLE;
@@ -95,6 +111,19 @@ inline void init_atoms(ErlNifEnv* env)
   AM_LINE_ENDING               = enif_make_atom(env, "line_ending");
   AM_LF                        = enif_make_atom(env, "lf");
   AM_CRLF                      = enif_make_atom(env, "crlf");
+  AM_FIELDS                    = enif_make_atom(env, "fields");
+  AM_INTEGER                   = enif_make_atom(env, "integer");
+  AM_FLOAT                     = enif_make_atom(env, "float");
+  AM_BOOLEAN                   = enif_make_atom(env, "boolean");
+  AM_DATETIME                  = enif_make_atom(env, "datetime");
+  AM_BINARY                    = enif_make_atom(env, "binary");
+  AM_CHARLIST                  = enif_make_atom(env, "charlist");
+  AM_EXISTING_ATOM             = enif_make_atom(env, "existing_atom");
+  AM_ATOM                      = enif_make_atom(env, "atom");
+  AM_TYPE                      = enif_make_atom(env, "type");
+  AM_DEFAULT                   = enif_make_atom(env, "default");
+  AM_ON_FAILURE                = enif_make_atom(env, "on_failure");
+  AM_RAISE                     = enif_make_atom(env, "raise");
 
   AM_INFINITY                  = enif_make_atom(env, "infinity");
   AM_NEG_INFINITY              = enif_make_atom(env, "neg_infinity");
@@ -109,6 +138,7 @@ inline void init_atoms(ErlNifEnv* env)
 
   AM_DUPLICATE_HEADER          = enif_make_atom(env, "duplicate_header");
   AM_UNTERMINATED_QUOTED_FIELD = enif_make_atom(env, "unterminated_quoted_field");
+  AM_INVALID_FIELD_VALUE       = enif_make_atom(env, "invalid_field_value");
 
   AM_JQ_NOT_AVAILABLE          = enif_make_atom(env, "jq_not_available");
   AM_JQ_COMPILE_ERROR          = enif_make_atom(env, "jq_compile_error");
@@ -142,3 +172,5 @@ inline ERL_NIF_TERM make_tuple(ErlNifEnv* env, std::tuple<bool, ERL_NIF_TERM> re
   auto [success, term] = result;
   return enif_make_tuple2(env, success ? AM_OK : AM_ERROR, term);
 }
+
+} // namespace glz

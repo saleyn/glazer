@@ -1,5 +1,5 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // CSV decoding/encoding (RFC 4180-style), producing/consuming native Erlang
 // terms in a single pass.
 //
@@ -14,29 +14,310 @@
 //
 // Quoting follows RFC 4180: a field is quoted if it contains the delimiter,
 // a quote character, or a line break; embedded quotes are doubled.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 #pragma once
 
+#include <cctype>
+#include <cmath>
+#include <charconv>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <erl_nif.h>
 
+#include "fast_float.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
 #include "glazer_common.hpp"
 
-// ---------------------------------------------------------------------------
+namespace glz {
+
+//-----------------------------------------------------------------------------
+// Per-column field type conversion (`{fields, [Type, ...]}` decode option)
+//-----------------------------------------------------------------------------
+
+enum class CsvFieldType {
+  none,          // leave as binary (default)
+  integer,
+  floatp,        // {float, Precision}
+  boolean,
+  datetime,      // {datetime, InputFormat}
+  binary,
+  charlist,
+  existing_atom,
+  atom_list,     // {atom, ExistingAtoms}
+};
+
+// What to do with a field that fails to convert to the requested type.
+enum class CsvOnFailure {
+  binary,         // leave the original binary (default)
+  raise,          // fail the whole decode with {invalid_field_value, Row, Col}
+  default_value,  // use CsvFieldSpec::default_term
+  null,           // use the configured null term (am_null)
+};
+
+struct CsvFieldSpec {
+  CsvFieldType type        = CsvFieldType::none;
+  int          precision   = 0; // for floatp
+  int64_t      scale       = 1; // for floatp
+  std::string  format;          // for datetime (strptime-like)
+  std::vector<std::string> atoms; // for {atom, ExistingAtoms}
+  CsvOnFailure on_failure   = CsvOnFailure::binary;
+  ERL_NIF_TERM default_term = 0;  // for empty fields, or on_failure == default_value
+  bool         has_default  = false;
+};
+
+//-----------------------------------------------------------------------------
+// Minimal strptime-like parser, used to turn a `{datetime, InputFormat}`
+// field into Unix epoch seconds (UTC).
+//
+// Supported directives: %Y %y %m %d %H %M %S %f %z, and literal `%%`.
+// Any other character in the format must match the input literally; a space
+// in the format matches a run of one-or-more whitespace characters in the
+// input (as with strptime).
+//-----------------------------------------------------------------------------
+
+namespace datetime {
+
+// Days since 1970-01-01 for the given proleptic-Gregorian civil date.
+// Howard Hinnant's `days_from_civil` algorithm (public domain).
+inline int64_t days_from_civil(int64_t y, unsigned m, unsigned d)
+{
+  y -= m <= 2;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = static_cast<unsigned>(y - era * 400);          // [0, 399]
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;          // [0, 146096]
+  return era * 146097 + static_cast<int64_t>(doe) - 719468;
+}
+
+inline bool parse_uint(const char*& p, const char* end, int max_digits, int& out)
+{
+  const char* start = p;
+  out = 0;
+  while (p < end && (p - start) < max_digits && *p >= '0' && *p <= '9') {
+    out = out * 10 + (*p - '0');
+    ++p;
+  }
+  return p > start;
+}
+
+// Parses `input` according to `format` (a strptime-like format string) and
+// returns the corresponding Unix epoch time in seconds (UTC), or
+// `std::nullopt` if the input doesn't match the format.
+// NOTE: we could use std::get_time(), but it's locale-dependent and doesn't
+// support fractional seconds or timezone offsets, so we implement our own
+inline std::optional<int64_t> parse(std::string_view input, std::string_view format)
+{
+  const char* p   = input.data();
+  const char* end = p + input.size();
+  const char* f   = format.data();
+  const char* fe  = f + format.size();
+
+  int year = 1970, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+  bool have_date = false;
+  int tz_offset_sec = 0;
+
+  while (f < fe) {
+    char fc = *f;
+
+    if (fc == '%' && f + 1 < fe) {
+      char spec = f[1];
+      f += 2;
+      switch (spec) {
+        case 'Y': {
+          int v;
+          if (!parse_uint(p, end, 4, v)) return std::nullopt;
+          year = v; have_date = true;
+          break;
+        }
+        case 'y': {
+          int v;
+          if (!parse_uint(p, end, 2, v)) return std::nullopt;
+          year = (v <= 68) ? 2000 + v : 1900 + v; have_date = true;
+          break;
+        }
+        case 'm': {
+          int v;
+          if (!parse_uint(p, end, 2, v) || v < 1 || v > 12) return std::nullopt;
+          month = v; have_date = true;
+          break;
+        }
+        case 'd': {
+          int v;
+          if (!parse_uint(p, end, 2, v) || v < 1 || v > 31) return std::nullopt;
+          day = v; have_date = true;
+          break;
+        }
+        case 'H': {
+          int v;
+          if (!parse_uint(p, end, 2, v) || v > 23) return std::nullopt;
+          hour = v;
+          break;
+        }
+        case 'M': {
+          int v;
+          if (!parse_uint(p, end, 2, v) || v > 59) return std::nullopt;
+          minute = v;
+          break;
+        }
+        case 'S': {
+          int v;
+          if (!parse_uint(p, end, 2, v) || v > 60) return std::nullopt;
+          second = v;
+          break;
+        }
+        case 'f': {
+          // Fractional seconds — consume digits, discard.
+          int v;
+          if (!parse_uint(p, end, 9, v)) return std::nullopt;
+          break;
+        }
+        case 'z': {
+          if (p < end && (*p == 'Z' || *p == 'z')) { ++p; tz_offset_sec = 0; break; }
+          if (p >= end || (*p != '+' && *p != '-'))
+            return std::nullopt;
+          auto neg = *p == '-';
+          ++p;
+          int hh, mm = 0;
+          if (!parse_uint(p, end, 2, hh))
+            return std::nullopt;
+          if (p < end && *p == ':') ++p;
+          if (p < end && *p >= '0' && *p <= '9' && !parse_uint(p, end, 2, mm))
+            return std::nullopt;
+          tz_offset_sec = (hh * 3600 + mm * 60) * (neg ? -1 : 1);
+          break;
+        }
+        case '%':
+          if (p >= end || *p != '%')
+            return std::nullopt;
+          ++p;
+          break;
+        default:
+          return std::nullopt;
+      }
+      continue;
+    }
+
+    if (fc == ' ') {
+      if (p >= end || !std::isspace(static_cast<uint8_t>(*p))) [[unlikely]]
+        return std::nullopt;
+      while (p < end && std::isspace(static_cast<uint8_t>(*p))) ++p;
+      ++f;
+      continue;
+    }
+
+    if (p >= end || *p != fc) [[unlikely]]
+      return std::nullopt;
+    ++p; ++f;
+  }
+
+  if (p != end)   return std::nullopt; // trailing input not consumed by format
+  if (!have_date) return std::nullopt;
+
+  auto days = days_from_civil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+  auto secs = days * 86400 + hour * 3600 + minute * 60 + second - tz_offset_sec;
+  return secs;
+}
+
+} // namespace datetime
+
+//-----------------------------------------------------------------------------
 // Options
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct CsvDecodeOpts {
   char delimiter           = ',';
   bool headers             = false;
   bool label_atom          = false;
   bool label_existing_atom = false;
+  ERL_NIF_TERM null_term   = 0; // for {fields, [...]} entries with on_failure => null
+  std::vector<CsvFieldSpec> fields; // {fields, [Type, ...]} — empty if unset
 };
+
+// Parses a `field_type()`:
+//   integer | {float, Precision} | boolean | {datetime, InputFormat}
+//   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
+static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec& spec)
+{
+  if (enif_is_identical(term, AM_INTEGER))       { spec.type = CsvFieldType::integer;       return true; }
+  if (enif_is_identical(term, AM_BOOLEAN))       { spec.type = CsvFieldType::boolean;       return true; }
+  if (enif_is_identical(term, AM_BINARY))        { spec.type = CsvFieldType::binary;        return true; }
+  if (enif_is_identical(term, AM_CHARLIST))      { spec.type = CsvFieldType::charlist;      return true; }
+  if (enif_is_identical(term, AM_EXISTING_ATOM)) { spec.type = CsvFieldType::existing_atom; return true; }
+
+  int arity; const ERL_NIF_TERM* tp;
+  if (!enif_get_tuple(env, term, &arity, &tp) || arity != 2) return false;
+
+  if (enif_is_identical(tp[0], AM_FLOAT)) {
+    int precision;
+    if (!enif_get_int(env, tp[1], &precision) || precision < 0) return false;
+    spec.type      = CsvFieldType::floatp;
+    spec.precision = precision;
+    spec.scale     = glz::power(10LL, static_cast<size_t>(precision));
+    return true;
+  }
+
+  if (enif_is_identical(tp[0], AM_DATETIME)) {
+    ErlNifBinary bin;
+    if (!enif_inspect_binary(env, tp[1], &bin)) return false;
+    spec.type   = CsvFieldType::datetime;
+    spec.format.assign(reinterpret_cast<const char*>(bin.data), bin.size);
+    return true;
+  }
+
+  if (enif_is_identical(tp[0], AM_ATOM)) {
+    if (!enif_is_list(env, tp[1])) return false;
+    std::vector<std::string> atoms;
+    ERL_NIF_TERM ahead, atail = tp[1];
+    char buf[256];
+    while (enif_get_list_cell(env, atail, &ahead, &atail)) {
+      std::string_view sv;
+      if (!atom_to_sv(env, ahead, buf, sizeof(buf), sv)) return false;
+      atoms.emplace_back(sv);
+    }
+    spec.type  = CsvFieldType::atom_list;
+    spec.atoms = std::move(atoms);
+    return true;
+  }
+
+  return false;
+}
+
+// Parses a single element of `{fields, [FieldType, ...]}`, where:
+//   FieldType :: field_type()
+//             | #{type => field_type(), default => Term, on_failure => binary | raise | default | null}
+//   field_type() :: integer | {float, Precision} | boolean | {datetime, InputFormat}
+//   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
+static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec& spec)
+{
+  if (!enif_is_map(env, term))
+    return parse_csv_field_type(env, term, spec);
+
+  ERL_NIF_TERM type_term;
+  if (!enif_get_map_value(env, term, AM_TYPE, &type_term)) return false;
+  if (!parse_csv_field_type(env, type_term, spec)) return false;
+
+  ERL_NIF_TERM default_term;
+  if (enif_get_map_value(env, term, AM_DEFAULT, &default_term)) {
+    spec.default_term = default_term;
+    spec.has_default  = true;
+  }
+
+  ERL_NIF_TERM on_failure_term;
+  if (enif_get_map_value(env, term, AM_ON_FAILURE, &on_failure_term)) {
+    if      (enif_is_identical(on_failure_term, AM_BINARY))  spec.on_failure = CsvOnFailure::binary;
+    else if (enif_is_identical(on_failure_term, AM_RAISE))   spec.on_failure = CsvOnFailure::raise;
+    else if (enif_is_identical(on_failure_term, AM_DEFAULT)) spec.on_failure = CsvOnFailure::default_value;
+    else if (enif_is_identical(on_failure_term, AM_NULL))    spec.on_failure = CsvOnFailure::null;
+    else return false;
+  }
+
+  return true;
+}
 
 static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOpts& opts)
 {
@@ -51,10 +332,23 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
       int cp;
       if (!enif_get_int(env, tp[1], &cp) || cp <= 0 || cp > 0x7F) return false;
       opts.delimiter = static_cast<char>(cp);
+    } else if (enif_is_identical(tp[0], AM_NULL_TERM)) {
+      if (!enif_is_atom(env, tp[1])) return false;
+      opts.null_term = tp[1];
     } else if (enif_is_identical(tp[0], AM_KEYS)) {
       if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
       else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
-      else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.label_atom = false; opts.label_existing_atom = false; }
+      else if (enif_is_identical(tp[1], AM_LABEL_BINARY))      { opts.label_atom = false; opts.label_existing_atom = false; }
+    } else if (enif_is_identical(tp[0], AM_FIELDS)) {
+      if (!enif_is_list(env, tp[1])) return false;
+      ERL_NIF_TERM fhead, ftail = tp[1];
+      std::vector<CsvFieldSpec> fields;
+      while (enif_get_list_cell(env, ftail, &fhead, &ftail)) {
+        CsvFieldSpec spec;
+        if (!parse_csv_field_spec(env, fhead, spec)) return false;
+        fields.push_back(spec);
+      }
+      opts.fields = std::move(fields);
     }
   }
   return true;
@@ -88,9 +382,9 @@ static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvEncodeOp
   return true;
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Decoder
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct CsvDecoder {
   ErlNifEnv*           m_env;
@@ -172,7 +466,7 @@ struct CsvDecoder {
 
     for (;;) {
       bool ok;
-      ERL_NIF_TERM field = read_field(ok);
+      auto field = read_field(ok);
       if (!ok) [[unlikely]] { err = true; return false; }
       fields.push_back(field);
 
@@ -181,6 +475,110 @@ struct CsvDecoder {
       break;
     }
     return true;
+  }
+
+  // Attempts the type-specific conversion of `sv` per `spec`. Returns 0 on a
+  // value that doesn't match the requested type.
+  ERL_NIF_TERM try_convert(std::string_view sv, const CsvFieldSpec& spec)
+  {
+    switch (spec.type) {
+      case CsvFieldType::integer: {
+        if (sv.empty()) return 0;
+        ERL_NIF_TERM r = glz::BigInt::decode(m_env, sv.data(), sv.data() + sv.size());
+        return r;
+      }
+      case CsvFieldType::floatp: {
+        if (sv.empty())
+          return 0;
+        double d;
+        auto [ep, ec] = glz::fast_float::from_chars(sv.data(), sv.data() + sv.size(), d);
+        if (ec != std::errc{} || ep != sv.data() + sv.size()) [[unlikely]]
+          return 0;
+        d = std::round(d * spec.scale) / spec.scale;
+        return enif_make_double(m_env, d);
+      }
+      case CsvFieldType::boolean: {
+        if (sv == "true"  || sv == "TRUE"  || sv == "True")  return AM_TRUE;
+        if (sv == "false" || sv == "FALSE" || sv == "False") return AM_FALSE;
+        return 0;
+      }
+      case CsvFieldType::datetime: {
+        auto secs = datetime::parse(sv, spec.format);
+        if (!secs) return 0;
+        return enif_make_int64(m_env, *secs);
+      }
+      case CsvFieldType::charlist: {
+        std::vector<ERL_NIF_TERM> cps;
+        cps.reserve(sv.size());
+        const char* p = sv.data();
+        const char* e = p + sv.size();
+        while (p < e) cps.push_back(enif_make_uint(m_env, decode_utf8(p, e)));
+        return enif_make_list_from_array(m_env, cps.data(), unsigned(cps.size()));
+      }
+      case CsvFieldType::existing_atom: {
+        ERL_NIF_TERM t;
+        return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
+             ? t : 0;
+      }
+      case CsvFieldType::atom_list: {
+        for (auto& name : spec.atoms) {
+          if (sv == name) {
+            ERL_NIF_TERM t;
+            return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
+                 ? t : 0;
+          }
+        }
+        return 0;
+      }
+      default:
+        return 0;
+    }
+  }
+
+  // Converts one field term (a binary) per `spec`. Returns 0 to signal
+  // {invalid_field_value, Row, Col} (only when `spec.on_failure == raise`);
+  // otherwise always returns a valid term, falling back per `on_failure`.
+  ERL_NIF_TERM convert_field(ERL_NIF_TERM term, const CsvFieldSpec& spec)
+  {
+    if (spec.type == CsvFieldType::none || spec.type == CsvFieldType::binary)
+      return term;
+
+    ErlNifBinary bin;
+    if (!enif_inspect_binary(m_env, term, &bin))
+      return 0;
+
+    auto sv = std::string_view(reinterpret_cast<const char*>(bin.data), bin.size);
+
+    if (sv.empty() && spec.has_default)
+      return spec.default_term;
+
+    ERL_NIF_TERM r = try_convert(sv, spec);
+    if (r) [[likely]] return r;
+
+    switch (spec.on_failure) {
+      case CsvOnFailure::binary:        return term;
+      case CsvOnFailure::raise:         return 0;
+      case CsvOnFailure::default_value: return spec.has_default ? spec.default_term : term;
+      case CsvOnFailure::null:          return m_opts.null_term;
+    }
+    return term;
+  }
+
+  // Converts `fields` in place per `m_opts.fields` (positional by column
+  // index; columns beyond the spec list, or with the `none`/default spec,
+  // are left as binaries). Returns the 1-based column index of the first
+  // field that fails to convert, or 0 on success.
+  template<size_t N>
+  size_t convert_fields(SmallTermVec<N>& fields)
+  {
+    size_t n = std::min(fields.size(), m_opts.fields.size());
+    for (size_t i = 0; i < n; ++i) {
+      auto converted = convert_field(fields[i], m_opts.fields[i]);
+      if (!converted) [[unlikely]]
+        return i + 1;
+      fields.data()[i] = converted;
+    }
+    return 0;
   }
 
   ERL_NIF_TERM make_header_key(ERL_NIF_TERM bin_term)
@@ -208,6 +606,7 @@ struct CsvDecoder {
     SmallTermVec<64> fields;
     SmallTermVec<64> header;
     std::vector<ERL_NIF_TERM> rows;
+    size_t row_num = 0;
 
     bool err = false;
     auto rec = read_record(fields, err);
@@ -225,6 +624,13 @@ struct CsvDecoder {
 
     if (m_opts.headers) {
       while (rec) {
+        ++row_num;
+        if (!m_opts.fields.empty()) {
+          if (size_t col = convert_fields(fields))
+            return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                                             enif_make_uint64(m_env, row_num),
+                                                             enif_make_uint64(m_env, col)));
+        }
         auto map = fields.to_erl_map(m_env, header);
         if (!map) [[unlikely]]
           return std::make_tuple(false, AM_DUPLICATE_HEADER);
@@ -232,8 +638,16 @@ struct CsvDecoder {
         rec = read_record(fields, err);
       }
     } else {
-      do    { rows.push_back(fields.to_erl_list(m_env)); }
-      while (read_record(fields, err));
+      do {
+        ++row_num;
+        if (!m_opts.fields.empty()) {
+          if (size_t col = convert_fields(fields))
+            return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                                             enif_make_uint64(m_env, row_num),
+                                                             enif_make_uint64(m_env, col)));
+        }
+        rows.push_back(fields.to_erl_list(m_env));
+      } while (read_record(fields, err));
     }
 
   DONE:
@@ -245,9 +659,9 @@ struct CsvDecoder {
   }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Encoder
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct CsvEncoder {
   ErlNifEnv*           m_env;
@@ -291,7 +705,7 @@ struct CsvEncoder {
         return true;
       }
       case ERL_NIF_TERM_TYPE_INTEGER:
-        return glazer::BigInt::encode(m_env, term, m_out);
+        return glz::BigInt::encode(m_env, term, m_out);
 
       case ERL_NIF_TERM_TYPE_FLOAT: {
         double d;
@@ -392,3 +806,5 @@ struct CsvEncoder {
     return true;
   }
 };
+
+} // namespace glz

@@ -1,8 +1,8 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Shared utilities used by both the JSON and YAML decoders/encoders:
 // growable term/byte buffers, the object-key cache, and UTF-8/atom helpers.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 #pragma once
 
 #include <array>
@@ -15,11 +15,26 @@
 #include <string_view>
 #include <erl_nif.h>
 
-// ---------------------------------------------------------------------------
+namespace glz {
+
+/// Calculate <tt>a</tt> raised to the power of <tt>b</tt>.
+template <typename T>
+inline T power(T a, size_t b) {
+    if (a == 0) return 0;
+
+    T result = 1;
+    for (; b > 0; b >>= 1) {
+        if (b & 1) result *= a; // If b is odd, multiply the base with the result
+        a *= a;
+    }
+    return result;
+}
+
+//-----------------------------------------------------------------------------
 // Small inline-capacity buffer for term arrays built while parsing
 // arrays/objects — avoids heap allocation for the common case (most
 // containers have only a handful of elements).
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 template <size_t N>
 struct SmallTermVec {
@@ -80,9 +95,9 @@ struct SmallTermVec {
   }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Output buffer — 4 KB inline, grows to heap
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct OutBuf {
   static constexpr size_t INLINE = 4096;
@@ -120,7 +135,7 @@ struct OutBuf {
   operator std::string_view() const  { return view(); }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Key cache — object/mapping keys repeat heavily within a document (e.g. a
 // twitter feed has ~13K key occurrences but only ~94 distinct strings).
 // Caching the resulting binary term lets repeated keys reuse the same
@@ -128,7 +143,7 @@ struct OutBuf {
 // each time. Linear scan is fine — distinct-key counts are small in practice,
 // and a capped size keeps pathological documents (huge unique-key counts)
 // from paying scan overhead for no benefit.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct KeyCache {
   // Open-addressed, power-of-two-sized table with linear probing. Sized
@@ -197,9 +212,9 @@ struct KeyCache {
   }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Atom / UTF-8 helpers shared by the JSON and YAML encoders
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 inline bool atom_to_sv(ErlNifEnv* env, ERL_NIF_TERM atom, char* buf, size_t bufsz, std::string_view& out)
 {
@@ -277,3 +292,5 @@ inline uint32_t decode_utf8(const char*& p, const char* end)
   ++p;
   return 0xFFFD;
 }
+
+} // namespace glz

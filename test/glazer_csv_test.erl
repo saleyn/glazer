@@ -101,6 +101,157 @@ decode_headers_test_() ->
   ].
 
 %% ----------------------------------------------------------------------------
+%% {fields, Types} option — per-column type conversion
+%% ----------------------------------------------------------------------------
+
+decode_fields_test_() ->
+  [
+    %% integer
+    ?_assertEqual([[1, <<"b">>]],
+                  glazer:csv_decode(<<"1,b">>, [{fields, [integer]}])),
+    %% negative integer and bignum
+    ?_assertEqual([[-5], [123456789012345678901234567890]],
+                  glazer:csv_decode(<<"-5\n123456789012345678901234567890">>,
+                                     [{fields, [integer]}])),
+    %% {float, Precision} rounds to the given number of decimal digits
+    ?_assertEqual([[3.14]],
+                  glazer:csv_decode(<<"3.14159">>, [{fields, [{float, 2}]}])),
+    ?_assertEqual([[3.0]],
+                  glazer:csv_decode(<<"3.14159">>, [{fields, [{float, 0}]}])),
+    %% boolean, case-insensitive
+    ?_assertEqual([[true], [false], [true]],
+                  glazer:csv_decode(<<"true\nFALSE\nTrue">>, [{fields, [boolean]}])),
+    %% datetime -> Unix epoch seconds (UTC)
+    ?_assertEqual([[1705314600]],
+                  glazer:csv_decode(<<"2024-01-15T10:30:00Z">>,
+                                     [{fields, [{datetime, <<"%Y-%m-%dT%H:%M:%SZ">>}]}])),
+    %% datetime with a numeric UTC offset
+    ?_assertEqual([[1705296600]],
+                  glazer:csv_decode(<<"2024-01-15T10:30:00+05:00">>,
+                                     [{fields, [{datetime, <<"%Y-%m-%dT%H:%M:%S%z">>}]}])),
+    %% datetime without a time component
+    ?_assertEqual([[1705276800]],
+                  glazer:csv_decode(<<"2024-01-15">>, [{fields, [{datetime, <<"%Y-%m-%d">>}]}])),
+    %% binary (default / explicit no-op)
+    ?_assertEqual([[<<"abc">>]], glazer:csv_decode(<<"abc">>, [{fields, [binary]}])),
+    %% charlist
+    ?_assertEqual([["abc"]], glazer:csv_decode(<<"abc">>, [{fields, [charlist]}])),
+    %% fewer types than columns: extra columns stay binaries
+    ?_assertEqual([[1, <<"2">>, <<"3">>]],
+                  glazer:csv_decode(<<"1,2,3">>, [{fields, [integer]}])),
+    %% applies positionally with headers, independent of the header names
+    ?_assertEqual([#{<<"name">> => <<"Alice">>, <<"age">> => 30, <<"active">> => true}],
+                  glazer:csv_decode(<<"name,age,active\nAlice,30,true\n">>,
+                                     [headers, {fields, [binary, integer, boolean]}]))
+  ].
+
+decode_fields_error_test_() ->
+  [
+    %% non-numeric field with `integer` type: default on_failure is `binary`
+    ?_assertEqual([[<<"not_a_number">>]],
+                  glazer:csv_decode(<<"not_a_number">>, [{fields, [integer]}])),
+    %% invalid boolean: left as binary
+    ?_assertEqual([[<<"maybe">>]],
+                  glazer:csv_decode(<<"maybe">>, [{fields, [boolean]}])),
+    %% datetime that doesn't match the format: left as binary
+    ?_assertEqual([[<<"not-a-date">>]],
+                  glazer:csv_decode(<<"not-a-date">>, [{fields, [{datetime, <<"%Y-%m-%d">>}]}])),
+    %% on_failure => raise: errors with row/col (1-based) of the failing field
+    ?_assertEqual({error, {invalid_field_value, 1, 1}},
+                  glazer:csv_try_decode(<<"not_a_number">>,
+                    [{fields, [#{type => integer, on_failure => raise}]}])),
+    ?_assertEqual({error, {invalid_field_value, 1, 1}},
+                  glazer:csv_try_decode(<<"maybe">>,
+                    [{fields, [#{type => boolean, on_failure => raise}]}])),
+    ?_assertEqual({error, {invalid_field_value, 1, 1}},
+                  glazer:csv_try_decode(<<"not-a-date">>,
+                    [{fields, [#{type => {datetime, <<"%Y-%m-%d">>},
+                                  on_failure => raise}]}])),
+    %% error column/row are 1-based and point at the failing field
+    ?_assertEqual({error, {invalid_field_value, 2, 2}},
+                  glazer:csv_try_decode(<<"1,2\n3,bad">>,
+                    [{fields, [#{type => integer, on_failure => raise},
+                                #{type => integer, on_failure => raise}]}])),
+    %% raises when using csv_decode/2
+    ?_assertError({invalid_field_value, 1, 1},
+                  glazer:csv_decode(<<"x">>, [{fields, [#{type => integer, on_failure => raise}]}])),
+
+    %% on_failure => default: use the spec's default value
+    ?_assertEqual([[-1]],
+                  glazer:csv_decode(<<"not_a_number">>,
+                    [{fields, [#{type => integer, default => -1, on_failure => default}]}])),
+    %% on_failure => default with no default given falls back to binary
+    ?_assertEqual([[<<"not_a_number">>]],
+                  glazer:csv_decode(<<"not_a_number">>,
+                    [{fields, [#{type => integer, on_failure => default}]}])),
+    %% on_failure => null: use the configured null term
+    ?_assertEqual([[null]],
+                  glazer:csv_decode(<<"not_a_number">>,
+                    [{fields, [#{type => integer, on_failure => null}]}])),
+    %% on_failure => null with {null_term, Atom}: use the custom null term
+    ?_assertEqual([[nil]],
+                  glazer:csv_decode(<<"not_a_number">>,
+                    [{null_term, nil},
+                     {fields, [#{type => integer, on_failure => null}]}])),
+    %% on_failure => null for boolean
+    ?_assertEqual([[null]],
+                  glazer:csv_decode(<<"maybe">>,
+                    [{fields, [#{type => boolean, on_failure => null}]}])),
+    %% on_failure => null for {float, Precision}
+    ?_assertEqual([[null]],
+                  glazer:csv_decode(<<"not_a_float">>,
+                    [{fields, [#{type => {float, 2}, on_failure => null}]}])),
+    %% on_failure => null for datetime
+    ?_assertEqual([[null]],
+                  glazer:csv_decode(<<"not-a-date">>,
+                    [{fields, [#{type => {datetime, <<"%Y-%m-%d">>}, on_failure => null}]}])),
+    %% on_failure => null leaves valid fields converted, only the failing
+    %% field becomes null
+    ?_assertEqual([[1, null]],
+                  glazer:csv_decode(<<"1,bad">>,
+                    [{fields, [integer, #{type => integer, on_failure => null}]}])),
+    %% on_failure => null with headers: the failing column becomes null
+    ?_assertEqual([#{<<"a">> => 1, <<"b">> => null}],
+                  glazer:csv_decode(<<"a,b\n1,bad\n">>,
+                    [headers, {fields, [integer, #{type => integer, on_failure => null}]}])),
+    %% on_failure => null with {null_term, Atom} and headers
+    ?_assertEqual([#{<<"a">> => 1, <<"b">> => nil}],
+                  glazer:csv_decode(<<"a,b\n1,bad\n">>,
+                    [headers, {null_term, nil},
+                     {fields, [integer, #{type => integer, on_failure => null}]}])),
+    %% on_failure => null never fails csv_try_decode/2 (no error)
+    ?_assertEqual({ok, [[null]]},
+                  glazer:csv_try_decode(<<"not_a_number">>,
+                    [{fields, [#{type => integer, on_failure => null}]}])),
+
+    %% empty field uses `default` regardless of on_failure
+    ?_assertEqual([[0, <<"b">>]],
+                  glazer:csv_decode(<<",b">>, [{fields, [#{type => integer, default => 0}]}])),
+    %% empty field with default => null and {null_term, Atom}: uses the
+    %% literal atom given as `default`, not the configured null_term
+    ?_assertEqual([[null, <<"b">>]],
+                  glazer:csv_decode(<<",b">>,
+                    [{null_term, nil},
+                     {fields, [#{type => integer, default => null}]}])),
+    %% empty field with no `default` given: left as an empty binary
+    ?_assertEqual([[<<>>, <<"b">>]],
+                  glazer:csv_decode(<<",b">>, [{fields, [integer]}])),
+
+    %% existing_atom: converts to an existing atom
+    ?_assertEqual([[ok]], glazer:csv_decode(<<"ok">>, [{fields, [existing_atom]}])),
+    %% existing_atom: falls back to binary for unknown atoms
+    ?_assertEqual([[<<"zzzz_glazer_csv_no_such_atom">>]],
+                  glazer:csv_decode(<<"zzzz_glazer_csv_no_such_atom">>, [{fields, [existing_atom]}])),
+
+    %% {atom, ExistingAtoms}: converts only if the text matches one of ExistingAtoms
+    ?_assertEqual([[ok], [error]],
+                  glazer:csv_decode(<<"ok\nerror">>, [{fields, [{atom, [ok, error]}]}])),
+    %% {atom, ExistingAtoms}: falls back to binary if not in the whitelist
+    ?_assertEqual([[<<"other">>]],
+                  glazer:csv_decode(<<"other">>, [{fields, [{atom, [ok, error]}]}]))
+  ].
+
+%% ----------------------------------------------------------------------------
 %% csv_try_decode/1,2 — {ok, Rows} | {error, Reason}
 %% ----------------------------------------------------------------------------
 

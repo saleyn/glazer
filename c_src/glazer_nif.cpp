@@ -1,8 +1,8 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Erlang NIF implementation of JSON encoding/decoding with a focus on speed
 // and low overhead.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Copyright: 2026 Sergey Aleynikov
 //
 // Implementation inspired by the [glaze](https://github.com/igormunkus/glaze)
@@ -11,7 +11,7 @@
 //
 // NIF registration and dirty-scheduler dispatch glue. The actual decode/
 // encode/scan logic lives in glazer_json.hpp (and, in future, glazer_yaml.hpp).
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 #include <cassert>
 #include <string>
@@ -27,19 +27,21 @@
 #include "glazer_csv.hpp"
 #include "glazer_jq.hpp"
 
-// ---------------------------------------------------------------------------
+namespace glz {
+
+//-----------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
 // dirty CPU scheduler so they don't block normal scheduler threads.
 // Small inputs run inline on a normal scheduler.
 // consume_timeslice is not called: dirty schedulers ignore it, and small
 // inputs on normal schedulers complete fast enough not to need yielding.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static constexpr size_t DIRTY_THRESHOLD = 8192;
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: json_decode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
@@ -83,9 +85,9 @@ static ERL_NIF_TERM nif_json_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
                            nif_json_try_decode_dirty, 2, sched_argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: yaml_decode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
@@ -129,13 +131,14 @@ static ERL_NIF_TERM nif_yaml_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
                            nif_yaml_try_decode_dirty, 2, sched_argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: csv_decode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
   CsvDecodeOpts opts;
+  opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
@@ -174,7 +177,7 @@ static ERL_NIF_TERM nif_csv_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_T
                            nif_csv_try_decode_dirty, 2, sched_argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: scan — locate the end of the next complete top-level JSON value.
 //
 //   scan(Bin)            -> {complete, EndOffset} | {incomplete, State} | {error, Reason}
@@ -185,7 +188,7 @@ static ERL_NIF_TERM nif_csv_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_T
 // `EndOffset` is the byte offset, into `Bin`, one past the end of the value —
 // i.e. binary:part(Bin, 0, EndOffset) is the complete value, and the rest is
 // left over for the next call.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM nif_json_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -213,9 +216,9 @@ static ERL_NIF_TERM nif_json_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
   return enif_make_tuple2(env, AM_INCOMPLETE, scan_state_to_term(env, st));
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: json_encode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -259,9 +262,9 @@ static ERL_NIF_TERM nif_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
   return do_json_encode(env, argc, argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: yaml_encode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -300,9 +303,9 @@ static ERL_NIF_TERM nif_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
   return do_yaml_encode(env, argc, argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: csv_encode
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -339,9 +342,9 @@ static ERL_NIF_TERM nif_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
   return do_csv_encode(env, argc, argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: json_minify / json_prettify
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_json_minify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
@@ -413,9 +416,9 @@ static ERL_NIF_TERM nif_json_prettify(ErlNifEnv* env, int argc, const ERL_NIF_TE
                            nif_json_prettify_dirty, 1, sched_argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: json_query (jq filter, optional — requires libjq at build time)
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM do_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -450,16 +453,16 @@ static ERL_NIF_TERM nif_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
                            nif_json_query_dirty, 3, sched_argv);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF: encode_integer / try_decode_integer
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static ERL_NIF_TERM nif_encode_integer(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 1) [[unlikely]]
     return enif_make_badarg(env);
-  glazer::BigInt::StringOut out;
-  if (glazer::BigInt::encode(env, argv[0], out)) [[likely]]
+  glz::BigInt::StringOut out;
+  if (glz::BigInt::encode(env, argv[0], out)) [[likely]]
     return make_binary(env, out.str);
   return enif_make_badarg(env);
 }
@@ -471,7 +474,7 @@ static ERL_NIF_TERM nif_try_decode_integer(ErlNifEnv* env, int argc, const ERL_N
   if (!enif_inspect_binary(env, argv[0], &bin) &&
       !enif_inspect_iolist_as_binary(env, argv[0], &bin))
     return enif_make_badarg(env);
-  auto r = glazer::BigInt::decode(env,
+  auto r = glz::BigInt::decode(env,
     reinterpret_cast<const char*>(bin.data),
     reinterpret_cast<const char*>(bin.data) + bin.size);
   if (r) [[likely]]
@@ -479,9 +482,9 @@ static ERL_NIF_TERM nif_try_decode_integer(ErlNifEnv* env, int argc, const ERL_N
   return enif_make_tuple2(env, AM_ERROR, AM_INVALID_NUMBER_FORMAT);
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // NIF lifecycle
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info)
 {
@@ -520,4 +523,6 @@ static ErlNifFunc nif_funcs[] = {
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
 };
 
-ERL_NIF_INIT(glazer, nif_funcs, nif_load, NULL, NULL, NULL)
+} // namespace glz
+
+ERL_NIF_INIT(glazer, glz::nif_funcs, glz::nif_load, NULL, NULL, NULL)

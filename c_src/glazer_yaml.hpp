@@ -1,5 +1,5 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // YAML-specific decode implementation.
 //
 // Decode: hand-rolled recursive-descent block-style parser — produces
@@ -9,7 +9,7 @@
 // Not yet implemented: tags (!!str etc.), multi-document streams, complex
 // (collection) mapping keys, merge-key (<<) semantics, anchors on mapping
 // keys, top-level (root-node) anchors/aliases.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 #pragma once
 
 #include <cassert>
@@ -31,9 +31,11 @@
 #include "glazer_bigint.hpp"
 #include "glazer_common.hpp"
 
-// ---------------------------------------------------------------------------
+namespace glz {
+
+//-----------------------------------------------------------------------------
 // Options
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct YamlDecodeOpts {
   ERL_NIF_TERM null_term     = 0;
@@ -83,9 +85,9 @@ static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlEncode
   return true;
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // YAML block-style decoder
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct YamlDecoder {
   ErlNifEnv*            m_env;
@@ -685,7 +687,7 @@ struct YamlDecoder {
           return v <= uint64_t(INT64_MAX) ? enif_make_int64(m_env, int64_t(v))
                                           : enif_make_uint64(m_env, v);
       }
-      ERL_NIF_TERM r = glazer::BigInt::decode(m_env, start, end);
+      ERL_NIF_TERM r = glz::BigInt::decode(m_env, start, end);
       return r ? r : (ERL_NIF_TERM)0;
     }
 
@@ -1361,7 +1363,7 @@ struct YamlDecoder {
   }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Erlang-term -> YAML encoder (block style, 2-space indentation)
 //
 // Mirrors the JSON encoder's term-dispatch shape, but writes block-style
@@ -1374,7 +1376,7 @@ struct YamlDecoder {
 // Scalars are emitted in plain style where unambiguous, single-quoted where
 // quoting is needed but the content is plain UTF-8 with no control
 // characters, and double-quoted (with full escaping) otherwise.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct YamlEncoder {
   ErlNifEnv*            m_env;
@@ -1571,7 +1573,7 @@ struct YamlEncoder {
       }
 
       case ERL_NIF_TERM_TYPE_INTEGER:
-        return glazer::BigInt::encode(m_env, term, m_out);
+        return glz::BigInt::encode(m_env, term, m_out);
 
       case ERL_NIF_TERM_TYPE_FLOAT:
         return encode_float(term);
@@ -1737,7 +1739,7 @@ struct YamlEncoder {
         break;
       }
       case ERL_NIF_TERM_TYPE_INTEGER:
-        if (!glazer::BigInt::encode(m_env, k, m_out)) return false;
+        if (!glz::BigInt::encode(m_env, k, m_out)) return false;
         break;
       default:
         return false;
@@ -1806,3 +1808,5 @@ struct YamlEncoder {
     return true;
   }
 };
+
+} // namespace glz

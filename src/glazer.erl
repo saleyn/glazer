@@ -1,8 +1,8 @@
 -module(glazer).
 -moduledoc """
-Fast JSON encoding and decoding using the glaze C++ library.
+Fast JSON/YAML/CSV encoding and decoding using the glaze C++ library.
 
-By default JSON `null` is represented as the atom `null`. To change it
+By default `null`s are represented as the atom `null`. To change it
 application-wide, set the `null` env key in your config:
 ```
 {glazer, [{null, nil}]}.
@@ -28,7 +28,7 @@ See also [https://github.com/stephenberry/glaze]
 -define(NOT_LOADED_ERROR,
   erlang:nif_error({not_loaded, [{module, ?MODULE}, {line, ?LINE}]})).
 
--type decode_opt() ::
+-type json_decode_opt() ::
     object_as_tuple
   | use_nil
   | {null_term, atom()}
@@ -51,9 +51,9 @@ Decode options:
   duplicate keys is always deduped (last value wins) when decoded to a map,
   since maps cannot represent duplicate keys.
 """.
--type decode_opts() :: [decode_opt()].
+-type json_decode_opts() :: [json_decode_opt()].
 
--type encode_opt() ::
+-type json_encode_opt() ::
     pretty
   | uescape
   | force_utf8
@@ -69,7 +69,7 @@ Encode options:
 - `use_nil`           - encode the atom `nil` as JSON `null`
 - `{null_term, Atom}` - encode `Atom` as JSON `null`
 """.
--type encode_opts() :: [encode_opt()].
+-type json_encode_opts() :: [json_encode_opt()].
 
 -type yaml_decode_opt() ::
     use_nil
@@ -103,10 +103,71 @@ YAML encode options:
 """.
 -type yaml_encode_opts() :: [yaml_encode_opt()].
 
+-doc """
+A single column's target type for the `{fields, Specs}` CSV decode option:
+
+- `integer`            - parse as an integer
+- `{float, Precision}` - parse as a float, rounded to `Precision` decimal
+  digits
+- `boolean`            - parse `"true"`/`"false"` (any case) as `true`/
+  `false`
+- `{datetime, InputFormat}` - parse using a `strptime`-like format string
+  (`%Y %m %d %H %M %S %f %z` and literals; `%z` accepts `Z`, `+HHMM`, or
+  `+HH:MM`), converting the result to Unix epoch seconds (UTC)
+- `binary`              - leave as a binary (default)
+- `charlist`            - convert to a list of Unicode code points
+- `existing_atom`       - convert to an existing atom, falling back to a
+  binary if no such atom exists
+- `{atom, ExistingAtoms}` - convert to an atom only if the field's text
+  matches (and exists as) one of `ExistingAtoms`, falling back to a binary
+  otherwise
+""".
+-type csv_field_type() ::
+    integer
+  | {float, non_neg_integer()}
+  | boolean
+  | {datetime, binary()}
+  | binary
+  | charlist
+  | existing_atom
+  | {atom, ExistingAtoms :: [atom()]}.
+
+-doc """
+Controls what happens when a non-empty field fails to convert to the
+requested `csv_field_type()` (default `binary`):
+
+- `binary`  - leave the field as the original binary (default)
+- `raise`   - raise (or return `{error, Reason}` from `csv_try_decode/2`)
+  `{invalid_field_value, Row, Column}` (1-based)
+- `default` - use the spec's `default` value (falls back to `binary` if no
+  `default` is given)
+- `null`    - use the configured null term: `{null_term, Atom}` if given,
+  otherwise the library-wide `null` term (see the `null` application env
+  var, [Null term configuration](#null-term-configuration))
+""".
+-type csv_field_on_failure() :: binary | raise | default | null.
+
+-doc """
+A single element of the `{fields, Specs}` CSV decode option: either a
+`csv_field_type()` directly, or a map for more control:
+
+- `type`       - the `csv_field_type()` to convert the field to
+- `default`    - used in place of the converted value whenever the raw CSV
+  field is empty
+- `on_failure` - see `csv_field_on_failure/0` (default `binary`)
+""".
+-type csv_field_spec() ::
+    csv_field_type()
+  | #{type        := csv_field_type(),
+      default     => term(),
+      on_failure  => csv_field_on_failure()}.
+
 -type csv_decode_opt() ::
     {delimiter, char()}
   | headers
-  | {keys, atom | existing_atom | binary}.
+  | {keys, atom | existing_atom | binary}
+  | {fields, [csv_field_spec()]}
+  | {null_term, atom()}.
 
 -doc """
 CSV decode options:
@@ -120,8 +181,22 @@ CSV decode options:
   atoms, falling back to binaries for unknown atoms
 - `{keys, binary}`      - with `headers`, decode column names as binaries
   (default)
+- `{fields, Specs}`     - convert each column's field from a binary,
+  positionally (the Nth spec applies to the Nth column, regardless of
+  `headers`). Columns beyond the end of `Specs`, or given type `binary`,
+  are left as binaries. See `csv_field_spec/0` and `csv_field_type/0` for
+  the available types and the `default`/`on_failure` options
+- `{null_term, Atom}`   - use `Atom` as the value produced by
+  `on_failure => null`, overriding the library-wide `null` term for this
+  call (default: the library-wide `null` term, see the `null` application
+  env var)
 """.
 -type csv_decode_opts() :: [csv_decode_opt()].
+
+-type csv_decode_error() ::
+    unterminated_quoted_field
+  | duplicate_header
+  | {invalid_field_value, Row :: pos_integer(), Column :: pos_integer()}.
 
 -type csv_encode_opt() ::
     {delimiter, char()}
@@ -147,13 +222,15 @@ CSV encode options:
   | invalid_input
   | binary().
 
--export_type([decode_opts/0, encode_opts/0, yaml_decode_opts/0, yaml_encode_opts/0,
-               csv_decode_opts/0, csv_encode_opts/0, json_query_reason/0]).
+-export_type([json_decode_opts/0, json_encode_opts/0, yaml_decode_opts/0, yaml_encode_opts/0,
+               csv_decode_opts/0, csv_encode_opts/0, csv_decode_error/0,
+               csv_field_type/0, csv_field_spec/0, csv_field_on_failure/0,
+               json_query_reason/0]).
 
 -type scan_state() :: tuple().
 
 -record(json_stream_decoder, {
-  opts   = []        :: decode_opts(),
+  opts   = []        :: json_decode_opts(),
   buffer = <<>>      :: binary(),
   state  = undefined :: scan_state() | undefined
 }).
@@ -210,7 +287,7 @@ json_decode(Input) ->
 Decode a JSON binary or iolist to an Erlang term with options.
 Raises `{parse_error, Reason}` on invalid input.
 """.
--spec json_decode(binary() | iolist(), decode_opts()) -> term().
+-spec json_decode(binary() | iolist(), json_decode_opts()) -> term().
 json_decode(Input, Opts) ->
   case json_try_decode(Input, Opts) of
     {ok,    Term}   -> Term;
@@ -229,7 +306,7 @@ json_try_decode(_Input) ->
 Decode a JSON binary or iolist with options, returning `{ok, Term}` or
 `{error, Reason}` instead of raising.
 """.
--spec json_try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, binary()}.
+-spec json_try_decode(binary() | iolist(), json_decode_opts()) -> {ok, term()} | {error, binary()}.
 json_try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
@@ -298,8 +375,7 @@ csv_decode(Input) ->
 
 -doc """
 Decode a CSV binary or iolist to a list of rows, with options.
-Raises `Reason::atom()` (`unterminated_quoted_field` or `duplicate_header`)
-on invalid input.
+Raises `Reason::csv_decode_error()` on invalid input.
 """.
 -spec csv_decode(binary() | iolist(), csv_decode_opts()) -> [[binary()]] | [map()].
 csv_decode(Input, Opts) ->
@@ -310,20 +386,20 @@ csv_decode(Input, Opts) ->
 
 -doc """
 Decode a CSV binary or iolist, returning `{ok, Rows}` or
-`{error, Reason}` instead of raising, where `Reason` is
-`unterminated_quoted_field` or `duplicate_header`.
+`{error, Reason}` instead of raising, where `Reason` is a
+`csv_decode_error()`.
 """.
--spec csv_try_decode(binary() | iolist()) -> {ok, [[binary()]]} | {error, atom()}.
+-spec csv_try_decode(binary() | iolist()) -> {ok, [[binary()]]} | {error, csv_decode_error()}.
 csv_try_decode(Input) ->
   csv_try_decode(Input, []).
 
 -doc """
 Decode a CSV binary or iolist with options, returning `{ok, Rows}` or
-`{error, Reason}` instead of raising, where `Reason` is
-`unterminated_quoted_field` or `duplicate_header`.
+`{error, Reason}` instead of raising, where `Reason` is a
+`csv_decode_error()`.
 """.
 -spec csv_try_decode(binary() | iolist(), csv_decode_opts()) ->
-  {ok, [[binary()]] | [map()]} | {error, atom()}.
+  {ok, [[binary()]] | [map()]} | {error, csv_decode_error()}.
 csv_try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
@@ -531,7 +607,7 @@ json_encode(Data) ->
   json_encode(Data, []).
 
 -doc "Encode an Erlang term to a JSON binary with options.".
--spec json_encode(term(), encode_opts()) -> binary().
+-spec json_encode(term(), json_encode_opts()) -> binary().
 json_encode(_Data, _Opts) ->
   ?NOT_LOADED_ERROR.
 
@@ -576,7 +652,7 @@ json_query(_Input, _Filter) ->
 Like `json_query/2`, but decodes each result term using `DecodeOpts`
 (see `json_decode/2`).
 """.
--spec json_query(binary() | iolist(), binary() | iolist(), decode_opts()) ->
+-spec json_query(binary() | iolist(), binary() | iolist(), json_decode_opts()) ->
   {ok, [term()]} | {error, json_query_reason()}.
 json_query(_Input, _Filter, _DecodeOpts) ->
   ?NOT_LOADED_ERROR.
@@ -698,7 +774,7 @@ json_stream_decoder() ->
 Create a new incremental decoder, passing `Opts` through to every
 [`json_decode/2`](`json_decode/2`) call.
 """.
--spec json_stream_decoder(decode_opts()) -> json_stream_decoder().
+-spec json_stream_decoder(json_decode_opts()) -> json_stream_decoder().
 json_stream_decoder(Opts) when is_list(Opts) ->
   #json_stream_decoder{opts = Opts}.
 

@@ -146,8 +146,9 @@ iex> :glazer.json_encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
-Use the `use_nil`/`{null_term, nil}` option (see [JSON `null`](#json-null)
-below) to get idiomatic Elixir `nil` instead of the atom `:null`.
+Use the `use_nil`/`{null_term, nil}` option (see
+[Null term configuration](#null-term-configuration) below) to get idiomatic
+Elixir `nil` instead of the atom `:null`.
 
 ## JSON
 
@@ -270,10 +271,12 @@ own framing/buffering strategy:
 `json_scan/1,2` are JSON-only — see [YAML streaming](#streaming-1) and
 [CSV streaming](#streaming-2) below for the other formats.
 
-### JSON `null`
+### Null term configuration
 
-By default, JSON `null` decodes to (and `null` encodes from) the atom
-`null`. This can be overridden:
+By default, JSON/YAML `null` decodes to (and `null` encodes from) the atom
+`null`, and this same atom is used as the default null term throughout the
+library (e.g. for the CSV `on_failure => null` field option). This can be
+overridden:
 
 - Application-wide, via the `null` environment key — set this once in
   the application's config and every call uses it as the default:
@@ -694,6 +697,81 @@ header itself. Blank lines are skipped, matching `csv_decode/2`.
 | `{keys, atom}` | With `headers`, decode column names as atoms |
 | `{keys, existing_atom}` | With `headers`, decode column names as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | With `headers`, decode column names as binaries (default) |
+| `{fields, Specs}` | Convert each column's field from a binary, positionally — see [Field type conversion](#field-type-conversion) |
+| `{null_term, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
+
+### Field type conversion
+
+The `{fields, Specs}` decode option converts each column's field from a
+binary to the given Erlang type. `Specs` is a list applied positionally —
+the Nth spec applies to the Nth column, regardless of whether `headers` is
+set. Columns beyond the end of `Specs` are left as binaries.
+
+```erlang
+1> glazer:csv_decode(<<"name,age,active,joined\nAlice,30,true,2024-01-15T10:30:00Z\n">>,
+..                    [headers, {fields, [binary, integer, boolean,
+..                                         {datetime, <<"%Y-%m-%dT%H:%M:%SZ">>}]}]).
+[#{<<"name">> => <<"Alice">>, <<"age">> => 30, <<"active">> => true,
+   <<"joined">> => 1705314600}]
+```
+
+Each element of `Specs` is either a `Type` directly, or a map
+`#{type => Type, default => Term, on_failure => OnFailure}` for more
+control (see below). `Type` is one of:
+
+| Type | Description |
+|---|---|
+| `integer` | Parse the field as an integer |
+| `{float, Precision}` | Parse the field as a float, rounded to `Precision` decimal digits |
+| `boolean` | Parse `"true"`/`"false"` (any case) as `true`/`false` |
+| `{datetime, InputFormat}` | Parse with a `strptime`-like format string and convert to Unix epoch seconds (UTC) |
+| `binary` | Leave the field as a binary (default) |
+| `charlist` | Convert the field to a list of Unicode code points |
+| `existing_atom` | Convert to an existing atom, falling back to a binary if no such atom exists |
+| `{atom, ExistingAtoms}` | Convert to an atom only if the field's text matches (and exists as) one of `ExistingAtoms`, falling back to a binary otherwise |
+
+`InputFormat` supports the directives `%Y %y %m %d %H %M %S %f %z` (and
+`%%` for a literal `%`); any other character must match the input
+literally, and a space matches a run of one-or-more whitespace characters.
+`%z` accepts `Z`, `+HHMM`, or `+HH:MM`-style offsets; fractional seconds
+(`%f`) are parsed but discarded. The result is always in UTC.
+
+#### `default` and `on_failure`
+
+Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
+
+- `default` (when given) is used in place of the converted value whenever
+  the raw CSV field is empty.
+- `on_failure` controls what happens when a *non-empty* field fails to
+  convert to `Type` (default `binary`):
+
+  | `on_failure` | Behavior |
+  |---|---|
+  | `binary` | Leave the field as the original binary (default) |
+  | `raise` | Raise `{invalid_field_value, Row, Column}` (1-based), or return `{error, Reason}` from `csv_try_decode/2` |
+  | `default` | Use the spec's `default` value (falls back to `binary` if no `default` is given) |
+  | `null` | Use the configured null term: `{null_term, Atom}` if given, otherwise the library-wide null term (see [Null term configuration](#null-term-configuration) and `{null_term, Atom}` below) |
+
+```erlang
+1> glazer:csv_decode(<<"1\nbad\n">>,
+..                    [{fields, [#{type => integer, on_failure => raise}]}]).
+** exception error: {invalid_field_value,2,1}
+
+2> glazer:csv_decode(<<"1\nbad\n">>,
+..                    [{fields, [#{type => integer, default => 0, on_failure => default}]}]).
+[[1],[0]]
+
+3> glazer:csv_decode(<<"1\nbad\n">>,
+..                    [{null_term, nil},
+..                     {fields, [#{type => integer, on_failure => null}]}]).
+[[1],[nil]]
+```
+
+`{null_term, Atom}` only affects `on_failure => null` for that call. Without
+it, `on_failure => null` falls back to the library-wide null term — `null`
+by default, or whatever atom is configured via the
+[Null term configuration](#null-term-configuration)
+application env var (`{glazer, [{null, Atom}]}`).
 
 ### Encode options (`csv_encode/2`)
 

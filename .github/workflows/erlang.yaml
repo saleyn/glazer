@@ -214,35 +214,60 @@ jobs:
           VERSION=$(cat src/glazer.app.src | get_version)
           PARENT_VERSION=$(git show "HEAD^:src/glazer.app.src" 2>/dev/null | get_version || true)
 
+          echo "version=$VERSION"      >> $GITHUB_OUTPUT
+
           if [ "$VERSION" != "$PARENT_VERSION" ]; then
             echo "Version changed: $PARENT_VERSION -> $VERSION"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "publish=true"        >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Version unchanged — if this commit landed within an hour of the
-          # last one, treat it as a follow-up fix to the same release and
-          # republish (replacing) the current version on Hex.pm.
+          # Version unchanged
+          echo "should_release=false"  >> $GITHUB_OUTPUT
+
+          INSERTED_AT=$(curl -fsS "https://hex.pm/api/packages/$APP" \
+            | jq -r --arg v "$VERSION" '.releases[] | select(.version == $v) | .inserted_at')
+
+          if [ -z "$INSERTED_AT" ]; then
+            echo "Version $VERSION not yet published — will publish"
+            echo "publish=true"        >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PUBLISHED_TS=$(date -u -d "$INSERTED_AT" +%s)
+          NOW_TS=$(date -u +%s)
+          AGE=$((NOW_TS - PUBLISHED_TS))
+
+          # Hex.pm only allows replacing a release within 1 hour of publication.
+          if [ "$AGE" -lt $MIN_AGE ]; then
+            echo "Replacing version $VERSION published on hex.pm $((AGE / 60)) minutes ago"
+            echo "publish=replace" >> $GITHUB_OUTPUT
+          else
+            echo "Skipping version $VERSION published on hex.pm $((AGE / 60)) minutes ago - too old to replace"
+            echo "publish=false" >> $GITHUB_OUTPUT
+          fi
+
+          # - If this commit landed within an hour of the
+          #   last one, treat it as a follow-up fix to the same release and
+          #   republish (replacing) the current version on Hex.pm.
+          # - If hex.pm doesn't have this version yet, publish it as new.
           COMMIT_TS=$(git show -s --format=%ct HEAD)
           PARENT_TS=$(git show -s --format=%ct HEAD^)
           AGE=$((COMMIT_TS - PARENT_TS))
           MIN_AGE=$((MIN_AGE_HOURS * 3600))
 
           if [ "$AGE" -lt $MIN_AGE ]; then
-            echo "Republishing updated release ($VERSION), modified $((AGE / 60)) minutes ago"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "Version unchanged ($VERSION), skipping release"
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "Republishing release ($VERSION), modified $((AGE / 60)) minutes ago"
+            echo "publish=replace"    >> $GITHUB_OUTPUT
+            exit 0
           fi
 
   publish-to-hex:
     name: Publish to Hex.pm
     runs-on: ubuntu-latest
     needs: [detect-release]
-    if: needs.detect-release.outputs.should_release == 'true'
+    if: needs.detect-release.outputs.publish != 'false'
 
     steps:
       - name: Checkout code
@@ -261,35 +286,7 @@ jobs:
             https://builds.hex.pm
             https://cdn.jsdelivr.net/hex
 
-      - name: Check if version is already published
-        id: should_publish
-        run: |
-          VERSION="${{ needs.detect-release.outputs.version }}"
-          APP="glazer"
-
-          INSERTED_AT=$(curl -fsS "https://hex.pm/api/packages/$APP" \
-            | jq -r --arg v "$VERSION" '.releases[] | select(.version == $v) | .inserted_at')
-
-          if [ -z "$INSERTED_AT" ]; then
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "Version $VERSION not yet published — will publish"
-          else
-            PUBLISHED_TS=$(date -u -d "$INSERTED_AT" +%s)
-            NOW_TS=$(date -u +%s)
-            AGE=$((NOW_TS - PUBLISHED_TS))
-
-            # Hex.pm only allows replacing a release within 1 hour of publication.
-            if [ "$AGE" -lt 3600 ]; then
-              echo "publish=replace" >> $GITHUB_OUTPUT
-              echo "Version $VERSION published $((AGE / 60)) minutes ago — will replace"
-            else
-              echo "publish=false" >> $GITHUB_OUTPUT
-              echo "Version $VERSION published $((AGE / 60)) minutes ago — too old to replace, skipping"
-            fi
-          fi
-
       - name: Publish to Hex.pm
-        if: steps.should_publish.outputs.publish != 'false'
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
         run: |
@@ -304,7 +301,6 @@ jobs:
           fi
 
       - name: Retire prior version
-        if: steps.should_publish.outputs.publish != 'false'
         run: |
           set +e
           APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)

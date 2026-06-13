@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <erl_nif.h>
 
-namespace glazer {
+namespace glz {
 
 struct BigInt {
 
@@ -301,4 +301,4 @@ private:
   }
 };
 
-} // namespace glazer
+} // namespace glz

@@ -1,12 +1,12 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // JSON-specific decode/encode/scan implementation.
 //
 // Decode: hand-rolled recursive-descent parser — zero-copy over raw input,
 //         produces Erlang terms in a single pass (no intermediate tree).
 // Encode: direct Erlang-term to JSON writer with a stack-allocated output
 //         buffer (no intermediate generic_u64 tree).
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 #pragma once
 
 #include <array>
@@ -26,9 +26,11 @@
 #include "glazer_bigint.hpp"
 #include "glazer_common.hpp"
 
-// ---------------------------------------------------------------------------
+namespace glz {
+
+//-----------------------------------------------------------------------------
 // Options
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct DecodeOpts {
   bool         object_as_tuple     = false;
@@ -45,9 +47,9 @@ struct EncodeOpts {
   ERL_NIF_TERM null_term  = 0;
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Option parsing
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opts)
 {
@@ -90,9 +92,9 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, EncodeOpts& opt
   return true;
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Zero-copy JSON decoder — parses raw bytes, emits Erlang terms directly
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct Decoder {
   ErlNifEnv*        m_env;
@@ -357,7 +359,7 @@ struct Decoder {
                                         : enif_make_uint64(m_env, v);
     }
     // Bigint
-    ERL_NIF_TERM r = glazer::BigInt::decode(m_env, start, m_p);
+    ERL_NIF_TERM r = glz::BigInt::decode(m_env, start, m_p);
     return r ? r : (ERL_NIF_TERM)0;
   }
 
@@ -547,7 +549,7 @@ struct Decoder {
   }
 };
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Value-boundary scanner — finds where the next complete top-level JSON value
 // ends in a (possibly partial) buffer, without building any Erlang terms.
 //
@@ -556,7 +558,7 @@ struct Decoder {
 // is found, slice it off and hand it to the existing whole-buffer `decode`.
 // The scanner never allocates and never inspects string contents beyond
 // quote/escape bytes, so it stays cheap even on huge inputs.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 struct ScanState {
   uint64_t pos        = 0;      // byte offset into the buffer to resume scanning at
@@ -693,9 +695,9 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
   return true;
 }
 
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Direct Erlang-term → JSON encoder (no intermediate generic_u64 tree)
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 // Bytes that must be escaped in a JSON string: control chars, '"', '\'.
 // Everything else (including all UTF-8 continuation/lead bytes) passes through.
@@ -834,7 +836,7 @@ struct Encoder {
       }
 
       case ERL_NIF_TERM_TYPE_INTEGER:
-        return glazer::BigInt::encode(m_env, term, m_out);
+        return glz::BigInt::encode(m_env, term, m_out);
 
       case ERL_NIF_TERM_TYPE_MAP: {
         m_out.push('{');
@@ -944,3 +946,5 @@ struct Encoder {
     return false;
   }
 };
+
+} // namespace glz

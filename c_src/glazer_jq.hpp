@@ -1,5 +1,5 @@
 // vim:ts=2:sw=2:et
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Optional jq-filter support for glazer:json_query/2.
 //
 // When libjq (https://github.com/jqlang/jq) and its headers are available at
@@ -12,7 +12,7 @@
 // json_decode/2).
 //
 // When libjq is unavailable, json_query/2 returns {error, jq_not_available}.
-// ---------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 #pragma once
 
 #include <memory>
@@ -27,6 +27,7 @@
 #include <jq.h>
 #include <jv.h>
 
+namespace glz {
 
 struct JqSmartPtr : std::unique_ptr<jq_state, void(*)(jq_state*)> {
   JqSmartPtr() noexcept
@@ -132,11 +133,17 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
     enif_make_list_from_array(env, results.data(), static_cast<unsigned>(results.size())));
 }
 
+} // namespace glz
+
 #else // !GLAZER_HAVE_JQ
+
+namespace glz {
 
 inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary&, const ErlNifBinary&, const DecodeOpts&)
 {
   return enif_make_tuple2(env, AM_ERROR, AM_JQ_NOT_AVAILABLE);
 }
+
+} // namespace glz
 
 #endif // GLAZER_HAVE_JQ
