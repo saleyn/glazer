@@ -872,7 +872,7 @@ this limit are rejected with a decode error rather than crashing the VM by
 overflowing the C stack.
 
 | Format | Limit | Error returned |
-|--------|-------|---------------|
+|--------|-------|----------------|
 | JSON   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
 | YAML   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
 
