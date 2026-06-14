@@ -223,16 +223,14 @@ jobs:
           if [ "$VERSION" != "$PARENT_VERSION" ]; then
             echo "Version changed: $PARENT_VERSION -> $VERSION"
             echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "publish=true"        >> $GITHUB_OUTPUT
-            exit 0
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
           fi
 
-          # Version unchanged
-          echo "should_release=false"  >> $GITHUB_OUTPUT
-
-          # If this version was published to Hex.pm within MIN_AGE_HOURS,
-          # treat this commit as a follow-up fix to the same release and
-          # republish (replacing) the current version on Hex.pm.
+          # Check whether $VERSION is already published to Hex.pm — this can
+          # happen even when the version just changed, if a prior run of this
+          # workflow (for the same commit) already published it and only
+          # failed in a later step (e.g. tagging/release creation).
           INSERTED_AT=$(curl -fsS "https://hex.pm/api/packages/$APP" | \
                         jq -r --arg v "$VERSION" '.releases[] | select(.version == $v) | .inserted_at')
 
