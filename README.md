@@ -62,13 +62,7 @@ formats.
   - [Performance Optimization Details](#performance-optimization-details)
   - [License](#license)
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Performance
+## [Performance](#table-of-contents)
 
 - **[JSON](#performance-1)**: faster than every other library benchmarked on
   both encoding and decoding — consistently ~25–40% ahead of `torque`
@@ -92,15 +86,9 @@ Benchmark tables:
 - [Benchmarking YAML](#benchmarking-yaml)
 - [Benchmarking CSV](#benchmarking-csv)
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
+## [Features](#table-of-contents)
 
-## Features
-
-### JSON
+### [JSON](#table-of-contents)
 
 - Decoding straight to Erlang terms: maps, lists, binaries, integers
   (including bignums), floats, booleans, and `null`
@@ -118,7 +106,7 @@ Benchmark tables:
   decoded term using a small subset of jq path syntax (`.a.b[].c[0]`),
   with no `libjq` dependency
 
-### YAML
+### [YAML](#table-of-contents)
 
 - Decoding YAML mappings/sequences/scalars to Erlang maps/lists/scalars,
   including big integers
@@ -126,20 +114,14 @@ Benchmark tables:
 - Configurable representation of YAML `null` and mapping keys, with
   optional YAML 1.1 boolean compatibility (`yes`/`no`/`on`/`off`)
 
-### CSV
+### [CSV](#table-of-contents)
 
 - RFC 4180 CSV encoding/decoding via `decode/1,2` and `encode/1,2`,
   with optional header-row support
 - Incremental/streaming CSV decoding via `stream_decoder/0,1`,
   `stream_feed/2`, `stream_eof/1`
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Scope
+## [Scope](#table-of-contents)
 
 `glazer` targets formats that map naturally onto a tree of Erlang
 maps/lists/scalars — JSON and YAML both fit this model directly, so a
@@ -153,13 +135,7 @@ that are already trees of scalars and collections. Erlang's standard
 library already ships `xmerl` for XML; there's little value in
 duplicating it here with a different, opinionated term shape.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Installation
+## [Installation](#table-of-contents)
 
 **Erlang (`rebar.config`)**:
 
@@ -179,7 +155,7 @@ def deps do
 end
 ```
 
-### Building
+### [Building](#table-of-contents)
 
 Building the NIF requires a C++23 compiler (GCC 12+ or Clang 16+) and
 `make`. There are no external C++ library dependencies — all C++ code is
@@ -226,15 +202,9 @@ Use the `use_nil`/`{null_term, nil}` option (see
 [Null term configuration](#null-term-configuration) below) to get idiomatic
 Elixir `nil` instead of the atom `:null`.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
+## [JSON](#table-of-contents)
 
-## JSON
-
-### Usage
+### [Usage](#table-of-contents)
 
 ```erlang
 1> glazer_json:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
@@ -253,7 +223,7 @@ Elixir `nil` instead of the atom `:null`.
 {ok, <<"{\n  \"a\": 1\n}">>}
 ```
 
-### Streaming
+### [Streaming](#table-of-contents)
 
 For input that arrives in chunks — e.g. reading a large document
 incrementally, or consuming newline-delimited JSON (NDJSON) from a
@@ -312,7 +282,7 @@ loop(Socket, D0) ->
   end.
 ```
 
-#### Efficiency
+#### [Efficiency](#table-of-contents)
 
 `stream_feed/2` only scans for value *boundaries* incrementally —
 the scanner carries a small resumable cursor (`scan_state()`) that
@@ -353,13 +323,7 @@ own framing/buffering strategy:
 `scan/1,2` are JSON-only — see [YAML streaming](#streaming-1) and
 [CSV streaming](#streaming-2) below for the other formats.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### Null term configuration
+### [Null term configuration](#table-of-contents)
 
 By default, JSON/YAML `null` decodes to (and `null` encodes from) the atom
 `null`, and this same atom is used as the default null term throughout the
@@ -384,13 +348,7 @@ overridden:
   Per-call options always take precedence over the application-wide
   default.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### JSON decode options
+### [JSON decode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -432,13 +390,7 @@ undefined
 > `object_as_tuple`, duplicate keys are preserved as-is unless `dedupe_keys`
 > is given.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### JSON encode options
+### [JSON encode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -459,13 +411,7 @@ undefined
 <<"null">>
 ```
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### jq filter support
+### [jq filter support](#table-of-contents)
 
 If [`libjq`](https://jqlang.org/) and its headers (`jq.h`/`jv.h`) are
 available when `glazer` is built, `query/2,3` runs a jq filter
@@ -495,13 +441,7 @@ If `libjq` was not available at build time, `query/2,3` returns
 for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
 still builds and works without `libjq` installed.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### API
+### [API](#table-of-contents)
 
 All functions below are in `glazer_json`.
 
@@ -520,7 +460,7 @@ All functions below are in `glazer_json`.
 | `stream_eof/1` | Flush a stream decoder at end-of-input |
 | `query/2`, `query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
 
-### Benchmarking JSON
+### [Benchmarking JSON](#table-of-contents)
 
 A comparison benchmark against other JSON libraries (`simdjsone`,
 `jiffy`, `jason`, `thoas`, `euneus`, OTP's built-in `json`, and
@@ -546,15 +486,9 @@ json       14315.5   9718.9    17844.3  16473.5       28.3     25.3       19.2  
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
+## [YAML](#table-of-contents)
 
-## YAML
-
-### Usage
+### [Usage](#table-of-contents)
 
 `decode/1,2` decodes a YAML document to an Erlang term — mappings
 become maps, sequences become lists, and scalars become the matching
@@ -572,7 +506,7 @@ Erlang type (binaries, numbers, booleans, or `null`):
 (2-space indentation, sequences at the same indentation as the mapping
 key that owns them).
 
-### Streaming
+### [Streaming](#table-of-contents)
 
 There is no incremental YAML decoder. YAML's block styles have no
 closing delimiter — a mapping or sequence simply ends at a dedent or
@@ -581,13 +515,7 @@ value complete yet?" the way [`scan/1,2`](#efficiency) does for
 JSON's bracket-balanced syntax. Decode full YAML documents with
 `decode/1,2` once they are fully buffered.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### YAML decode options
+### [YAML decode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -609,13 +537,7 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 #{<<"a">> => true}
 ```
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### YAML encode options
+### [YAML encode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -627,13 +549,7 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 <<"a: null\n">>
 ```
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### API
+### [API](#table-of-contents)
 
 All functions below are in `glazer_yaml`.
 
@@ -645,7 +561,7 @@ All functions below are in `glazer_yaml`.
 | `read_file/1`, `read_file/2` | Read a file and decode its contents as YAML |
 | `write_file/2`, `write_file/3` | Encode a term to YAML and write it to a file |
 
-### Benchmarking YAML
+### [Benchmarking YAML](#table-of-contents)
 
 ```sh
 $ PARALLEL=2 make bench-yaml
@@ -662,15 +578,9 @@ yamerl          2014.4      n/a     1486.2      n/a      676.1      n/a
 ymlr               n/a     62.6        n/a     46.1        n/a      5.9
 ```
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
+## [CSV](#table-of-contents)
 
-## CSV
-
-### Usage
+### [Usage](#table-of-contents)
 
 `decode/1,2` decodes an RFC 4180 CSV document to `#{headers => nil|[...],
 data => Rows}`, where `Rows` is a list of rows, each row a list of binary
@@ -705,13 +615,7 @@ unquoted on decode. The delimiter defaults to `,` and can be changed via
 `{delimiter, Char}`; the encoded line ending defaults to `\r\n` per
 RFC 4180 and can be changed to `\n` via `{line_ending, lf}`.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### Streaming
+### [Streaming](#table-of-contents)
 
 For input that arrives in chunks, `stream_decoder/0,1` provides the
 same kind of stateful wrapper as [JSON streaming](#streaming): it buffers
@@ -756,13 +660,7 @@ used to decode every subsequent row (as a map when combined with
 `{return, map}`); no row is emitted for the header itself. Blank lines are
 skipped, matching `decode/2`.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### CSV decode options
+### [CSV decode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -783,13 +681,7 @@ skipped, matching `decode/2`.
 | `{limit, N}` | Process at most `N` data rows (after skipping) |
 | `{null_term, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### Field type conversion
+### [Field type conversion](#table-of-contents)
 
 The `{fields, Specs}` decode option converts each column's field from a
 binary to the given Erlang type. `Specs` is a list applied positionally —
@@ -862,13 +754,7 @@ by default, or whatever atom is configured via the
 [Null term configuration](#null-term-configuration)
 application env var (`{glazer, [{null, Atom}]}`).
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### CSV Encode options
+### [CSV Encode options](#table-of-contents)
 
 | Option | Description |
 |---|---|
@@ -877,13 +763,7 @@ application env var (`{glazer, [{null, Atom}]}`).
 | `{headers, [Name, ...]}` | Input is a list of maps; uses the given list of atoms or binaries (matching the maps' key type) as the column order and header row, instead of deriving it from the first map's keys (missing keys produce empty fields) |
 | `{line_ending, lf \| crlf}` | Line terminator (default `crlf`, per RFC 4180) |
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### API
+### [API](#table-of-contents)
 
 All functions below are in `glazer_csv`.
 
@@ -898,13 +778,7 @@ All functions below are in `glazer_csv`.
 | `stream_feed/2` | Feed a chunk to a CSV stream decoder, returning completed rows |
 | `stream_eof/1` | Flush a CSV stream decoder at end-of-input |
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### Benchmarking CSV
+### [Benchmarking CSV](#table-of-contents)
 
 ```sh
 $ PARALLEL=2 make bench-csv
@@ -920,25 +794,13 @@ csv               99.3      257.3       8335.2    24393.9      TIMEOUT    TIMEOU
 erl_csv          705.5      427.4      54950.5    34607.9      TIMEOUT    TIMEOUT
 ```
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Big integers
+## [Big integers](#table-of-contents)
 
 JSON/YAML/CSV numbers that don't fit into a 64-bit integer are decoded as
 Erlang big integers (and big integers are encoded back to their exact
 decimal representation).
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-### API
+### [API](#table-of-contents)
 
 | Function | Description |
 |---|---|
@@ -963,15 +825,9 @@ same conversion routines directly, independent of JSON/YAML/CSV parsing/encoding
 See the module's documentation (`src/glazer.erl`) for full type
 specs and details.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
+## [Limitations](#table-of-contents)
 
-## Limitations
-
-### Nesting depth
+### [Nesting depth](#table-of-contents)
 
 The JSON and YAML decoders both cap recursion at **256 levels** of nesting
 (arrays/objects for JSON; mappings/sequences for YAML). Inputs that exceed
@@ -988,13 +844,7 @@ deliberately not configurable, because the limit exists to protect the
 Erlang VM process (the NIF runs on the scheduler thread) from runaway
 recursive descent on adversarial input.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Testing
+## [Testing](#table-of-contents)
 
 ```sh
 make test
@@ -1002,13 +852,7 @@ make test
 
 runs the EUnit test suite via `rebar3 eunit`.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## Performance Optimization Details
+## [Performance Optimization Details](#table-of-contents)
 
 `glazer` is faster than all competitors on both encoding and decoding in all
 data formats - JSON/YAML/CSV. On JSON decoding it leads `torque` (Rust
@@ -1098,12 +942,6 @@ of the gap over the slower contenders:
   values) with a vendored `lltoa` fallback for larger numbers — faster
   than routing every integer through `snprintf`.
 
-<p align="right"><a href="#table-of-contents"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-2b2b2b">
-  <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa">
-  <img src="https://img.shields.io/badge/-%F0%9F%94%9D-e6e6fa" alt="Back to top" height="20"/>
-</picture></a></p>
-
-## License
+## [License](#table-of-contents)
 
 MIT License — see [LICENSE](LICENSE) for details.
