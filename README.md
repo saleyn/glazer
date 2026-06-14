@@ -95,7 +95,7 @@ duplicating it here with a different, opinionated term shape.
 
 ```erlang
 {deps, [
-  {glazer, "~> 0.3"}
+  {glazer, "~> 0.5"}
 ]}.
 ```
 
@@ -104,7 +104,7 @@ duplicating it here with a different, opinionated term shape.
 ```elixir
 def deps do
   [
-    {:glazer, "~> 0.3"}
+    {:glazer, "~> 0.5"}
   ]
 end
 ```

@@ -160,6 +160,7 @@ bump-version:
 	echo "Bumping version from $${CURRENT} to $${NEW}"; \
 	sed -i "s/{vsn, \"$${CURRENT}\"}/{vsn, \"$${NEW}\"}/" $$FILE; \
 	echo "Changed: {vsn, \"$${CURRENT}\"} -> {vsn, \"$${NEW}\"}"; \
+	sed -i 's/\({:\?glazer,[[:space:]]*"~>\)[^"]*/\1 '"$${MAJOR}.$${MINOR}"'/' README.md; \
 	echo ""; \
 	read -p "Commit this change? [Y/n] " -n 1 -r || true; \
 	echo ""; \
