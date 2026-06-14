@@ -24,9 +24,10 @@ formats.
     - [JSON](#json)
     - [YAML](#yaml)
     - [CSV](#csv)
-  - [Scope](#scope)
   - [Installation](#installation)
     - [Building](#building)
+    - [Testing](#testing)
+    - [Benchmarking](#benchmarking)
   - [Performance](#performance)
   - [JSON](#json-1)
     - [Usage](#usage)
@@ -57,8 +58,8 @@ formats.
   - [Big integers](#big-integers)
     - [API](#api-3)
   - [Limitations](#limitations)
+    - [Scope](#scope)
     - [Nesting depth](#nesting-depth)
-  - [Testing](#testing)
   - [Performance Optimization Details](#performance-optimization-details)
   - [License](#license)
 
@@ -96,20 +97,6 @@ formats.
   with optional header-row support
 - Incremental/streaming CSV decoding via `stream_decoder/0,1`,
   `stream_feed/2`, `stream_eof/1`
-
-## [Scope](#table-of-contents)
-
-`glazer` targets formats that map naturally onto a tree of Erlang
-maps/lists/scalars — JSON and YAML both fit this model directly, so a
-single decode/encode pair can convert losslessly between the format and
-native terms. XML is intentionally **not** planned: its data model
-(tagged elements, attributes, mixed text/element content, namespaces,
-processing instructions, entities) has no single natural Erlang term
-representation, and any choice (xmerl-style tuples, JSON-like maps with
-`@attr`/`#text` keys, etc.) is a lossy or awkward fit compared to formats
-that are already trees of scalars and collections. Erlang's standard
-library already ships `xmerl` for XML; there's little value in
-duplicating it here with a different, opinionated term shape.
 
 ## [Installation](#table-of-contents)
 
@@ -178,6 +165,21 @@ Use the `use_nil`/`{null_term, nil}` option (see
 [Null term configuration](#null-term-configuration) below) to get idiomatic
 Elixir `nil` instead of the atom `:null`.
 
+### [Testing](#table-of-contents)
+
+```sh
+make test
+```
+
+runs the EUnit test suite via `rebar3 eunit`.
+
+### Benchmarking
+
+Benchmarking:
+- [Benchmarking JSON](#benchmarking-json)
+- [Benchmarking YAML](#benchmarking-yaml)
+- [Benchmarking CSV](#benchmarking-csv)
+
 ## [Performance](#table-of-contents)
 
 - **[JSON](#benchmarking-json)**: faster than every other library benchmarked on
@@ -197,7 +199,8 @@ Elixir `nil` instead of the atom `:null`.
 Each chart compares glazer against other libraries for JSON/YAML/CSV
 decode and encode on a representative small/medium/large file. Charts are
 generated from the tables below via `scripts/gen_bench_charts.py`.
-Benchmark tables:
+
+Benchmarking data tables:
 - [Benchmarking JSON](#benchmarking-json)
 - [Benchmarking YAML](#benchmarking-yaml)
 - [Benchmarking CSV](#benchmarking-csv)
@@ -827,6 +830,20 @@ specs and details.
 
 ## [Limitations](#table-of-contents)
 
+### [Scope](#table-of-contents)
+
+`glazer` targets formats that map naturally onto a tree of Erlang
+maps/lists/scalars — JSON and YAML both fit this model directly, so a
+single decode/encode pair can convert losslessly between the format and
+native terms. XML is intentionally **not** planned: its data model
+(tagged elements, attributes, mixed text/element content, namespaces,
+processing instructions, entities) has no single natural Erlang term
+representation, and any choice (xmerl-style tuples, JSON-like maps with
+`@attr`/`#text` keys, etc.) is a lossy or awkward fit compared to formats
+that are already trees of scalars and collections. Erlang's standard
+library already ships `xmerl` for XML; there's little value in
+duplicating it here with a different, opinionated term shape.
+
 ### [Nesting depth](#table-of-contents)
 
 The JSON and YAML decoders both cap recursion at **256 levels** of nesting
@@ -843,14 +860,6 @@ overflowing the C stack.
 deliberately not configurable, because the limit exists to protect the
 Erlang VM process (the NIF runs on the scheduler thread) from runaway
 recursive descent on adversarial input.
-
-## [Testing](#table-of-contents)
-
-```sh
-make test
-```
-
-runs the EUnit test suite via `rebar3 eunit`.
 
 ## [Performance Optimization Details](#table-of-contents)
 

@@ -7,10 +7,10 @@
     %% Atom to use for JSON null, e.g. null or nil
     {null, null}
   ]},
-  {modules, [glazer]},
+  {modules,  [glazer]},
   {licenses, ["MIT"]},
-  {links, [{"GitHub", "https://github.com/saleyn/glazer"}]},
-  {files, [
+  {links,    [{"GitHub", "https://github.com/saleyn/glazer"}]},
+  {files,    [
     "src", "c_src", "Makefile", "rebar.config", "rebar.lock",
     "README.md", "LICENSE", "assets"
   ]}
