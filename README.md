@@ -717,7 +717,7 @@ literally, and a space matches a run of one-or-more whitespace characters.
 `%z` accepts `Z`, `+HHMM`, or `+HH:MM`-style offsets; fractional seconds
 (`%f`) are parsed but discarded. The result is always in UTC.
 
-#### `default` and `on_failure`
+#### [`default` and `on_failure`](#table-of-contents)
 
 Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
 

@@ -97,6 +97,16 @@ Encode options:
 -doc """
 Decode a JSON binary or iolist to an Erlang term. JSON objects are returned as
 maps (default). Raises `{parse_error, Msg}` on invalid input.
+
+## Examples
+
+```erlang
+1> glazer_json:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
+#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
+
+2> glazer_json:decode(<<"not json">>).
+** exception error: {parse_error,<<"...">>}
+```
 """.
 -spec decode(binary() | iolist()) -> term().
 decode(Input) ->
@@ -106,8 +116,24 @@ decode(Input) ->
   end.
 
 -doc """
-Decode a JSON binary or iolist to an Erlang term with options.
-Raises `{parse_error, Reason}` on invalid input.
+Decode a JSON binary or iolist to an Erlang term with options
+(see `t:decode_opts/0`). Raises `{parse_error, Reason}` on invalid input.
+
+## Examples
+
+```erlang
+%% Object keys as atoms
+1> glazer_json:decode(<<"{\"a\":1}">>, [{keys, atom}]).
+#{a => 1}
+
+%% JSON null as the atom `nil`
+2> glazer_json:decode(<<"{\"a\":null}">>, [use_nil]).
+#{<<"a">> => nil}
+
+%% Objects as jiffy-style proplist tuples
+3> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
+{[{<<"a">>, 1}]}
+```
 """.
 -spec decode(binary() | iolist(), decode_opts()) -> term().
 decode(Input, Opts) ->
@@ -119,35 +145,109 @@ decode(Input, Opts) ->
 -doc """
 Decode a JSON binary or iolist, returning `{ok, Term}` or
 `{error, Reason}` instead of raising.
+
+## Examples
+
+```erlang
+1> glazer_json:try_decode(<<"{\"a\":1}">>).
+{ok, #{<<"a">> => 1}}
+
+2> glazer_json:try_decode(<<"not json">>).
+{error, <<"...">>}
+```
 """.
 -spec try_decode(binary() | iolist()) -> {ok, term()} | {error, binary()}.
 try_decode(Input) ->
   glazer:json_try_decode(Input).
 
 -doc """
-Decode a JSON binary or iolist with options, returning `{ok, Term}` or
-`{error, Reason}` instead of raising.
+Decode a JSON binary or iolist with options (see `t:decode_opts/0`),
+returning `{ok, Term}` or `{error, Reason}` instead of raising.
+
+## Examples
+
+```erlang
+1> glazer_json:try_decode(<<"{\"a\":1}">>, [{keys, atom}]).
+{ok, #{a => 1}}
+
+2> glazer_json:try_decode(<<"not json">>, [{keys, atom}]).
+{error, <<"...">>}
+```
 """.
 -spec try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, binary()}.
 try_decode(Input, Opts) ->
   glazer:json_try_decode(Input, Opts).
 
--doc "Encode an Erlang term to a JSON binary.".
+-doc """
+Encode an Erlang term to a JSON binary.
+
+## Examples
+
+```erlang
+1> glazer_json:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
+<<"{\"a\":1,\"b\":[true,null,3.5]}">>
+
+2> glazer_json:encode(<<"hello">>).
+<<"\"hello\"">>
+
+3> glazer_json:encode(123456789012345678901234567890).
+<<"123456789012345678901234567890">>
+```
+""".
 -spec encode(term()) -> binary().
 encode(Data) ->
   glazer:json_encode(Data).
 
--doc "Encode an Erlang term to a JSON binary with options.".
+-doc """
+Encode an Erlang term to a JSON binary with options (see `t:encode_opts/0`).
+
+## Examples
+
+```erlang
+%% Pretty-print with two-space indentation
+1> glazer_json:encode(#{a => 1}, [pretty]).
+<<"{\n  \"a\": 1\n}">>
+
+%% Escape non-ASCII characters as \\uXXXX
+2> glazer_json:encode(<<"héllo"/utf8>>, [uescape]).
+<<"\"h\\u00e9llo\"">>
+
+%% Encode the atom `nil` as JSON null
+3> glazer_json:encode(#{<<"a">> => nil}, [use_nil]).
+<<"{\"a\":null}">>
+```
+""".
 -spec encode(term(), encode_opts()) -> binary().
 encode(Data, Opts) ->
   glazer:json_encode(Data, Opts).
 
--doc "Minify a JSON binary or iolist, removing all unnecessary whitespace.".
+-doc """
+Minify a JSON binary or iolist, removing all unnecessary whitespace.
+
+## Examples
+
+```erlang
+1> glazer_json:minify(<<"{\n  \"a\": 1,\n  \"b\": [1, 2, 3]\n}">>).
+<<"{\"a\":1,\"b\":[1,2,3]}">>
+```
+""".
 -spec minify(binary() | iolist()) -> binary().
 minify(Input) ->
   glazer:json_minify(Input).
 
--doc "Pretty-print a JSON binary or iolist with two-space indentation.".
+-doc """
+Pretty-print a JSON binary or iolist with indentation.
+
+## Examples
+
+```erlang
+1> glazer_json:prettify(<<"{\"a\":1,\"b\":[1,2,3]}">>).
+<<"{\n   \"a\": 1,\n   \"b\": [\n      1,\n      2,\n      3\n   ]\n}">>
+
+2> glazer_json:prettify(<<"{}">>).
+<<"{}">>
+```
+""".
 -spec prettify(binary() | iolist()) -> binary().
 prettify(Input) ->
   glazer:json_prettify(Input).
@@ -221,11 +321,13 @@ available at build time, this returns `{error, jq_not_available}`.
 A runtime error raised by the filter itself (e.g. via jq's `error/0,1`) is
 returned as `{error, Msg}` where `Msg` is the binary message produced by jq.
 
-```
-1> glazer_json:query(<<"{\\"a\\":[1,2,3]}">>, <<".a[]">>).
+## Examples
+
+```erlang
+1> glazer_json:query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>).
 {ok,[1,2,3]}
 
-2> glazer_json:query(<<"{\\"a\\":1}">>, <<".b">>).
+2> glazer_json:query(<<"{\"a\":1}">>, <<".b">>).
 {ok,[null]}
 
 3> glazer_json:query(<<"not json">>, <<".">>).
@@ -240,6 +342,16 @@ query(Input, Filter) ->
 -doc """
 Like `query/2`, but decodes each result term using `DecodeOpts`
 (see `decode/2`).
+
+## Examples
+
+```erlang
+1> glazer_json:query(<<"{\"a\":[1,2,3]}">>, <<".a">>, [{keys, atom}]).
+{ok, [[1,2,3]]}
+
+2> glazer_json:query(<<"{\"a\":null}">>, <<".a">>, [use_nil]).
+{ok, [nil]}
+```
 """.
 -spec query(binary() | iolist(), binary() | iolist(), decode_opts()) ->
   {ok, [term()]} | {error, query_reason()}.
@@ -296,6 +408,15 @@ scan(Bin) ->
 -doc """
 Resume scanning `Bin` (the unconsumed remainder plus newly-appended bytes)
 from `ScanState`.
+
+## Examples
+
+```erlang
+1> {incomplete, S0} = glazer_json:scan(<<"[1, 2,">>).
+{incomplete, {6,1,false,false,true,false}}
+2> glazer_json:scan(<<"[1, 2, 3]">>, S0).
+{complete, 9}
+```
 """.
 -spec scan(binary() | iolist(), scan_state()) ->
   {complete, non_neg_integer()} | {incomplete, scan_state()}.

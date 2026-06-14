@@ -31,6 +31,7 @@ application-wide, set the `null` env key in your config:
 -define(NOT_LOADED_ERROR,
   erlang:nif_error({not_loaded, [{module, ?MODULE}, {line, ?LINE}]})).
 
+-doc false.
 init() ->
   NullVal = application:get_env(?LIBNAME, null, null),
   is_atom(NullVal) orelse erlang:error("glazer: option 'null' must be an atom"),
@@ -49,57 +50,75 @@ init() ->
     end,
   erlang:load_nif(SoName, [{null, NullVal}]).
 
+-doc false.
 json_try_decode(_Input) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 yaml_try_decode(_Input) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 yaml_try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 yaml_encode(_Data) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 yaml_encode(_Data, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 csv_try_decode(_Input) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 csv_try_decode(_Input, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 csv_encode(_Data) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 csv_encode(_Data, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_encode(_Data) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_encode(_Data, _Opts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_minify(_Input) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_prettify(_Input) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_query(_Input, _Filter) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_query(_Input, _Filter, _DecodeOpts) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_scan(_Bin) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
 json_scan(_Bin, _ScanState) ->
   ?NOT_LOADED_ERROR.
 
@@ -176,14 +195,25 @@ Find value(s) in `Term` by walking `Path`.
 
 `Term` is typically a decoded JSON/YAML document: nested maps and lists.
 `Path` is either a `path()` produced by `compile_path/1`, or a raw
-jq-style filter string (compiled on the fly — raises `{invalid_path,
-Filter}` if it doesn't parse).
+jq-style filter string (compiled on the fly via `compile_path/1` — raises
+`{invalid_path, Filter}` if it doesn't parse).
+
+As a string, `Path` supports a small subset of [jq](https://jqlang.org/)
+syntax (see `compile_path/1` for the full grammar):
+
+- `.`                - identity (returns the input term itself)
+- `.foo`, `.foo.bar` - field access (map key)
+- `.["foo bar"]`     - bracketed field access, for keys with special characters
+- `.[]`              - iterate: every element of a list, or every value of a map
+- `.[N]`, `.[-N]`    - index into a list (negative indices count from the end)
+
+Segments can be chained freely, e.g. `.a.b[].c[0]`.
 
 Returns the list of values found at the end of `Path`. An empty list means
 no match. `.[]` steps fan out over every element of a list (or every value
 of a map), so a path containing `.[]` can produce multiple results.
 
-## Example
+## Examples
 
 ```erlang
 1> Doc = #{<<"a">> => [#{<<"b">> => 1}, #{<<"b">> => 2}, #{<<"c">> => 3}]}.
@@ -191,6 +221,12 @@ of a map), so a path containing `.[]` can produce multiple results.
 [1, 2]
 3> glazer:find(Doc, <<".a[2].c">>).
 [3]
+4> glazer:find(Doc, <<".a[-1].c">>).
+[3]
+5> glazer:find(Doc, <<".">>).
+[Doc]
+6> glazer:find(#{<<"foo bar">> => 1}, <<".[\"foo bar\"]">>).
+[1]
 ```
 """.
 -spec find(term(), path() | binary()) -> [term()].
