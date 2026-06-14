@@ -138,6 +138,21 @@ pretty_test_() ->
     ?_assertEqual(Compact, glazer_json:minify(Pretty))
   ].
 
+%% Empty arrays/maps should pretty-print on one line (`[]`, `{}`), matching
+%% the conventions of e.g. Jason.encode!(_, pretty: true) — see issue #3.
+pretty_empty_collections_test_() ->
+  [
+    ?_assertEqual(<<"[]">>, glazer_json:prettify(<<"[]">>)),
+    ?_assertEqual(<<"{}">>, glazer_json:prettify(<<"{}">>)),
+    ?_assertEqual(<<"[]">>, glazer_json:encode([], [pretty])),
+    ?_assertEqual(<<"{}">>, glazer_json:encode(#{}, [pretty])),
+    %% empty collections nested inside non-empty ones still print inline
+    ?_assertEqual(<<"{\n   \"a\": [],\n   \"b\": {}\n}">>,
+                  glazer_json:prettify(<<"{\"a\":[],\"b\":{}}">>)),
+    ?_assertEqual(<<"[\n   1,\n   [],\n   {}\n]">>,
+                  glazer_json:prettify(<<"[1,[],{}]">>))
+  ].
+
 nested_test_() ->
   JSON = <<"{\"a\":{\"b\":[1,null,true]}}">>,
   Expected = #{<<"a">> => #{<<"b">> => [1, null, true]}},

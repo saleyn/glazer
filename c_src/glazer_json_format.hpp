@@ -39,7 +39,7 @@ inline std::string prettify_json(std::string_view in)
         break;
       case '{': case '[':
         out += c;
-        // peek: if immediately closed, emit on same line
+        // peek: if immediately closed, emit on same line (e.g. `[]`, `{}`)
         {
           size_t j = i + 1;
           while (j < in.size() && (in[j] == ' ' || in[j] == '\t' || in[j] == '\r' || in[j] == '\n')) ++j;
@@ -49,6 +49,12 @@ inline std::string prettify_json(std::string_view in)
         newline();
         break;
       case '}': case ']':
+        // empty collection (e.g. `[]`, `{}`): closing bracket immediately
+        // follows the opening one, already emitted on the same line
+        if (!out.empty() && (out.back() == '{' || out.back() == '[')) {
+          out += c;
+          break;
+        }
         --indent;
         newline();
         out += c;
