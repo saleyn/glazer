@@ -723,13 +723,11 @@ skipped, matching `decode/2`.
 | `{delimiter, Char}` | Field delimiter (default `$,`) |
 | `headers` | Treat the first row as column names (shorthand for `{headers, binary}`) |
 | `{headers, [Name, ...]}` | Use the given list of atoms or binaries as column names; the first data row is **not** consumed as a header |
-| `{headers, binary}` | First row → binary column names (same as bare `headers`) |
+| `{headers, binary}` | First row is binary column names (same as bare `headers`) |
 | `{headers, string}` | Alias for `{headers, binary}` |
+| `{headers, atom}` | First row → atom column names (via `binary_to_atom/2`-equivalent) |
 | `{headers, existing_atom}` | First row → existing-atom column names, falling back to binaries for unknown atoms |
 | `{headers, charlist}` | First row → column names as lists of Unicode codepoints |
-| `{keys, atom}` | (Legacy) With `headers`, decode column names as atoms |
-| `{keys, existing_atom}` | (Legacy) With `headers`, decode column names as existing atoms, falling back to binaries for unknown atoms |
-| `{keys, binary}` | (Legacy) With `headers`, decode column names as binaries (default) |
 | `{return, list}` | Data rows are lists of field values (default) |
 | `{return, tuple}` | Data rows are tuples of field values |
 | `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |

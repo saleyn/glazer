@@ -93,15 +93,15 @@ decode_headers_test_() ->
                   glazer_csv:decode(<<"a,b\n">>, [headers])),
     %% headers as atoms
     ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
-                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, atom}])),
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, atom}])),
     %% headers as existing_atom: known atoms become atom keys
     ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
-                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, existing_atom}])),
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, existing_atom}])),
     %% existing_atom falls back to binary for atoms that don't already exist
     ?_assertEqual(#{headers => [<<"zzzz_glazer_csv_no_such_atom">>, b],
                     data    => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"zzzz_glazer_csv_no_such_atom,b\n1,2\n">>,
-                                    [headers, {keys, existing_atom}])),
+                                    [{headers, existing_atom}])),
     %% short row: missing trailing fields produce a shorter list
     ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => [[<<"1">>]]},
                   glazer_csv:decode(<<"a,b\n1\n">>, [headers]))
@@ -121,6 +121,9 @@ decode_headers_type_test_() ->
     ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
                     data    => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, string}])),
+    %% {headers, atom}: column names converted to atoms (created if needed)
+    ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, atom}])),
     %% {headers, existing_atom}: known atoms → atoms, unknown → binary
     ?_assertEqual(#{headers => [a, b], data => [[<<"1">>, <<"2">>]]},
                   glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, existing_atom}])),
@@ -267,10 +270,10 @@ decode_return_map_test_() ->
     %% no data rows
     ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => []},
                   glazer_csv:decode(<<"a,b\n">>, [headers, {return, map}])),
-    %% {keys, atom} + {return, map}: atom keys
+    %% {headers, atom} + {return, map}: atom keys
     ?_assertEqual(#{headers => [a, b],
                     data    => [#{a => <<"1">>, b => <<"2">>}]},
-                  glazer_csv:decode(<<"a,b\n1,2\n">>, [headers, {keys, atom}, {return, map}])),
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, atom}, {return, map}])),
     %% {return, map} with {fields, ...}: type conversion still applies
     ?_assertEqual(#{headers => [<<"name">>, <<"age">>],
                     data    => [#{<<"name">> => <<"Alice">>, <<"age">> => 30}]},
@@ -687,9 +690,9 @@ stream_decoder_test_() ->
       ?assertEqual({ok, []}, glazer_csv:stream_eof(D1))
     end),
 
-    %% {keys, atom} affects header names but not streaming field values
+    %% {headers, atom} affects header names but not streaming field values
     ?_test(begin
-      D0 = glazer_csv:stream_decoder([headers, {keys, atom}]),
+      D0 = glazer_csv:stream_decoder([{headers, atom}]),
       {[[<<"1">>, <<"2">>]], _D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n">>)
     end),
 

@@ -90,12 +90,13 @@ A single element of the `{fields, Specs}` CSV decode option: either a
 -doc """
 How the header row should be represented when using `{headers, Type}`:
 
+- `atom`          - column names are converted to atoms (via `binary_to_atom/2`-equivalent)
 - `existing_atom` - column names are converted to existing atoms (binaries if not found)
 - `binary`        - column names are kept as binaries (default)
 - `string`        - alias for `binary`
 - `charlist`      - column names are converted to lists of Unicode codepoints
 """.
--type headers_type() :: existing_atom | binary | string | charlist.
+-type headers_type() :: atom | existing_atom | binary | string | charlist.
 
 -doc """
 A single CSV decode option.  See `t:decode_opts/0` for the full reference
@@ -105,7 +106,6 @@ table of all available options and their effects.
     {delimiter, char()}
   | headers
   | {headers, [atom() | binary()] | headers_type()}
-  | {keys, atom | existing_atom | binary}
   | {fields, [field_spec()]}
   | {null_term, atom()}
   | {return, list | map | tuple}
@@ -122,11 +122,9 @@ CSV decode options:
 | `{headers, [Name, ...]}` | Use the given list of atoms or binaries as column names; the first data row is **not** consumed as a header |
 | `{headers, binary}` | First row → binary column names (same as bare `headers`) |
 | `{headers, string}` | Alias for `{headers, binary}` |
+| `{headers, atom}` | First row → atom column names (via `binary_to_atom/2`-equivalent) |
 | `{headers, existing_atom}` | First row → existing-atom column names (fall back to binary for unknown atoms) |
 | `{headers, charlist}` | First row → column names as lists of Unicode codepoints |
-| `{keys, atom}` | (Legacy) With `headers`, decode column names as atoms |
-| `{keys, existing_atom}` | (Legacy) With `headers`, decode column names as existing atoms |
-| `{keys, binary}` | (Legacy) With `headers`, decode column names as binaries (default) |
 | `{return, list}` | Data rows are lists of field values (default) |
 | `{return, tuple}` | Data rows are tuples of field values |
 | `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |
@@ -142,8 +140,8 @@ CSV decode options:
 The result of a successful CSV decode: a map with two keys.
 
 - `headers` - `nil` when the `headers` option was not given; otherwise a list
-  of column names (binaries by default, atoms with `{keys, atom}` or
-  `{keys, existing_atom}`)
+  of column names (binaries by default, atoms with `{headers, atom}` or
+  `{headers, existing_atom}`)
 - `data`    - list of data rows; each row is a list of field values by default,
   a tuple of field values with `{return, tuple}`, or a map keyed by the
   column names when both `headers` and `{return, map}` are given

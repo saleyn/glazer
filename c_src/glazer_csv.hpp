@@ -234,8 +234,8 @@ enum class CsvReturnKind { list, map, tuple };
 struct CsvDecodeOpts {
   char delimiter           = ',';
   bool headers             = false;          // bare `headers` atom or {headers, ...}
-  bool label_atom          = false;          // {keys, atom} or legacy
-  bool label_existing_atom = false;          // {keys, existing_atom} / {headers, existing_atom}
+  bool label_atom          = false;          // {headers, atom}
+  bool label_existing_atom = false;          // {headers, existing_atom}
   bool label_charlist      = false;          // {headers, charlist}
   CsvReturnKind return_kind = CsvReturnKind::list; // {return, list | map | tuple}
   bool explicit_headers    = false;          // {headers, [List]}: no header row in data
@@ -343,10 +343,6 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
     } else if (enif_is_identical(tp[0], AM_NULL_TERM)) {
       if (!enif_is_atom(env, tp[1])) return false;
       opts.null_term = tp[1];
-    } else if (enif_is_identical(tp[0], AM_KEYS)) {
-      if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
-      else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
-      else if (enif_is_identical(tp[1], AM_LABEL_BINARY))      { opts.label_atom = false; opts.label_existing_atom = false; }
     } else if (enif_is_identical(tp[0], AM_RETURN)) {
       if      (enif_is_identical(tp[1], AM_MAP))   opts.return_kind = CsvReturnKind::map;
       else if (enif_is_identical(tp[1], AM_TUPLE)) opts.return_kind = CsvReturnKind::tuple;
@@ -354,6 +350,7 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
     } else if (enif_is_identical(tp[0], AM_HEADERS)) {
       // {headers, [List]}  — explicit column names, no header row in data
       // {headers, binary | string} — 1st row → binary keys
+      // {headers, atom}            — 1st row → atom keys
       // {headers, existing_atom}   — 1st row → existing-atom keys
       // {headers, charlist}        — 1st row → charlist keys
       if (enif_is_list(env, tp[1])) {
@@ -367,6 +364,9 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
         opts.label_atom          = false;
         opts.label_existing_atom = false;
         opts.label_charlist      = false;
+      } else if (enif_is_identical(tp[1], AM_LABEL_ATOM)) {
+        opts.headers          = true;
+        opts.label_atom       = true;
       } else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) {
         opts.headers             = true;
         opts.label_existing_atom = true;
@@ -756,7 +756,7 @@ struct CsvDecoder {
   //   - failure: {false, atom | binary}
   //
   // When `headers` is set the first row is extracted as the `headers` value
-  // (applying `{keys, atom|existing_atom}` if requested). Subsequent rows are
+  // (applying `{headers, atom|existing_atom|charlist}` if requested). Subsequent rows are
   // emitted as field lists (default), as tuples when {return, tuple} is set,
   // or as maps keyed by the header names when {return, map} is also set.
   // duplicate_header is returned if a header row contains duplicate column
