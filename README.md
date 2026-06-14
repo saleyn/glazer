@@ -64,7 +64,7 @@ formats.
 
 ## [Performance](#table-of-contents)
 
-- **[JSON](#performance-1)**: faster than every other library benchmarked on
+- **[JSON](#benchmarking-json)**: faster than every other library benchmarked on
   both encoding and decoding — consistently ~25–40% ahead of `torque`
   (Rust `sonic-rs` NIF), and well ahead of `simdjsone`, `jiffy`, and the
   pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.

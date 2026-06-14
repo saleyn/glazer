@@ -7,8 +7,15 @@ The public API is split across [`glazer_json`](`glazer_json`),
 
 By default `null`s are represented as the atom `null`. To change it
 application-wide, set the `null` env key in your config:
-```
+
+**Erlang**:
+```erlang
 {glazer, [{null, nil}]}.
+```
+
+**Elixir**:
+```elixir
+config :glazer, null: nil
 ```
 """.
 -export([encode_integer/1, decode_integer/1, try_decode_integer/1,
