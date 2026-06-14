@@ -399,7 +399,7 @@ undefined
 |---|---|
 | `pretty` | Pretty-print the JSON output with two-space indentation |
 | `uescape` | Escape non-ASCII characters as `\uXXXX` sequences |
-| `force_utf8` | Sanitize invalid UTF-8 byte sequences before encoding |
+| `force_utf8` | Replace invalid UTF-8 byte sequences with U+FFFD before encoding |
 | `use_nil` | Encode the atom `nil` as JSON `null` |
 | `{null_term, Atom}` | Encode `Atom` as JSON `null` |
 
@@ -412,6 +412,39 @@ undefined
 
 3> glazer_json:encode(nil, [use_nil]).
 <<"null">>
+```
+
+**Option `force_utf8`:**
+
+> [!NOTE]
+> `force_utf8` is an *encode*-only option. `decode/1,2` does not validate
+> that JSON strings in the input are valid UTF-8 — bytes are copied through
+> to the resulting binaries as-is, regardless of options.
+
+Binaries may contain arbitrary bytes, including byte sequences that are not
+valid UTF-8. By default, such bytes are copied into the output verbatim,
+which can produce a result that is not valid UTF-8/JSON:
+
+```erlang
+1> glazer_json:encode(<<"a", 128, "b">>).
+<<"\"a", 128, "b\"">>
+```
+
+With `force_utf8`, each invalid byte (or byte sequence) is replaced with the
+Unicode replacement character `U+FFFD` (encoded as `0xEF 0xBF 0xBD`):
+
+```erlang
+2> glazer_json:encode(<<"a", 128, "b">>, [force_utf8]).
+<<"\"a", 239, 191, 189, "b\"">>
+```
+
+A literal `U+FFFD` already present in the input is left untouched (it is
+not re-replaced). Combining `force_utf8` with `uescape` further escapes the
+replacement character as `\ufffd`:
+
+```erlang
+3> glazer_json:encode(<<"a", 128, "b">>, [force_utf8, uescape]).
+<<"\"a\\ufffdb\"">>
 ```
 
 ### [jq filter support](#table-of-contents)

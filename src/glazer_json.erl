@@ -67,7 +67,15 @@ Encode options:
 
 - `pretty`            - pretty-print the JSON output
 - `uescape`           - escape non-ASCII characters as \\uXXXX sequences
-- `force_utf8`        - fix invalid UTF-8 sequences before encoding
+- `force_utf8`        - replace invalid UTF-8 byte sequences with the
+  Unicode replacement character (U+FFFD) before encoding. Without this
+  option, invalid bytes in binaries are copied into the output verbatim,
+  which can produce a result that is not valid UTF-8/JSON. A pre-existing
+  literal U+FFFD in the input is left untouched (not double-replaced). When
+  combined with `uescape`, the replacement character is further escaped to
+  `\\ufffd`. This is an *encode*-only option: `decode/1,2` does not validate
+  that JSON strings in the input are valid UTF-8 and copies bytes through
+  as-is regardless of options
 - `use_nil`           - encode the atom `nil` as JSON `null`
 - `{null_term, Atom}` - encode `Atom` as JSON `null`
 """.
@@ -215,6 +223,20 @@ Encode an Erlang term to a JSON binary with options (see `t:encode_opts/0`).
 %% Encode the atom `nil` as JSON null
 3> glazer_json:encode(#{<<"a">> => nil}, [use_nil]).
 <<"{\"a\":null}">>
+
+%% A binary with an invalid UTF-8 byte (0x80 is a lone continuation byte)
+%% is copied through verbatim by default, yielding output that is not
+%% valid UTF-8/JSON
+4> glazer_json:encode(<<"a", 128, "b">>).
+<<"\"a", 128, "b\"">>
+
+%% force_utf8 replaces the invalid byte with U+FFFD (encoded as 0xEF 0xBF 0xBD)
+5> glazer_json:encode(<<"a", 128, "b">>, [force_utf8]).
+<<"\"a", 239, 191, 189, "b\"">>
+
+%% force_utf8 + uescape further escapes the replacement character
+6> glazer_json:encode(<<"a", 128, "b">>, [force_utf8, uescape]).
+<<"\"a\\ufffdb\"">>
 ```
 """.
 -spec encode(term(), encode_opts()) -> binary().
