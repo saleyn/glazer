@@ -81,12 +81,12 @@ jobs:
           MIN_AGE=$((MIN_AGE_HOURS * 3600))
 
           if [ "$AGE" -lt "$MIN_AGE" ]; then
-            echo "Commit $COMMIT for version $PUBLISHED is only $((AGE / 60)) minutes old, waiting for $((MIN_AGE / 3600)) hours"
+            echo "Commit \`${COMMIT:0:7}\` for version $PUBLISHED is only $((AGE / 60)) minutes old, waiting for $((MIN_AGE / 3600)) hours"
             echo "should_tag=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "Found an untagged release in hex.pm for version $PUBLISHED (commit $COMMIT)"
+          echo "Found an untagged release in hex.pm for version $PUBLISHED (commit \`${COMMIT:0:7}\`)"
           echo "version=$PUBLISHED" >> $GITHUB_OUTPUT
           echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
           echo "should_tag=true"    >> $GITHUB_OUTPUT
