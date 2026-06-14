@@ -199,15 +199,7 @@ jq-style filter string (compiled on the fly via `compile_path/1` — raises
 `{invalid_path, Filter}` if it doesn't parse).
 
 As a string, `Path` supports a small subset of [jq](https://jqlang.org/)
-syntax (see `compile_path/1` for the full grammar):
-
-- `.`                - identity (returns the input term itself)
-- `.foo`, `.foo.bar` - field access (map key)
-- `.["foo bar"]`     - bracketed field access, for keys with special characters
-- `.[]`              - iterate: every element of a list, or every value of a map
-- `.[N]`, `.[-N]`    - index into a list (negative indices count from the end)
-
-Segments can be chained freely, e.g. `.a.b[].c[0]`.
+syntax (see `compile_path/1` for the full grammar), e.g. `.a.b[].c[0]`.
 
 Returns the list of values found at the end of `Path`. An empty list means
 no match. `.[]` steps fan out over every element of a list (or every value
