@@ -20,7 +20,6 @@ formats.
 
 - [Glazer](#glazer)
   - [Table of contents](#table-of-contents)
-  - [Performance](#performance)
   - [Features](#features)
     - [JSON](#json)
     - [YAML](#yaml)
@@ -28,6 +27,7 @@ formats.
   - [Scope](#scope)
   - [Installation](#installation)
     - [Building](#building)
+  - [Performance](#performance)
   - [JSON](#json-1)
     - [Usage](#usage)
     - [Streaming](#streaming)
@@ -61,30 +61,6 @@ formats.
   - [Testing](#testing)
   - [Performance Optimization Details](#performance-optimization-details)
   - [License](#license)
-
-## [Performance](#table-of-contents)
-
-- **[JSON](#benchmarking-json)**: faster than every other library benchmarked on
-  both encoding and decoding — consistently ~25–40% ahead of `torque`
-  (Rust `sonic-rs` NIF), and well ahead of `simdjsone`, `jiffy`, and the
-  pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
-- **[YAML](#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
-  `fast_yaml`, and ~25–75× faster than the pure-Erlang `yamerl`/`ymlr`.
-- **[CSV](#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
-  hundreds of times faster than `csv` and `erl_csv` (which time out on
-  large inputs).
-
-<img src="assets/bench_small.svg" width="100%" alt="Small file benchmarks (JSON/YAML/CSV)"/>
-<img src="assets/bench_medium.svg" width="100%" alt="Medium file benchmarks (JSON/YAML/CSV)"/>
-<img src="assets/bench_large.svg" width="100%" alt="Large file benchmarks (JSON/YAML/CSV)"/>
-
-Each chart compares glazer against other libraries for JSON/YAML/CSV
-decode and encode on a representative small/medium/large file. Charts are
-generated from the tables below via `scripts/gen_bench_charts.py`.
-Benchmark tables:
-- [Benchmarking JSON](#benchmarking-json)
-- [Benchmarking YAML](#benchmarking-yaml)
-- [Benchmarking CSV](#benchmarking-csv)
 
 ## [Features](#table-of-contents)
 
@@ -201,6 +177,30 @@ iex> :glazer_json.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 Use the `use_nil`/`{null_term, nil}` option (see
 [Null term configuration](#null-term-configuration) below) to get idiomatic
 Elixir `nil` instead of the atom `:null`.
+
+## [Performance](#table-of-contents)
+
+- **[JSON](#benchmarking-json)**: faster than every other library benchmarked on
+  both encoding and decoding — consistently ~25–40% ahead of `torque`
+  (Rust `sonic-rs` NIF), and well ahead of `simdjsone`, `jiffy`, and the
+  pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
+- **[YAML](#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
+  `fast_yaml`, and ~25–75× faster than the pure-Erlang `yamerl`/`ymlr`.
+- **[CSV](#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
+  hundreds of times faster than `csv` and `erl_csv` (which time out on
+  large inputs).
+
+<img src="assets/bench_small.svg" width="100%" alt="Small file benchmarks (JSON/YAML/CSV)"/>
+<img src="assets/bench_medium.svg" width="100%" alt="Medium file benchmarks (JSON/YAML/CSV)"/>
+<img src="assets/bench_large.svg" width="100%" alt="Large file benchmarks (JSON/YAML/CSV)"/>
+
+Each chart compares glazer against other libraries for JSON/YAML/CSV
+decode and encode on a representative small/medium/large file. Charts are
+generated from the tables below via `scripts/gen_bench_charts.py`.
+Benchmark tables:
+- [Benchmarking JSON](#benchmarking-json)
+- [Benchmarking YAML](#benchmarking-yaml)
+- [Benchmarking CSV](#benchmarking-csv)
 
 ## [JSON](#table-of-contents)
 
@@ -471,16 +471,16 @@ $ PARALLEL=2 make bench-json
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)   
-            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode  
+JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
+            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      3563.5   1062.7     4779.2   2311.9        7.5      4.0        6.4      2.3        0.8      0.8  
-torque      4996.2   1453.0     7425.8   3061.2        8.9      6.2        7.1      3.6        1.2      0.9  
-simdjsone   4693.2   3475.9     8622.7   6423.5       12.2     13.7        8.1      9.3        1.2      2.1  
-jiffy       5872.3   2513.4     9046.3   4702.4       12.0     11.1        8.7      6.5        2.1      2.1  
-jason      10259.2   8507.6    21086.9  19976.9       26.6     25.4       19.3     18.2        2.8      3.0  
-thoas       9779.7   9457.2    21708.8  21229.1       25.6     27.2       22.7     20.9        2.7      3.0  
-euneus     12213.1   8659.9    15957.8  13910.0       25.4     24.3       12.3     12.6        5.1      2.2  
+glazer      3563.5   1062.7     4779.2   2311.9        7.5      4.0        6.4      2.3        0.8      0.8
+torque      4996.2   1453.0     7425.8   3061.2        8.9      6.2        7.1      3.6        1.2      0.9
+simdjsone   4693.2   3475.9     8622.7   6423.5       12.2     13.7        8.1      9.3        1.2      2.1
+jiffy       5872.3   2513.4     9046.3   4702.4       12.0     11.1        8.7      6.5        2.1      2.1
+jason      10259.2   8507.6    21086.9  19976.9       26.6     25.4       19.3     18.2        2.8      3.0
+thoas       9779.7   9457.2    21708.8  21229.1       25.6     27.2       22.7     20.9        2.7      3.0
+euneus     12213.1   8659.9    15957.8  13910.0       25.4     24.3       12.3     12.6        5.1      2.2
 json       11660.6   8354.5    15248.7  13676.8       22.8     18.7       11.3      9.6        4.4      2.2
 ```
 
@@ -568,13 +568,13 @@ $ PARALLEL=2 make bench-yaml
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)   
-                decode   encode     decode   encode     decode   encode  
+YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
+                decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer            59.4      9.5       28.6      5.6        8.6      1.1  
-yaml_rustler     133.4      n/a       99.5      n/a       12.4      n/a  
-fast_yaml        203.4     90.8      103.4     40.3       18.0      8.0  
-yamerl          1469.0      n/a     1006.9      n/a      494.2      n/a  
+glazer            59.4      9.5       28.6      5.6        8.6      1.1
+yaml_rustler     133.4      n/a       99.5      n/a       12.4      n/a
+fast_yaml        203.4     90.8      103.4     40.3       18.0      8.0
+yamerl          1469.0      n/a     1006.9      n/a      494.2      n/a
 ymlr               n/a     46.9        n/a     39.0        n/a      5.2
 ```
 
@@ -785,12 +785,12 @@ $ PARALLEL=2 make bench-csv
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-CSV               small (1.3K)          medium (130.9K)         large (3433.1K)    
-                decode     encode       decode     encode       decode     encode  
+CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
+                decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer            10.6        3.9        839.3      382.2      32962.9    10706.1  
-nimble_csv        45.9       27.4       3522.8     2785.7     168599.8    93305.1  
-csv               73.8      214.2       5873.3    16112.3      TIMEOUT    TIMEOUT  
+glazer            10.6        3.9        839.3      382.2      32962.9    10706.1
+nimble_csv        45.9       27.4       3522.8     2785.7     168599.8    93305.1
+csv               73.8      214.2       5873.3    16112.3      TIMEOUT    TIMEOUT
 erl_csv          406.6      333.5      38773.1    25074.8    1333590.6   599183.0
 ```
 
