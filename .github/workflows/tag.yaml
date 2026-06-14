@@ -1,4 +1,4 @@
-name: Release
+name: Tag and Release
 
 on:
   schedule:
@@ -8,6 +8,7 @@ on:
     # The age check gives room for amended re-publishes of the same version
     # on Hex.pm before it gets tagged.
     - cron: "0 6 * * *"
+  workflow_dispatch:
 
 env:
   # Minimum age (in hours) of a version-bump commit before it gets tagged.
