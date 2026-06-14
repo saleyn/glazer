@@ -288,7 +288,8 @@ Resuming a scan once more bytes arrive:
 {complete, 7}
 ```
 """.
--spec scan(binary() | iolist()) -> {complete, non_neg_integer()} | {incomplete, scan_state()}.
+-spec scan(binary() | iolist()) ->
+  {complete, non_neg_integer()} | {incomplete, scan_state()}.
 scan(Bin) ->
   glazer:json_scan(Bin).
 
@@ -296,7 +297,8 @@ scan(Bin) ->
 Resume scanning `Bin` (the unconsumed remainder plus newly-appended bytes)
 from `ScanState`.
 """.
--spec scan(binary() | iolist(), scan_state()) -> {complete, non_neg_integer()} | {incomplete, scan_state()}.
+-spec scan(binary() | iolist(), scan_state()) ->
+  {complete, non_neg_integer()} | {incomplete, scan_state()}.
 scan(Bin, ScanState) ->
   glazer:json_scan(Bin, ScanState).
 
