@@ -874,6 +874,7 @@ application env var (`{glazer, [{null, Atom}]}`).
 |---|---|
 | `{delimiter, Char}` | Field delimiter (default `$,`) |
 | `headers` | Input is a list of maps; the first map's keys become the header row, and subsequent maps are encoded as rows in that column order (missing keys produce empty fields) |
+| `{headers, [Name, ...]}` | Input is a list of maps; uses the given list of atoms or binaries (matching the maps' key type) as the column order and header row, instead of deriving it from the first map's keys (missing keys produce empty fields) |
 | `{line_ending, lf \| crlf}` | Line terminator (default `crlf`, per RFC 4180) |
 
 <p align="right"><a href="#table-of-contents"><picture>

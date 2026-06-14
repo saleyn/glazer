@@ -174,6 +174,7 @@ available options.
 -type encode_opt() ::
     {delimiter, char()}
   | headers
+  | {headers, [atom() | binary()]}
   | {line_ending, lf | crlf}.
 
 -doc """
@@ -183,6 +184,10 @@ CSV encode options:
 - `headers`            - input is a list of maps; the first map's keys
   become the header row, and subsequent maps are encoded as rows in that
   column order (missing keys produce empty fields)
+- `{headers, [Name, ...]}` - input is a list of maps; uses the given list of
+  atoms or binaries (matching the maps' key type) as the column order and
+  header row, instead of deriving it from the first map's keys (missing
+  keys produce empty fields)
 - `{line_ending, lf | crlf}` - line terminator (default `crlf`, per RFC 4180)
 """.
 -type encode_opts() :: [encode_opt()].
@@ -362,8 +367,13 @@ row in that column order.
 1> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
 <<"age,name\r\n30,Alice\r\n">>
 
+%% Maps to CSV with an explicit column order
+2> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}],
+                     [{headers, [<<"name">>, <<"age">>]}]).
+<<"name,age\r\nAlice,30\r\n">>
+
 %% Semicolon delimiter with LF line endings
-2> glazer_csv:encode([[<<"a">>, <<"b">>], [1, 2]],
+3> glazer_csv:encode([[<<"a">>, <<"b">>], [1, 2]],
                      [{delimiter, $;}, {line_ending, lf}]).
 <<"a;b\n1;2\n">>
 ```

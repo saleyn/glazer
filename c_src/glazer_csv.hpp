@@ -412,6 +412,8 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
 struct CsvEncodeOpts {
   char        delimiter = ',';
   bool        headers   = false;
+  bool        explicit_headers = false;       // {headers, [List]}: explicit column order
+  std::vector<ERL_NIF_TERM> header_list;       // populated when explicit_headers is true
   std::string_view line_ending = "\r\n";
 };
 
@@ -432,6 +434,14 @@ static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvEncodeOp
       if      (enif_is_identical(tp[1], AM_LF))   opts.line_ending = "\n";
       else if (enif_is_identical(tp[1], AM_CRLF)) opts.line_ending = "\r\n";
       else return false;
+    } else if (enif_is_identical(tp[0], AM_HEADERS)) {
+      // {headers, [Names]} — explicit column order/names for map-row encoding
+      if (!enif_is_list(env, tp[1])) return false;
+      opts.headers          = true;
+      opts.explicit_headers = true;
+      ERL_NIF_TERM hhead, htail = tp[1];
+      while (enif_get_list_cell(env, htail, &hhead, &htail))
+        opts.header_list.push_back(hhead);
     }
   }
   return true;
@@ -941,23 +951,29 @@ struct CsvEncoder {
     if (enif_is_empty_list(m_env, term)) return true;
 
     if (m_opts.headers) {
-      // Determine column order from the first row's map keys.
-      ERL_NIF_TERM head, tail = term;
-      enif_get_list_cell(m_env, tail, &head, &tail);
-      if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) {
-        m_err = "headers option requires rows to be maps";
-        return false;
-      }
-
       std::vector<ERL_NIF_TERM> header;
-      ERL_NIF_TERM key, val;
-      ErlNifMapIterator it;
-      enif_map_iterator_create(m_env, head, &it, ERL_NIF_MAP_ITERATOR_FIRST);
-      while (enif_map_iterator_get_pair(m_env, &it, &key, &val)) {
-        header.push_back(key);
-        enif_map_iterator_next(m_env, &it);
+
+      if (m_opts.explicit_headers) {
+        // Use the explicitly given column order/names.
+        header = m_opts.header_list;
+      } else {
+        // Determine column order from the first row's map keys.
+        ERL_NIF_TERM head, tail = term;
+        enif_get_list_cell(m_env, tail, &head, &tail);
+        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) {
+          m_err = "headers option requires rows to be maps";
+          return false;
+        }
+
+        ERL_NIF_TERM key, val;
+        ErlNifMapIterator it;
+        enif_map_iterator_create(m_env, head, &it, ERL_NIF_MAP_ITERATOR_FIRST);
+        while (enif_map_iterator_get_pair(m_env, &it, &key, &val)) {
+          header.push_back(key);
+          enif_map_iterator_next(m_env, &it);
+        }
+        enif_map_iterator_destroy(m_env, &it);
       }
-      enif_map_iterator_destroy(m_env, &it);
 
       // Emit header row.
       for (size_t i = 0; i < header.size(); ++i) {

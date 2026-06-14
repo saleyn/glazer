@@ -125,6 +125,8 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [detect, create-tag]
+    permissions:
+      contents: write
 
     steps:
       - name: Get optional changelog entry

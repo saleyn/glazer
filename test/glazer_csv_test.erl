@@ -573,7 +573,14 @@ encode_headers_test_() ->
                   glazer_csv:encode([#{<<"a">> => 1, <<"b">> => 2}], [headers])),
     %% missing key produces empty field
     ?_assertEqual(<<"a,b\r\n1,2\r\n1,\r\n">>,
-                  glazer_csv:encode([#{<<"a">> => 1, <<"b">> => 2}, #{<<"a">> => 1}], [headers]))
+                  glazer_csv:encode([#{<<"a">> => 1, <<"b">> => 2}, #{<<"a">> => 1}], [headers])),
+    %% explicit column order overrides the first map's key order
+    ?_assertEqual(<<"b,a\r\n2,1\r\n">>,
+                  glazer_csv:encode([#{<<"a">> => 1, <<"b">> => 2}],
+                                     [{headers, [<<"b">>, <<"a">>]}])),
+    %% explicit column order with atom keys, missing key produces empty field
+    ?_assertEqual(<<"a,b,c\r\n1,2,\r\n">>,
+                  glazer_csv:encode([#{a => 1, b => 2}], [{headers, [a, b, c]}]))
   ].
 
 %% ----------------------------------------------------------------------------
