@@ -16,6 +16,51 @@ dependencies, and extended the same approach to YAML and CSV, with
 performance and features unmatched by other existing libraries for these
 formats.
 
+## Table of contents
+
+- [Performance](#performance)
+- [Features](#features)
+  - [JSON](#json)
+  - [YAML](#yaml)
+  - [CSV](#csv)
+- [Scope](#scope)
+- [Installation](#installation)
+  - [Building](#building)
+- [JSON](#json-1)
+  - [Usage](#usage)
+  - [Streaming](#streaming)
+    - [Efficiency](#efficiency)
+  - [Null term configuration](#null-term-configuration)
+  - [Decode options (`glazer_json:decode/2`)](#decode-options-glazer_jsondecode2)
+  - [Encode options (`glazer_json:encode/2`)](#encode-options-glazer_jsonencode2)
+  - [jq filter support](#jq-filter-support)
+  - [API](#api)
+  - [Benchmarking JSON](#benchmarking-json)
+  - [Performance](#performance-1)
+  - [Performance optimizations](#performance-optimizations)
+- [YAML](#yaml-1)
+  - [Usage](#usage-1)
+  - [Streaming](#streaming-1)
+  - [Decode options (`glazer_yaml:decode/2`)](#decode-options-glazer_yamldecode2)
+  - [Encode options (`glazer_yaml:encode/2`)](#encode-options-glazer_yamlencode2)
+  - [API](#api-1)
+  - [Benchmarking YAML](#benchmarking-yaml)
+- [CSV](#csv-1)
+  - [Usage](#usage-2)
+  - [Streaming](#streaming-2)
+  - [Decode options (`glazer_csv:decode/2`)](#decode-options-glazer_csvdecode2)
+  - [Field type conversion](#field-type-conversion)
+    - [`default` and `on_failure`](#default-and-on_failure)
+  - [Encode options (`glazer_csv:encode/2`)](#encode-options-glazer_csvencode2)
+  - [API](#api-2)
+  - [Benchmarking CSV](#benchmarking-csv)
+- [Big integers](#big-integers)
+  - [API](#api-3)
+- [Limitations](#limitations)
+  - [Nesting depth](#nesting-depth)
+- [Testing](#testing)
+- [License](#license)
+
 ## Performance
 
 - **[JSON](#performance-1)**: faster than every other library benchmarked on
