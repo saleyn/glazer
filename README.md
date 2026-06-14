@@ -638,24 +638,28 @@ ymlr               n/a     62.6        n/a     46.1        n/a      5.9
 
 ### Usage
 
-`decode/1,2` decodes an RFC 4180 CSV document to a list of rows, each
-row a list of binary fields:
+`decode/1,2` decodes an RFC 4180 CSV document to `#{headers => nil|[...],
+data => Rows}`, where `Rows` is a list of rows, each row a list of binary
+fields by default:
 
 ```erlang
 1> glazer_csv:decode(<<"name,age\nAlice,30\nBob,25\n">>).
-[[<<"name">>, <<"age">>], [<<"Alice">>, <<"30">>], [<<"Bob">>, <<"25">>]]
+#{headers => nil,
+  data    => [[<<"name">>,<<"age">>],[<<"Alice">>,<<"30">>],[<<"Bob">>,<<"25">>]]}
 
 2> glazer_csv:encode([[<<"name">>, <<"age">>], [<<"Alice">>, 30]]).
 <<"name,age\r\nAlice,30\r\n">>
 ```
 
-With the `headers` option, the first row is used as column names and each
-subsequent row decodes to a map; `encode/2` with `headers` does the
-reverse, deriving the header row from the first map's keys:
+With the `headers` option, the first row is captured as column names in
+`headers` and each subsequent row decodes to a map when combined with
+`{return, map}`; `encode/2` with `headers` does the reverse, deriving the
+header row from the first map's keys:
 
 ```erlang
-1> glazer_csv:decode(<<"name,age\nAlice,30\n">>, [headers]).
-[#{<<"name">> => <<"Alice">>, <<"age">> => <<"30">>}]
+1> glazer_csv:decode(<<"name,age\nAlice,30\n">>, [headers, {return, map}]).
+#{headers => [<<"name">>,<<"age">>],
+  data    => [#{<<"name">> => <<"Alice">>, <<"age">> => <<"30">>}]}
 
 2> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
 <<"name,age\r\nAlice,30\r\n">>
@@ -708,19 +712,31 @@ the buffered bytes don't form a valid row:
 
 `stream_decoder/1` accepts the same options as `decode/2`. With
 the `headers` option, the first complete row is captured as the header and
-used to decode every subsequent row as a map; no row is emitted for the
-header itself. Blank lines are skipped, matching `decode/2`.
+used to decode every subsequent row (as a map when combined with
+`{return, map}`); no row is emitted for the header itself. Blank lines are
+skipped, matching `decode/2`.
 
 ### Decode options (`glazer_csv:decode/2`)
 
 | Option | Description |
 |---|---|
 | `{delimiter, Char}` | Field delimiter (default `$,`) |
-| `headers` | Treat the first row as column names and decode each subsequent row as a map keyed by those names, instead of returning every row as a list of fields |
-| `{keys, atom}` | With `headers`, decode column names as atoms |
-| `{keys, existing_atom}` | With `headers`, decode column names as existing atoms, falling back to binaries for unknown atoms |
-| `{keys, binary}` | With `headers`, decode column names as binaries (default) |
+| `headers` | Treat the first row as column names (shorthand for `{headers, binary}`) |
+| `{headers, [Name, ...]}` | Use the given list of atoms or binaries as column names; the first data row is **not** consumed as a header |
+| `{headers, binary}` | First row → binary column names (same as bare `headers`) |
+| `{headers, string}` | Alias for `{headers, binary}` |
+| `{headers, existing_atom}` | First row → existing-atom column names, falling back to binaries for unknown atoms |
+| `{headers, charlist}` | First row → column names as lists of Unicode codepoints |
+| `{keys, atom}` | (Legacy) With `headers`, decode column names as atoms |
+| `{keys, existing_atom}` | (Legacy) With `headers`, decode column names as existing atoms, falling back to binaries for unknown atoms |
+| `{keys, binary}` | (Legacy) With `headers`, decode column names as binaries (default) |
+| `{return, list}` | Data rows are lists of field values (default) |
+| `{return, tuple}` | Data rows are tuples of field values |
+| `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |
 | `{fields, Specs}` | Convert each column's field from a binary, positionally — see [Field type conversion](#field-type-conversion) |
+| `{skip, N}` | Skip the first `N` data rows (after any header row) |
+| `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
+| `{limit, N}` | Process at most `N` data rows (after skipping) |
 | `{null_term, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
 
 ### Field type conversion
