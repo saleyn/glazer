@@ -75,6 +75,10 @@ struct SmallTermVec {
     return enif_make_list_from_array(env, m_data, unsigned(m_len));
   }
 
+  ERL_NIF_TERM  to_erl_tuple(ErlNifEnv* env) const {
+    return enif_make_tuple_from_array(env, m_data, unsigned(m_len));
+  }
+
   // `this` holds values, `keys` holds the parallel array of keys.
   // Returns 0 on error (i.e. duplicate keys) or ERL_NIF_TERM on success.
   template <bool Dedupe = false, typename T = SmallTermVec<16>>

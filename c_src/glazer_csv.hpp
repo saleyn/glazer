@@ -229,13 +229,15 @@ inline std::optional<int64_t> parse(std::string_view input, std::string_view for
 // Options
 //-----------------------------------------------------------------------------
 
+enum class CsvReturnKind { list, map, tuple };
+
 struct CsvDecodeOpts {
   char delimiter           = ',';
   bool headers             = false;          // bare `headers` atom or {headers, ...}
   bool label_atom          = false;          // {keys, atom} or legacy
   bool label_existing_atom = false;          // {keys, existing_atom} / {headers, existing_atom}
   bool label_charlist      = false;          // {headers, charlist}
-  bool return_map          = false;          // {return, map}: rows as maps (requires headers)
+  CsvReturnKind return_kind = CsvReturnKind::list; // {return, list | map | tuple}
   bool explicit_headers    = false;          // {headers, [List]}: no header row in data
   ERL_NIF_TERM null_term   = 0;
   std::vector<ERL_NIF_TERM> header_list;    // populated when explicit_headers is true
@@ -346,8 +348,9 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
       else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
       else if (enif_is_identical(tp[1], AM_LABEL_BINARY))      { opts.label_atom = false; opts.label_existing_atom = false; }
     } else if (enif_is_identical(tp[0], AM_RETURN)) {
-      if      (enif_is_identical(tp[1], AM_MAP))  opts.return_map = true;
-      else if (enif_is_identical(tp[1], AM_LIST)) opts.return_map = false;
+      if      (enif_is_identical(tp[1], AM_MAP))   opts.return_kind = CsvReturnKind::map;
+      else if (enif_is_identical(tp[1], AM_TUPLE)) opts.return_kind = CsvReturnKind::tuple;
+      else if (enif_is_identical(tp[1], AM_LIST))  opts.return_kind = CsvReturnKind::list;
     } else if (enif_is_identical(tp[0], AM_HEADERS)) {
       // {headers, [List]}  — explicit column names, no header row in data
       // {headers, binary | string} — 1st row → binary keys
@@ -754,9 +757,10 @@ struct CsvDecoder {
   //
   // When `headers` is set the first row is extracted as the `headers` value
   // (applying `{keys, atom|existing_atom}` if requested). Subsequent rows are
-  // emitted as field lists (default) or as maps keyed by the header names when
-  // {return, map} is also set. duplicate_header is returned if a header row
-  // contains duplicate column names and map output is requested.
+  // emitted as field lists (default), as tuples when {return, tuple} is set,
+  // or as maps keyed by the header names when {return, map} is also set.
+  // duplicate_header is returned if a header row contains duplicate column
+  // names and map output is requested.
   std::tuple<bool, ERL_NIF_TERM> decode()
   {
     SmallTermVec<64> fields;
@@ -764,7 +768,8 @@ struct CsvDecoder {
     std::vector<ERL_NIF_TERM> rows;
     size_t row_num  = 0;
     // Hoist as_map before any goto so no initialization is jumped over.
-    const bool as_map = m_opts.return_map && m_opts.headers;
+    const bool as_map = m_opts.return_kind == CsvReturnKind::map && m_opts.headers;
+    const bool as_tuple = m_opts.return_kind == CsvReturnKind::tuple;
 
     bool err = false;
     auto rec = read_record(fields, err);
@@ -806,6 +811,8 @@ struct CsvDecoder {
         if (!map) [[unlikely]]
           return std::make_tuple(false, AM_DUPLICATE_HEADER);
         rows.push_back(map);
+      } else if (as_tuple) {
+        rows.push_back(fields.to_erl_tuple(m_env));
       } else {
         rows.push_back(fields.to_erl_list(m_env));
       }

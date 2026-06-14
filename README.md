@@ -125,6 +125,10 @@ performance, run a Profile-Guided Optimisation (PGO) build instead:
 ```sh
 make optimize
 ```
+or
+```sh
+OPTIMIZE=1 make
+```
 
 This performs three steps automatically: compiles an instrumented binary,
 runs the test suite to collect real branch-frequency data, then recompiles
@@ -417,20 +421,20 @@ A comparison benchmark against other JSON libraries (`simdjsone`,
 `torque`) is available via:
 
 ```sh
-$ PARALLEL=2 make bench
+$ PARALLEL=2 make bench-json
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)   
-            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode  
+JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
+            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      4379.2   1143.4     5132.9   2586.7        7.5      8.7        6.7      4.0        1.2      1.0  
-torque      6089.2   1643.8     8087.6   3091.0       10.7      9.8        9.3      6.2        1.7      1.3  
-simdjsone   5847.3   5019.7     8719.8   8620.6       14.4     17.7       12.1     12.6        1.9      3.6  
-jiffy       7868.6   3615.6     9779.9   6532.6       16.8     15.2       12.4      9.1        2.5      3.8  
-jason      13509.0  11248.6    25267.6  20837.6       33.5     30.0       19.7     25.0        4.4      2.9  
-thoas      13679.7  12466.1    25638.7  22607.2       31.2     33.0       25.1     29.9        3.2      3.9  
-euneus     14699.8  10247.2    18646.5  16886.6       29.1     25.2       16.7     14.6        4.0      4.6  
+glazer      4379.2   1143.4     5132.9   2586.7        7.5      8.7        6.7      4.0        1.2      1.0
+torque      6089.2   1643.8     8087.6   3091.0       10.7      9.8        9.3      6.2        1.7      1.3
+simdjsone   5847.3   5019.7     8719.8   8620.6       14.4     17.7       12.1     12.6        1.9      3.6
+jiffy       7868.6   3615.6     9779.9   6532.6       16.8     15.2       12.4      9.1        2.5      3.8
+jason      13509.0  11248.6    25267.6  20837.6       33.5     30.0       19.7     25.0        4.4      2.9
+thoas      13679.7  12466.1    25638.7  22607.2       31.2     33.0       25.1     29.9        3.2      3.9
+euneus     14699.8  10247.2    18646.5  16886.6       29.1     25.2       16.7     14.6        4.0      4.6
 json       14315.5   9718.9    17844.3  16473.5       28.3     25.3       19.2     12.3        4.0      4.5
 ```
 
@@ -620,13 +624,13 @@ $ PARALLEL=2 make bench-yaml
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)   
-                decode   encode     decode   encode     decode   encode  
+YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
+                decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer            81.0     14.7       19.9      7.9       11.5      2.2  
-yaml_rustler     195.3      n/a      103.9      n/a       16.9      n/a  
-fast_yaml        254.9     69.5      141.4     54.4       26.7      7.6  
-yamerl          2014.4      n/a     1486.2      n/a      676.1      n/a  
+glazer            81.0     14.7       19.9      7.9       11.5      2.2
+yaml_rustler     195.3      n/a      103.9      n/a       16.9      n/a
+fast_yaml        254.9     69.5      141.4     54.4       26.7      7.6
+yamerl          2014.4      n/a     1486.2      n/a      676.1      n/a
 ymlr               n/a     62.6        n/a     46.1        n/a      5.9
 ```
 
@@ -822,12 +826,12 @@ $ PARALLEL=2 make bench-csv
 ==> Running benchmarks with parallelism: 2
 
 (numbers in µs)
-CSV               small (1.3K)          medium (130.9K)         large (3433.1K)    
-                decode     encode       decode     encode       decode     encode  
+CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
+                decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer            10.7        3.3       1289.6      469.5      42617.2    16240.1  
-nimble_csv        44.8       38.8       4582.9     3204.4     238366.4   120585.9  
-csv               99.3      257.3       8335.2    24393.9      TIMEOUT    TIMEOUT  
+glazer            10.7        3.3       1289.6      469.5      42617.2    16240.1
+nimble_csv        44.8       38.8       4582.9     3204.4     238366.4   120585.9
+csv               99.3      257.3       8335.2    24393.9      TIMEOUT    TIMEOUT
 erl_csv          705.5      427.4      54950.5    34607.9      TIMEOUT    TIMEOUT
 ```
 

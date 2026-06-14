@@ -39,6 +39,7 @@ static ERL_NIF_TERM AM_DATA;
 static ERL_NIF_TERM AM_RETURN;
 static ERL_NIF_TERM AM_MAP;
 static ERL_NIF_TERM AM_LIST;
+static ERL_NIF_TERM AM_TUPLE;
 static ERL_NIF_TERM AM_STRING;
 static ERL_NIF_TERM AM_SKIP;
 static ERL_NIF_TERM AM_LIMIT;
@@ -125,6 +126,7 @@ inline void init_atoms(ErlNifEnv* env)
   AM_RETURN                    = enif_make_atom(env, "return");
   AM_MAP                       = enif_make_atom(env, "map");
   AM_LIST                      = enif_make_atom(env, "list");
+  AM_TUPLE                     = enif_make_atom(env, "tuple");
   AM_STRING                    = enif_make_atom(env, "string");
   AM_SKIP                      = enif_make_atom(env, "skip");
   AM_LIMIT                     = enif_make_atom(env, "limit");

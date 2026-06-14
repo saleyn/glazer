@@ -108,7 +108,7 @@ table of all available options and their effects.
   | {keys, atom | existing_atom | binary}
   | {fields, [field_spec()]}
   | {null_term, atom()}
-  | {return, list | map}
+  | {return, list | map | tuple}
   | {skip, non_neg_integer() | {pos_integer(), pos_integer()}}
   | {limit, pos_integer()}.
 
@@ -128,6 +128,7 @@ CSV decode options:
 | `{keys, existing_atom}` | (Legacy) With `headers`, decode column names as existing atoms |
 | `{keys, binary}` | (Legacy) With `headers`, decode column names as binaries (default) |
 | `{return, list}` | Data rows are lists of field values (default) |
+| `{return, tuple}` | Data rows are tuples of field values |
 | `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |
 | `{fields, Specs}` | Per-column type conversion, applied positionally; see `field_spec/0` |
 | `{skip, N}` | Skip the first `N` data rows (after any header row) |
@@ -144,12 +145,12 @@ The result of a successful CSV decode: a map with two keys.
   of column names (binaries by default, atoms with `{keys, atom}` or
   `{keys, existing_atom}`)
 - `data`    - list of data rows; each row is a list of field values by default,
-  or a map keyed by the column names when both `headers` and `{return, map}`
-  are given
+  a tuple of field values with `{return, tuple}`, or a map keyed by the
+  column names when both `headers` and `{return, map}` are given
 """.
 -type csv_result() :: #{
     headers := nil | [binary() | atom()],
-    data    := [[term()]] | [map()]
+    data    := [[term()]] | [tuple()] | [map()]
 }.
 
 -doc """
@@ -272,6 +273,10 @@ Raises `Reason :: t:decode_error/0` on invalid input.
 %% Rows as maps with atom keys
 5> glazer_csv:decode(<<"a,b\n1,2\n">>, [{headers, existing_atom}, {return, map}]).
 #{headers => [a,b], data => [#{a => <<"1">>, b => <<"2">>}]}
+
+%% Rows as tuples
+6> glazer_csv:decode(<<"a,b\n1,2\n">>, [{return, tuple}]).
+#{headers => nil, data => [{<<"a">>,<<"b">>},{<<"1">>,<<"2">>}]}
 ```
 """.
 -spec decode(binary() | iolist(), decode_opts()) -> csv_result().
@@ -592,7 +597,7 @@ loop(Socket, D0) ->
 ```
 """.
 -spec stream_feed(stream_decoder(), binary() | iolist()) ->
-  {[[term()]] | [map()], stream_decoder()}.
+  {[[term()]] | [tuple()] | [map()], stream_decoder()}.
 stream_feed(#stream_decoder{buffer = Buf} = D, Chunk) ->
   NewBuf = iolist_to_binary([Buf, Chunk]),
   stream_drain(D#stream_decoder{buffer = NewBuf}, []).
@@ -690,7 +695,7 @@ the remaining bytes don't form a valid row.
 ```
 """.
 -spec stream_eof(stream_decoder()) ->
-  {ok, [[term()]] | [map()]} | {error, term()}.
+  {ok, [[term()]] | [tuple()] | [map()]} | {error, term()}.
 stream_eof(#stream_decoder{buffer = Buf} = D) ->
   case is_blank(Buf) of
     true  -> {ok, []};

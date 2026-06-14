@@ -289,6 +289,38 @@ decode_return_map_test_() ->
   ].
 
 %% ----------------------------------------------------------------------------
+%% {return, tuple} option — data rows as tuples of field values
+%% ----------------------------------------------------------------------------
+
+decode_return_tuple_test_() ->
+  [
+    %% basic: rows become tuples, no headers
+    ?_assertEqual(#{headers => nil,
+                    data    => [{<<"a">>, <<"b">>}, {<<"1">>, <<"2">>}]},
+                  glazer_csv:decode(<<"a,b\n1,2\n">>, [{return, tuple}])),
+    %% multiple rows, with headers
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>],
+                    data    => [{<<"1">>, <<"2">>}, {<<"3">>, <<"4">>}]},
+                  glazer_csv:decode(<<"a,b\n1,2\n3,4\n">>, [headers, {return, tuple}])),
+    %% no data rows
+    ?_assertEqual(#{headers => [<<"a">>, <<"b">>], data => []},
+                  glazer_csv:decode(<<"a,b\n">>, [headers, {return, tuple}])),
+    %% {return, tuple} with {fields, ...}: type conversion still applies
+    ?_assertEqual(#{headers => [<<"name">>, <<"age">>],
+                    data    => [{<<"Alice">>, 30}]},
+                  glazer_csv:decode(<<"name,age\nAlice,30\n">>,
+                    [headers, {return, tuple}, {fields, [binary, integer]}])),
+    %% streaming: rows are returned as tuples
+    ?_assertEqual({[{<<"a">>, <<"b">>}, {<<"1">>, <<"2">>}], [{<<"3">>, <<"4">>}]},
+                  begin
+                    D0 = glazer_csv:stream_decoder([{return, tuple}]),
+                    {Rows1, D1} = glazer_csv:stream_feed(D0, <<"a,b\n1,2\n3,4">>),
+                    {ok, Rows2} = glazer_csv:stream_eof(D1),
+                    {Rows1, Rows2}
+                  end)
+  ].
+
+%% ----------------------------------------------------------------------------
 %% {fields, Types} option — per-column type conversion
 %% ----------------------------------------------------------------------------
 
