@@ -39,7 +39,7 @@ defmodule GlazerBench.MixProject do
       bench:        ["bench-json", "bench-yaml", "bench-csv"],
       "bench-json": "bench_json --only bench",
       "bench-yaml": "bench_yaml --only bench",
-      "bench-csv":  "bench_csv --only bench"
+      "bench-csv":  "bench_csv  --only bench"
     ]
   end
 end

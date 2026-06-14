@@ -77,10 +77,7 @@ defmodule Mix.Tasks.BenchYaml do
          {:ok, [doc | _]} = :fast_yaml.decode(b)
          doc
        end,
-       fn t ->
-         {:ok, iodata} = :fast_yaml.encode(t)
-         IO.iodata_to_binary(iodata)
-       end,
+       fn t -> IO.iodata_to_binary(:fast_yaml.encode(t)) end,
        :fast_yaml},
 
       {"yamerl",

@@ -68,7 +68,7 @@ clean:
 	@$(MAKE) --no-print-directory -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) clean 2>/dev/null || true
 
 distclean: clean
-	@rm -rf obj priv/glazer.so _build
+	@rm -rf obj priv/glazer.so _build .perf.txt
 
 test:
 	$(REBAR) eunit
@@ -115,9 +115,13 @@ memcheck:
 doc docs:
 	$(REBAR) ex_doc
 
-benchmark: bench
+benchmark bench: do-bench
 
-bench bench-yaml bench-json bench-csv: deps
+do-bench: deps
+	@rm .perf.txt
+	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix bench | tee .perf.txt
+
+bench-yaml bench-json bench-csv: deps
 	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.

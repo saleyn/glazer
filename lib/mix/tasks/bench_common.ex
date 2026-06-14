@@ -49,13 +49,7 @@ defmodule Mix.Tasks.Bench.Common do
 
   def repeat(0, _f), do: :ok
   def repeat(n, f) do
-    try do
-      f.()
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
+    f.()
     repeat(n - 1, f)
   end
 end

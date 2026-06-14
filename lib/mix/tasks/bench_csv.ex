@@ -62,7 +62,7 @@ defmodule Mix.Tasks.BenchCsv do
     base = [
       {"glazer",
        &:glazer_csv.decode/1,
-       fn t -> :glazer_csv.encode(t) end}
+       fn %{data: rows} -> :glazer_csv.encode(rows) end}
     ]
 
     optional_candidates = [

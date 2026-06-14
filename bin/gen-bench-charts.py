@@ -46,9 +46,28 @@ SIZE_CATEGORIES = ["small", "medium", "large"]
 NUM_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
+def find_heading(text, heading):
+    """
+    Return the index of `heading` in `text`, also matching headings wrapped
+    in a markdown link, e.g. "### [Benchmarking JSON](#table-of-contents)".
+    """
+    idx = text.find(heading)
+    if idx != -1:
+        return idx
+    m = re.match(r"^(#+) (.*)$", heading)
+    if m:
+        linked = f"{m.group(1)} [{m.group(2)}]("
+        idx = text.find(linked)
+        if idx != -1:
+            return idx
+    return -1
+
+
 def extract_table_block(text, heading):
     """Return the lines of the fenced code block following `heading`."""
-    idx = text.index(heading)
+    idx = find_heading(text, heading)
+    if idx == -1:
+        raise ValueError(f"Could not find heading {heading!r}")
     rest = text[idx:]
     fence_starts = [m.start() for m in re.finditer(r"^```", rest, re.MULTILINE)]
     if len(fence_starts) < 2:
@@ -381,13 +400,15 @@ def replace_bench_table(readme_text, fmt, new_table):
     Replace the (numbers in µs) table inside the fenced block that follows
     '### Benchmarking {fmt}' in readme_text.  Everything before the table
     marker (the shell-command preamble) is preserved.
+
+    Returns (new_text, replaced) where `replaced` is False (and `new_text`
+    is unchanged) if the heading or table couldn't be located.
     """
     heading = f"### Benchmarking {fmt}"
-    try:
-        hi = readme_text.index(heading)
-    except ValueError:
+    hi = find_heading(readme_text, heading)
+    if hi == -1:
         print(f"warning: {heading!r} not found in README — skipping", file=sys.stderr)
-        return readme_text
+        return readme_text, False
 
     fence_open = readme_text.index("```", hi)
     fence_close = readme_text.index("\n```", fence_open + 3)
@@ -398,10 +419,11 @@ def replace_bench_table(readme_text, fmt, new_table):
     except ValueError:
         print(f"warning: '(numbers in' not found in {heading!r} block — skipping",
               file=sys.stderr)
-        return readme_text
+        return readme_text, False
 
     new_block = block[:table_idx] + new_table
-    return readme_text[:fence_open] + new_block + readme_text[fence_close:]
+    new_text = readme_text[:fence_open] + new_block + readme_text[fence_close:]
+    return new_text, True
 
 
 def main():
@@ -422,8 +444,9 @@ def main():
             sys.exit(1)
         text = readme.read_text()
         for fmt, table in blocks:
-            text = replace_bench_table(text, fmt, table)
-            print(f"updated ### Benchmarking {fmt} in {readme.name}")
+            text, replaced = replace_bench_table(text, fmt, table)
+            if replaced:
+                print(f"updated ### Benchmarking {fmt} in {readme.name}")
         readme.write_text(text)
     else:
         text = readme.read_text()

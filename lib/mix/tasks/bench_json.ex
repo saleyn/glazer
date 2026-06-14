@@ -90,7 +90,7 @@ defmodule Mix.Tasks.BenchJson do
 
       {"thoas",
        fn b -> {:ok, r} = :thoas.decode(b); r end,
-       fn t -> {:ok, r} = :thoas.encode(t); r end,
+       &:thoas.encode/1,
        :thoas},
 
       {"euneus",
