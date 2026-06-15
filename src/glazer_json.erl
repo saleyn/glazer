@@ -166,7 +166,7 @@ Reason}` on invalid input.
 """.
 -spec 'decode!'(binary() | iolist()) -> term().
 'decode!'(Input) ->
-  decode(Input).
+  decode(Input, [use_nil]).
 
 -doc """
 Decode a JSON binary or iolist, returning `{ok, Term}` or
@@ -276,7 +276,7 @@ if `Data` cannot be encoded.
 """.
 -spec 'encode!'(term()) -> binary().
 'encode!'(Data) ->
-  encode(Data).
+  encode(Data, [use_nil]).
 
 -doc """
 Encode an Erlang term to JSON as iodata. Equivalent to `encode/1` (which
@@ -294,7 +294,7 @@ Elixir's
 """.
 -spec 'encode_to_iodata!'(term()) -> iodata().
 'encode_to_iodata!'(Data) ->
-  encode(Data).
+  encode(Data, [use_nil]).
 
 -doc """
 Minify a JSON binary or iolist, removing all unnecessary whitespace.

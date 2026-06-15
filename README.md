@@ -489,21 +489,31 @@ Elixir's built-in `JSON` module by configuring a module that exports:
 `glazer_json` exports these under the equivalent (quoted) Erlang names —
 `'decode!'/1`, `'encode!'/1`, and `'encode_to_iodata!'/1` — as thin aliases
 for `decode/1` and `encode/1`, so `glazer_json` can be configured directly
-as a `json_library()`:
+as a `json_library()`. To match Elixir's `JSON` module, where `null` decodes
+to/from `nil` rather than the atom `:null`, these three functions automatically
+apply `use_nil` — no extra configuration is needed:
 
 ```elixir
 config :phoenix, :json_library, :glazer_json
 ```
 
 ```erlang
-1> glazer_json:'decode!'(<<"{\"a\":1}">>).
-#{<<"a">> => 1}
+1> glazer_json:'decode!'(<<"{\"a\":1,\"b\":null}">>).
+#{<<"a">> => 1, <<"b">> => nil}
 
-2> glazer_json:'encode!'(#{<<"a">> => 1}).
-<<"{\"a\":1}">>
+2> glazer_json:'encode!'(#{<<"a">> => 1, <<"b">> => nil}).
+<<"{\"a\":1,\"b\":null}">>
 
-3> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1}).
-<<"{\"a\":1}">>
+3> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1, <<"b">> => nil}).
+<<"{\"a\":1,\"b\":null}">>
+```
+
+```erlang
+1> glazer_json:'decode!'(<<"{\"a\":null}">>).
+#{<<"a">> => nil}
+
+2> glazer_json:'encode!'(#{<<"a">> => nil}).
+<<"{\"a\":null}">>
 ```
 
 ### [API](#table-of-contents)
