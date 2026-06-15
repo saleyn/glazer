@@ -34,7 +34,7 @@ formats.
   - [JSON decode options](#json-decode-options)
   - [JSON encode options](#json-encode-options)
   - [jq filter support](#jq-filter-support)
-  - [Elixir `JSON.json_library()` compliance](#elixir-jsonjson_library-compliance)
+  - [Elixir's Phoenix `json_library()` compliance](#elixirs-phoenix-json_library-compliance)
   - [API](#api)
   - [Benchmarking JSON](#benchmarking-json)
 - [YAML](#yaml-1)
@@ -475,12 +475,12 @@ If `libjq` was not available at build time, `query/2,3` returns
 for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
 still builds and works without `libjq` installed.
 
-### [Elixir `JSON.json_library()` compliance](#table-of-contents)
+### [Elixir's Phoenix `json_library()` compliance](#table-of-contents)
 
-Elixir 1.20 introduces a pluggable `JSON.json_library()` configuration
-(see [phoenixframework/phoenix#6481](https://github.com/phoenixframework/phoenix/pull/6481))
+Phoenix supports a pluggable `:json_library` configuration
+(see [phoenix](https://phoenix.hexdocs.pm/1.8.8/Phoenix.html#json_library/0))
 that lets applications swap in an alternative JSON implementation for
-Elixir's built-in `JSON` module by configuring a module that exports:
+Phoenix's JSON API module by configuring a module that exports:
 
 - `decode!/1`
 - `encode!/1`

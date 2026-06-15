@@ -704,7 +704,7 @@ file_test_() ->
 %% ----------------------------------------------------------------------------
 
 bang_api_test_() ->
-  Term = #{<<"a">> => 1, <<"b">> => [true, null, 3.5]},
+  Term = #{<<"a">> => 1, <<"b">> => [true, nil, 3.5]},
   Bin  = <<"{\"a\":1,\"b\":[true,null,3.5]}">>,
   [
     ?_assertEqual(Term, glazer_json:'decode!'(Bin)),
