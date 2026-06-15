@@ -28,7 +28,8 @@ application-wide, set the `null` env key in your config:
          query/2, query/3,
          scan/1, scan/2,
          read_file/1, read_file/2, write_file/2, write_file/3,
-         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
+         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
+         'decode!'/1, 'encode!'/1, 'encode_to_iodata!'/1]).
 
 -type decode_opt() ::
     object_as_tuple
@@ -151,6 +152,23 @@ decode(Input, Opts) ->
   end.
 
 -doc """
+Decode a JSON binary to an Erlang term. Equivalent to `decode/1`, provided
+for API parity with Elixir's
+[`JSON.decode!/1`](`m:JSON#function-decode!/1`). Raises `{parse_error,
+Reason}` on invalid input.
+
+## Examples
+
+```erlang
+1> glazer_json:'decode!'(<<"{\"a\":1}">>).
+#{<<"a">> => 1}
+```
+""".
+-spec 'decode!'(binary() | iolist()) -> term().
+'decode!'(Input) ->
+  decode(Input).
+
+-doc """
 Decode a JSON binary or iolist, returning `{ok, Term}` or
 `{error, Reason}` instead of raising.
 
@@ -242,6 +260,41 @@ Encode an Erlang term to a JSON binary with options (see `t:encode_opts/0`).
 -spec encode(term(), encode_opts()) -> binary().
 encode(Data, Opts) ->
   glazer:json_encode(Data, Opts).
+
+-doc """
+Encode an Erlang term to a JSON binary. Equivalent to `encode/1`, provided
+for API parity with Elixir's
+[`JSON.encode!/1`](`m:JSON#function-encode!/1`). Raises `{encode_error, Msg}`
+if `Data` cannot be encoded.
+
+## Examples
+
+```erlang
+1> glazer_json:'encode!'(#{<<"a">> => 1}).
+<<"{\"a\":1}">>
+```
+""".
+-spec 'encode!'(term()) -> binary().
+'encode!'(Data) ->
+  encode(Data).
+
+-doc """
+Encode an Erlang term to JSON as iodata. Equivalent to `encode/1` (which
+already returns a binary, itself valid iodata), provided for API parity with
+Elixir's
+[`JSON.encode_to_iodata!/1`](`m:JSON#function-encode_to_iodata!/1`). Raises
+`{encode_error, Msg}` if `Data` cannot be encoded.
+
+## Examples
+
+```erlang
+1> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1}).
+<<"{\"a\":1}">>
+```
+""".
+-spec 'encode_to_iodata!'(term()) -> iodata().
+'encode_to_iodata!'(Data) ->
+  encode(Data).
 
 -doc """
 Minify a JSON binary or iolist, removing all unnecessary whitespace.

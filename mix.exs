@@ -1,14 +1,14 @@
-defmodule GlazerBench.MixProject do
+defmodule Glazer.MixProject do
   use Mix.Project
 
   def project do
     [
-      app:     :glazer,
-      version: "0.1.0",
-      elixir:  "~> 1.15",
-      deps:    deps(),
-      aliases: aliases()
-
+      app:      :glazer,
+      version:  "0.1.0",
+      elixir:   "~> 1.15",
+      deps:     deps(),
+      aliases:  aliases(),
+      language: :erlang
     ]
   end
 

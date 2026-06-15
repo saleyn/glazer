@@ -34,9 +34,12 @@ namespace glz {
 //-----------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
 // dirty CPU scheduler so they don't block normal scheduler threads.
-// Small inputs run inline on a normal scheduler.
-// consume_timeslice is not called: dirty schedulers ignore it, and small
-// inputs on normal schedulers complete fast enough not to need yielding.
+// Small inputs run inline on a normal scheduler; for those,
+// update_reduction_count() (see glazer_common.hpp) reports the work done to
+// the scheduler via enif_consume_timeslice so the BEAM updates the calling
+// process's reduction count instead of charging a flat 1 reduction for the
+// call. Dirty schedulers don't need this — they're not shared with regular
+// processes the same way.
 //-----------------------------------------------------------------------------
 
 static constexpr size_t DIRTY_THRESHOLD = 8192;
@@ -52,7 +55,9 @@ static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return make_tuple(env, dec.decode(reinterpret_cast<const char*>(bin.data), bin.size));
+  auto result = make_tuple(env, dec.decode(reinterpret_cast<const char*>(bin.data), bin.size));
+  update_reduction_count(env, bin.size);
+  return result;
 }
 
 static ERL_NIF_TERM nif_json_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -98,7 +103,9 @@ static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   YamlDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return make_tuple(env, dec.decode());
+  auto result = make_tuple(env, dec.decode());
+  update_reduction_count(env, bin.size);
+  return result;
 }
 
 static ERL_NIF_TERM nif_yaml_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -144,7 +151,9 @@ static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int a
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
   CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
-  return make_tuple(env, dec.decode());
+  auto result = make_tuple(env, dec.decode());
+  update_reduction_count(env, bin.size);
+  return result;
 }
 
 static ERL_NIF_TERM nif_csv_try_decode_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -212,9 +221,11 @@ static ERL_NIF_TERM nif_json_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
   const char* value_end = nullptr;
   if (scanner.scan(st, value_end)) {
     size_t offset = static_cast<size_t>(value_end - data);
+    update_reduction_count(env, offset);
     return enif_make_tuple2(env, AM_COMPLETE, enif_make_uint64(env, offset));
   }
 
+  update_reduction_count(env, bin.size);
   return enif_make_tuple2(env, AM_INCOMPLETE, scan_state_to_term(env, st));
 }
 
@@ -236,10 +247,13 @@ static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
       enif_make_tuple2(env, AM_ENCODE_ERROR,
         make_binary(env, std::string_view("cannot encode term to JSON"))));
 
-  if (!opts.pretty)
+  if (!opts.pretty) {
+    update_reduction_count(env, out.view().size());
     return make_binary(env, out.view());
+  }
 
   auto pretty_out = glz::prettify_json(out.view());
+  update_reduction_count(env, pretty_out.size());
   return make_binary(env, pretty_out);
 }
 
@@ -282,6 +296,7 @@ static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
       enif_make_tuple2(env, AM_ENCODE_ERROR,
         make_binary(env, std::string_view("cannot encode term to YAML"))));
 
+  update_reduction_count(env, out.view().size());
   return make_binary(env, out.view());
 }
 
@@ -322,6 +337,7 @@ static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       enif_make_tuple2(env, AM_ENCODE_ERROR,
         make_binary(env, std::string_view("cannot encode term to CSV"))));
 
+  update_reduction_count(env, out.view().size());
   return make_binary(env, out.view());
 }
 
@@ -351,7 +367,9 @@ static ERL_NIF_TERM nif_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
 static ERL_NIF_TERM do_json_minify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string in(reinterpret_cast<const char*>(bin.data), bin.size);
-  return make_binary(env, glz::minify_json(in));
+  auto result = make_binary(env, glz::minify_json(in));
+  update_reduction_count(env, bin.size);
+  return result;
 }
 
 static ERL_NIF_TERM nif_json_minify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -386,7 +404,9 @@ static ERL_NIF_TERM nif_json_minify(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 static ERL_NIF_TERM do_json_prettify(ErlNifEnv* env, const ErlNifBinary& bin)
 {
   std::string_view in(reinterpret_cast<const char*>(bin.data), bin.size);
-  return make_binary(env, glz::prettify_json(in));
+  auto result = make_binary(env, glz::prettify_json(in));
+  update_reduction_count(env, bin.size);
+  return result;
 }
 
 static ERL_NIF_TERM nif_json_prettify_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])

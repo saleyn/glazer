@@ -698,3 +698,18 @@ file_test_() ->
     ?_assertError(<<"nonexistent.json: no such file or directory">>,
                    glazer_json:read_file("nonexistent.json"))
   ].
+
+%% ----------------------------------------------------------------------------
+%% Elixir JSON-module API parity: decode!/1, encode!/1, encode_to_iodata!/1
+%% ----------------------------------------------------------------------------
+
+bang_api_test_() ->
+  Term = #{<<"a">> => 1, <<"b">> => [true, null, 3.5]},
+  Bin  = <<"{\"a\":1,\"b\":[true,null,3.5]}">>,
+  [
+    ?_assertEqual(Term, glazer_json:'decode!'(Bin)),
+    ?_assertError({parse_error, _}, glazer_json:'decode!'(<<"not json">>)),
+
+    ?_assertEqual(Bin, glazer_json:'encode!'(Term)),
+    ?_assertEqual(Bin, glazer_json:'encode_to_iodata!'(Term))
+  ].

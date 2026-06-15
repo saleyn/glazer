@@ -20,17 +20,50 @@
 
 namespace glz {
 
-/// Calculate <tt>a</tt> raised to the power of <tt>b</tt>.
+// Calculate `a` raised to the power of `b`.
 template <typename T>
 inline T power(T a, size_t b) {
-    if (a == 0) return 0;
+  if (a == 0) return 0;
 
-    T result = 1;
-    for (; b > 0; b >>= 1) {
-        if (b & 1) result *= a; // If b is odd, multiply the base with the result
-        a *= a;
-    }
-    return result;
+  T result = 1;
+  for (; b > 0; b >>= 1) {
+    if (b & 1) result *= a; // If b is odd, multiply the base with the result
+    a *= a;
+  }
+  return result;
+}
+
+//-----------------------------------------------------------------------------
+// Reduction-count bookkeeping for NIFs that run on a normal (non-dirty)
+// scheduler. Without this, the BEAM charges a NIF call a flat 1 reduction
+// regardless of how much CPU it actually used, which can let
+// CPU-heavy-but-inline calls starve other runnable processes on the same
+// scheduler. enif_consume_timeslice(env, percent) tells the scheduler what
+// percentage of a timeslice (1-100) was consumed so its reduction
+// accounting reflects the real work done before returning to Erlang.
+//-----------------------------------------------------------------------------
+
+static constexpr size_t BYTES_PER_REDUCTION = 20;
+static constexpr size_t REDUCTION_COUNT     = 4000;
+
+// Report the percentage of a timeslice consumed while processing `bytes`
+// bytes, so the scheduler updates the process's reduction count instead of
+// charging a flat 1 reduction for the NIF call. The return value of
+// enif_consume_timeslice (1 if the process should yield/be preempted, 0
+// otherwise) is normally used to drive cooperative scheduling for NIFs that
+// process work in chunks across multiple calls. Here it is intentionally
+// ignored: work that's long enough to need preemption is offloaded to a
+// dirty scheduler instead, so this function is only reached for inline
+// (small, sub-DIRTY_THRESHOLD) calls, where it serves purely to keep the
+// reduction count accurate.
+inline void update_reduction_count([[maybe_unused]] ErlNifEnv* env, [[maybe_unused]] size_t bytes) {
+#if ERL_NIF_MAJOR_VERSION > 2 || (ERL_NIF_MAJOR_VERSION == 2 && ERL_NIF_MINOR_VERSION >= 4)
+  size_t reds = bytes / BYTES_PER_REDUCTION;
+  int percent = static_cast<int>(reds * 100 / REDUCTION_COUNT);
+  if (percent < 1)   percent = 1;
+  if (percent > 100) percent = 100;
+  (void)enif_consume_timeslice(env, percent);
+#endif
 }
 
 //-----------------------------------------------------------------------------

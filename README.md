@@ -1,12 +1,10 @@
 ![Banner](https://github.com/saleyn/glazer/blob/main/assets/glazer.png?raw=true)
 
-# Glazer
-
 [![build](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml/badge.svg)](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml)
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
 [![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
-Very fast Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
+The fastest Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
 built around hand-rolled recursive-descent decoders and direct
 term-to-text encoders that produce/consume native Erlang terms in a
 single pass. The JSON implementation was inspired by the
@@ -18,50 +16,50 @@ formats.
 
 ## Table of contents
 
-- [Glazer](#glazer)
-  - [Table of contents](#table-of-contents)
-  - [Features](#features)
-    - [JSON](#json)
-    - [YAML](#yaml)
-    - [CSV](#csv)
-  - [Installation](#installation)
-    - [Building](#building)
-    - [Testing](#testing)
-    - [Benchmarking](#benchmarking)
-  - [Performance](#performance)
-  - [JSON](#json-1)
-    - [Usage](#usage)
-    - [Streaming](#streaming)
-      - [Efficiency](#efficiency)
-    - [Null term configuration](#null-term-configuration)
-    - [JSON decode options](#json-decode-options)
-    - [JSON encode options](#json-encode-options)
-    - [jq filter support](#jq-filter-support)
-    - [API](#api)
-    - [Benchmarking JSON](#benchmarking-json)
-  - [YAML](#yaml-1)
-    - [Usage](#usage-1)
-    - [Streaming](#streaming-1)
-    - [YAML decode options](#yaml-decode-options)
-    - [YAML encode options](#yaml-encode-options)
-    - [API](#api-1)
-    - [Benchmarking YAML](#benchmarking-yaml)
-  - [CSV](#csv-1)
-    - [Usage](#usage-2)
-    - [Streaming](#streaming-2)
-    - [CSV decode options](#csv-decode-options)
-    - [Field type conversion](#field-type-conversion)
-      - [`default` and `on_failure`](#default-and-on_failure)
-    - [CSV Encode options](#csv-encode-options)
-    - [API](#api-2)
-    - [Benchmarking CSV](#benchmarking-csv)
-  - [Big integers](#big-integers)
-    - [API](#api-3)
-  - [Limitations](#limitations)
-    - [Scope](#scope)
-    - [Nesting depth](#nesting-depth)
-  - [Performance Optimization Details](#performance-optimization-details)
-  - [License](#license)
+- [Table of contents](#table-of-contents)
+- [Features](#features)
+  - [JSON](#json)
+  - [YAML](#yaml)
+  - [CSV](#csv)
+- [Installation](#installation)
+  - [Building](#building)
+  - [Testing](#testing)
+  - [Benchmarking](#benchmarking)
+- [Performance](#performance)
+- [JSON](#json-1)
+  - [Usage](#usage)
+  - [Streaming](#streaming)
+    - [Efficiency](#efficiency)
+  - [Null term configuration](#null-term-configuration)
+  - [JSON decode options](#json-decode-options)
+  - [JSON encode options](#json-encode-options)
+  - [jq filter support](#jq-filter-support)
+  - [Elixir `JSON.json_library()` compliance](#elixir-jsonjson_library-compliance)
+  - [API](#api)
+  - [Benchmarking JSON](#benchmarking-json)
+- [YAML](#yaml-1)
+  - [Usage](#usage-1)
+  - [Streaming](#streaming-1)
+  - [YAML decode options](#yaml-decode-options)
+  - [YAML encode options](#yaml-encode-options)
+  - [API](#api-1)
+  - [Benchmarking YAML](#benchmarking-yaml)
+- [CSV](#csv-1)
+  - [Usage](#usage-2)
+  - [Streaming](#streaming-2)
+  - [CSV decode options](#csv-decode-options)
+  - [Field type conversion](#field-type-conversion)
+    - [`default` and `on_failure`](#default-and-on_failure)
+  - [CSV Encode options](#csv-encode-options)
+  - [API](#api-2)
+  - [Benchmarking CSV](#benchmarking-csv)
+- [Big integers](#big-integers)
+  - [API](#api-3)
+- [Limitations](#limitations)
+  - [Scope](#scope)
+  - [Nesting depth](#nesting-depth)
+- [Performance Optimization Details](#performance-optimization-details)
+- [License](#license)
 
 ## [Features](#table-of-contents)
 
@@ -477,6 +475,37 @@ If `libjq` was not available at build time, `query/2,3` returns
 for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
 still builds and works without `libjq` installed.
 
+### [Elixir `JSON.json_library()` compliance](#table-of-contents)
+
+Elixir 1.20 introduces a pluggable `JSON.json_library()` configuration
+(see [phoenixframework/phoenix#6481](https://github.com/phoenixframework/phoenix/pull/6481))
+that lets applications swap in an alternative JSON implementation for
+Elixir's built-in `JSON` module by configuring a module that exports:
+
+- `decode!/1`
+- `encode!/1`
+- `encode_to_iodata!/1`
+
+`glazer_json` exports these under the equivalent (quoted) Erlang names —
+`'decode!'/1`, `'encode!'/1`, and `'encode_to_iodata!'/1` — as thin aliases
+for `decode/1` and `encode/1`, so `glazer_json` can be configured directly
+as a `json_library()`:
+
+```elixir
+config :phoenix, :json_library, :glazer_json
+```
+
+```erlang
+1> glazer_json:'decode!'(<<"{\"a\":1}">>).
+#{<<"a">> => 1}
+
+2> glazer_json:'encode!'(#{<<"a">> => 1}).
+<<"{\"a\":1}">>
+
+3> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1}).
+<<"{\"a\":1}">>
+```
+
 ### [API](#table-of-contents)
 
 All functions below are in `glazer_json`.
@@ -486,6 +515,9 @@ All functions below are in `glazer_json`.
 | `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
 | `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
 | `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary |
+| `'decode!'/1` | Decode a JSON binary or iolist to an Erlang term (alias for `decode/1`) |
+| `'encode!'/1` | Encode an Erlang term to a JSON binary (alias for `encode/1`) |
+| `'encode_to_iodata!'/1` | Encode an Erlang term to JSON as iodata (alias for `encode/1`) |
 | `minify/1` | Remove unnecessary whitespace from a JSON document |
 | `prettify/1` | Pretty-print a JSON document with two-space indentation |
 | `read_file/1`, `read_file/2` | Read a file and decode its contents as JSON |
