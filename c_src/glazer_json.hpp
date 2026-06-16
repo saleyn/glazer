@@ -41,6 +41,11 @@ struct DecodeOpts {
   bool         label_atom          = false;
   bool         label_existing_atom = false;
   bool         dedupe_keys         = false;
+  // When true, unescaped strings are copied into fresh binaries instead of
+  // referencing the input via sub-binary.  Use this when decoded strings
+  // will outlive the input binary by a large margin: without it, one live
+  // string keeps the entire input buffer from being collected.
+  bool         copy_strings        = false;
 };
 
 struct EncodeOpts {
@@ -61,6 +66,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
     if      (enif_is_identical(head, AM_OBJECT_AS_TUPLE))  opts.object_as_tuple = true;
     else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
     else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
+    else if (enif_is_identical(head, AM_COPY_STRINGS))     opts.copy_strings    = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -321,15 +327,19 @@ struct Decoder {
   }
 
   // Make an Erlang binary from a JSON string span (handles escapes).
-  // When there are no escapes the span points directly into the original input
-  // buffer — use enif_make_sub_binary for a zero-copy reference rather than
-  // allocating and copying.  Only escaped strings pay the copy cost.
+  // Default (copy_strings == false): unescaped strings are returned as
+  // sub-binaries of the original input — zero allocation, but the input
+  // binary stays alive as long as any sub-binary referencing it does.
+  // With copy_strings == true: always allocates a fresh binary, allowing the
+  // GC to reclaim the input buffer independently of the decoded results.
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
     if (!has_escape) [[likely]] {
-      // s is within [m_beg, m_end): produce a sub-binary of the input term.
-      size_t offset = static_cast<size_t>(s - m_beg);
-      return enif_make_sub_binary(m_env, m_input_bin, offset, len);
+      if (!m_opts.copy_strings) {
+        size_t offset = static_cast<size_t>(s - m_beg);
+        return enif_make_sub_binary(m_env, m_input_bin, offset, len);
+      }
+      return make_binary(m_env, std::string_view(s, len));
     }
     return make_binary(m_env, unescape(s, len, buf));
   }

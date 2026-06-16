@@ -964,16 +964,40 @@ of the gap over the slower contenders:
 
 - **Single-pass, zero-copy decode/encode.** As noted above, there's no
   intermediate generic JSON tree — the decoder builds Erlang terms directly
-  from the input bytes (string keys/values are views into the original
-  binary whenever no escaping is needed) and the encoder writes JSON bytes
-  directly from Erlang terms. This removes a whole staging
-  allocate-and-copy pass that tree-based decoders pay for.
+  from the input bytes and the encoder writes JSON bytes directly from
+  Erlang terms. This removes a whole staging allocate-and-copy pass that
+  tree-based decoders pay for.
+
+- **Sub-binary string values (zero allocation on decode).** Unescaped JSON
+  string values are returned as `enif_make_sub_binary` terms — a slice of
+  the original input binary — rather than newly allocated copies. No
+  `memcpy` or heap allocation occurs for the common case where strings
+  contain no `\` escapes. Only escaped strings pay the copy cost (to
+  materialise the unescaped bytes). The `copy_strings` decode option opts
+  back into copying when decoded strings are long-lived and the input is
+  large (keeping one sub-binary alive would otherwise pin the entire input
+  buffer in memory).
 
 - **Inline, growable output buffer (`OutBuf`).** Encoding writes into a
   4 KB stack-allocated buffer first; only documents that exceed that spill
   to the heap, growing geometrically via `malloc`/`realloc` (the latter
   resizes in place when possible, avoiding a copy on every growth — a
   plain `new[]`/`delete[]` doubling strategy can't do this).
+
+- **Pre-reserved worst-case output, raw-pointer inner loop.** Before
+  encoding any string, `json_escape_string` and `emit_double_quoted`
+  (YAML) call `out.ensure(len * 6 + 2)` once — the absolute worst case
+  of six output bytes per input byte (`\uXXXX`) plus two quote characters.
+  After that single reservation the inner loop writes through a raw `char*`
+  pointer with no further bounds checks or `ensure()` calls. This removes
+  a branch and a potential realloc from every character in the hot path.
+
+- **Dense escape table (`ESCAPE_TAB`).** Instead of a per-character
+  `switch` statement, a 256-entry `constexpr` table maps each byte to an
+  `{len, seq[7]}` struct. Emitting an escape sequence is a single indexed
+  table load followed by one `memcpy(dst, e.seq, e.len)` — branch-free
+  and inlined by the compiler. The same table is shared by the JSON and
+  YAML encoders via `glazer_common.hpp`.
 
 - **Key cache for repeated object keys (`KeyCache`).** Real-world JSON
   documents reuse the same small set of key strings heavily (e.g. a
@@ -997,17 +1021,19 @@ of the gap over the slower contenders:
   coincidentally look live). This makes cache construction effectively
   free, regardless of table size.
 
-- **SIMD string scanning.** The JSON string decoder and encoder use an
-  AVX2 → SSE2 → SWAR cascade to skip over clean byte spans 32, 16, or 8
-  bytes at a time. The decoder scans for `"` and `\` (the only stop bytes
-  in clean strings); the encoder additionally detects control characters
-  (`c < 0x20`) via a bias trick that maps unsigned `< 0x20` to a signed
-  comparison, avoiding a branch-per-byte table lookup for the common
-  all-ASCII case. The same cascade is used by the CSV unquoted-field
-  scanner (`delimiter | LF | CR`) and the YAML double-quoted scalar scanner
-  (`"`, `\`, `LF`, `CR`), as well as single-character finders consolidated
-  in `glazer_common.hpp` (`find_byte`). On AVX2 hardware (Haswell+) this
-  processes up to 32 bytes per iteration instead of 1.
+- **SIMD string scanning (NEON / AVX2 / SSE2).** A shared `find_escape_pos`
+  function in `glazer_common.hpp` scans for `"`, `\`, and control
+  characters (`c < 0x20`) using an architecture cascade: AArch64 NEON
+  (16 bytes/iter), x86 AVX2 (32 bytes/iter), SSE2 (16 bytes/iter), then a
+  byte-table scalar fallback. Control-character detection uses a bias trick —
+  XOR with `0x80` shifts the unsigned `< 0x20` range into a region where a
+  single signed `vclt`/`cmpgt` instruction covers all 32 values at once,
+  avoiding 32 separate equality checks. The same scanner is used by both
+  the JSON and YAML string encoders. Separate SIMD scanners handle
+  format-specific stop sets: `find_break` (YAML line-break scanner),
+  `find_dq_special` (YAML `"` / `\` / LF / CR), `find_field_end` (CSV
+  `delimiter | LF | CR`), and `find_csv_special` (CSV quoting check) — all
+  with NEON, AVX2, and SSE2 paths.
 
 - **SWAR whitespace skipping.** `skip_ws` checks the next byte before
   paying for any wider load, then — for runs of whitespace — scans 8 bytes
@@ -1015,12 +1041,6 @@ of the gap over the slower contenders:
   find the first non-whitespace byte. Minified JSON (the overwhelmingly
   common case) has little or no structural whitespace, so the single-byte
   fast path dominates; the 8-byte path handles pretty-printed inputs.
-
-- **Table-driven string escaping with bulk copies.** JSON string escaping
-  locates the next byte needing escaping in bulk (via the SIMD scanner
-  above), copies the clean prefix in one `memcpy`, then falls into a
-  per-byte switch only for the rare characters that actually need an escape
-  sequence.
 
 - **Fast integer formatting.** Integers are written to JSON using a
   lookup-table-based digit-pair algorithm (avoiding division for small

@@ -23,6 +23,7 @@ static ERL_NIF_TERM AM_LABEL_ATOM;
 static ERL_NIF_TERM AM_LABEL_EXISTING_ATOM;
 static ERL_NIF_TERM AM_LABEL_BINARY;
 static ERL_NIF_TERM AM_DEDUPE_KEYS;
+static ERL_NIF_TERM AM_COPY_STRINGS;
 
 // Encode option atoms
 static ERL_NIF_TERM AM_PRETTY;
@@ -113,6 +114,7 @@ inline void init_atoms(ErlNifEnv* env)
   AM_LABEL_EXISTING_ATOM       = enif_make_atom(env, "existing_atom");
   AM_LABEL_BINARY              = enif_make_atom(env, "binary");
   AM_DEDUPE_KEYS               = enif_make_atom(env, "dedupe_keys");
+  AM_COPY_STRINGS              = enif_make_atom(env, "copy_strings");
 
   AM_PRETTY                    = enif_make_atom(env, "pretty");
   AM_UESCAPE                   = enif_make_atom(env, "uescape");

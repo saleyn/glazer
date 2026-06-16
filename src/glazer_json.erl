@@ -36,7 +36,8 @@ application-wide, set the `null` env key in your config:
   | use_nil
   | {null_term, atom()}
   | {keys, atom | existing_atom | binary}
-  | dedupe_keys.
+  | dedupe_keys
+  | copy_strings.
 
 -doc """
 Decode options:
@@ -53,6 +54,14 @@ Decode options:
   default) or with `{keys, atom | existing_atom}`: a JSON object with
   duplicate keys is always deduped (last value wins) when decoded to a map,
   since maps cannot represent duplicate keys.
+- `copy_strings`          - always allocate a fresh binary for each decoded
+  string value, rather than returning a sub-binary that references the
+  original input. By default (without this option) unescaped strings are
+  zero-copy sub-binaries of the input, which is faster but keeps the entire
+  input binary alive in memory as long as any decoded string referencing it
+  is reachable. Use `copy_strings` when decoded strings are long-lived and
+  the input is large, to allow the GC to reclaim the input buffer
+  independently.
 """.
 -type decode_opts() :: [decode_opt()].
 
