@@ -122,6 +122,20 @@ try_decode(Input, Opts) ->
 -doc """
 Encode an Erlang term to a YAML binary in block style (2-space indentation,
 sequences at the same indentation as the mapping key that owns them).
+
+Raises `{encode_error, {Msg, Term}}` if `Data` contains a value that
+cannot be represented as YAML (e.g. an improper list, a pid, or a tuple
+that is not a `{[{K,V},...]}` proplist).
+
+## Examples
+
+```erlang
+1> glazer_yaml:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
+<<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>
+
+2> glazer_yaml:encode([1|2]).
+** exception error: {encode_error,{<<"cannot encode improper list as sequence">>,2}}
+```
 """.
 -spec encode(term()) -> binary().
 encode(Data) ->
@@ -129,6 +143,9 @@ encode(Data) ->
 
 -doc """
 Encode an Erlang term to a YAML binary in block style with options.
+
+Raises `{encode_error, {Msg, Term}}` if `Data` contains a value that
+cannot be represented as YAML.
 
 ## Example
 

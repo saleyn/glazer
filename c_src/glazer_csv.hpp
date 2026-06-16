@@ -71,161 +71,6 @@ struct CsvFieldSpec {
 };
 
 //-----------------------------------------------------------------------------
-// Minimal strptime-like parser, used to turn a `{datetime, InputFormat}`
-// field into Unix epoch seconds (UTC).
-//
-// Supported directives: %Y %y %m %d %H %M %S %f %z, and literal `%%`.
-// Any other character in the format must match the input literally; a space
-// in the format matches a run of one-or-more whitespace characters in the
-// input (as with strptime).
-//-----------------------------------------------------------------------------
-
-namespace datetime {
-
-// Days since 1970-01-01 for the given proleptic-Gregorian civil date.
-// Howard Hinnant's `days_from_civil` algorithm (public domain).
-inline int64_t days_from_civil(int64_t y, unsigned m, unsigned d)
-{
-  y -= m <= 2;
-  const int64_t era = (y >= 0 ? y : y - 399) / 400;
-  const unsigned yoe = static_cast<unsigned>(y - era * 400);          // [0, 399]
-  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
-  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;          // [0, 146096]
-  return era * 146097 + static_cast<int64_t>(doe) - 719468;
-}
-
-inline bool parse_uint(const char*& p, const char* end, int max_digits, int& out)
-{
-  const char* start = p;
-  out = 0;
-  while (p < end && (p - start) < max_digits && *p >= '0' && *p <= '9') {
-    out = out * 10 + (*p - '0');
-    ++p;
-  }
-  return p > start;
-}
-
-// Parses `input` according to `format` (a strptime-like format string) and
-// returns the corresponding Unix epoch time in seconds (UTC), or
-// `std::nullopt` if the input doesn't match the format.
-// NOTE: we could use std::get_time(), but it's locale-dependent and doesn't
-// support fractional seconds or timezone offsets, so we implement our own
-inline std::optional<int64_t> parse(std::string_view input, std::string_view format)
-{
-  const char* p   = input.data();
-  const char* end = p + input.size();
-  const char* f   = format.data();
-  const char* fe  = f + format.size();
-
-  int year = 1970, month = 1, day = 1, hour = 0, minute = 0, second = 0;
-  bool have_date = false;
-  int tz_offset_sec = 0;
-
-  while (f < fe) {
-    char fc = *f;
-
-    if (fc == '%' && f + 1 < fe) {
-      char spec = f[1];
-      f += 2;
-      switch (spec) {
-        case 'Y': {
-          int v;
-          if (!parse_uint(p, end, 4, v)) return std::nullopt;
-          year = v; have_date = true;
-          break;
-        }
-        case 'y': {
-          int v;
-          if (!parse_uint(p, end, 2, v)) return std::nullopt;
-          year = (v <= 68) ? 2000 + v : 1900 + v; have_date = true;
-          break;
-        }
-        case 'm': {
-          int v;
-          if (!parse_uint(p, end, 2, v) || v < 1 || v > 12) return std::nullopt;
-          month = v; have_date = true;
-          break;
-        }
-        case 'd': {
-          int v;
-          if (!parse_uint(p, end, 2, v) || v < 1 || v > 31) return std::nullopt;
-          day = v; have_date = true;
-          break;
-        }
-        case 'H': {
-          int v;
-          if (!parse_uint(p, end, 2, v) || v > 23) return std::nullopt;
-          hour = v;
-          break;
-        }
-        case 'M': {
-          int v;
-          if (!parse_uint(p, end, 2, v) || v > 59) return std::nullopt;
-          minute = v;
-          break;
-        }
-        case 'S': {
-          int v;
-          if (!parse_uint(p, end, 2, v) || v > 60) return std::nullopt;
-          second = v;
-          break;
-        }
-        case 'f': {
-          // Fractional seconds — consume digits, discard.
-          int v;
-          if (!parse_uint(p, end, 9, v)) return std::nullopt;
-          break;
-        }
-        case 'z': {
-          if (p < end && (*p == 'Z' || *p == 'z')) { ++p; tz_offset_sec = 0; break; }
-          if (p >= end || (*p != '+' && *p != '-'))
-            return std::nullopt;
-          auto neg = *p == '-';
-          ++p;
-          int hh, mm = 0;
-          if (!parse_uint(p, end, 2, hh))
-            return std::nullopt;
-          if (p < end && *p == ':') ++p;
-          if (p < end && *p >= '0' && *p <= '9' && !parse_uint(p, end, 2, mm))
-            return std::nullopt;
-          tz_offset_sec = (hh * 3600 + mm * 60) * (neg ? -1 : 1);
-          break;
-        }
-        case '%':
-          if (p >= end || *p != '%')
-            return std::nullopt;
-          ++p;
-          break;
-        default:
-          return std::nullopt;
-      }
-      continue;
-    }
-
-    if (fc == ' ') {
-      if (p >= end || !std::isspace(static_cast<uint8_t>(*p))) [[unlikely]]
-        return std::nullopt;
-      while (p < end && std::isspace(static_cast<uint8_t>(*p))) ++p;
-      ++f;
-      continue;
-    }
-
-    if (p >= end || *p != fc) [[unlikely]]
-      return std::nullopt;
-    ++p; ++f;
-  }
-
-  if (p != end)   return std::nullopt; // trailing input not consumed by format
-  if (!have_date) return std::nullopt;
-
-  auto days = days_from_civil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
-  auto secs = days * 86400 + hour * 3600 + minute * 60 + second - tz_offset_sec;
-  return secs;
-}
-
-} // namespace datetime
-
-//-----------------------------------------------------------------------------
 // Options
 //-----------------------------------------------------------------------------
 
@@ -856,10 +701,11 @@ struct CsvEncoder {
   ErlNifEnv*           m_env;
   const CsvEncodeOpts& m_opts;
   OutBuf&              m_out;
-  std::string          m_err;
+  const char*          m_err;
+  ERL_NIF_TERM         m_err_term;
 
   CsvEncoder(ErlNifEnv* e, const CsvEncodeOpts& o, OutBuf& out)
-    : m_env(e), m_opts(o), m_out(out) {}
+    : m_env(e), m_opts(o), m_out(out), m_err(""), m_err_term(AM_NIL) {}
 
   void push_field_raw(std::string_view sv)
   {
@@ -889,7 +735,8 @@ struct CsvEncoder {
     switch (enif_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
-        if (!enif_inspect_binary(m_env, term, &bin)) return false;
+        if (!enif_inspect_binary(m_env, term, &bin)) [[unlikely]]
+          return false;
         push_field_raw({reinterpret_cast<const char*>(bin.data), bin.size});
         return true;
       }
@@ -898,17 +745,20 @@ struct CsvEncoder {
 
       case ERL_NIF_TERM_TYPE_FLOAT: {
         double d;
-        if (!enif_get_double(m_env, term, &d)) return false;
+        if (!enif_get_double(m_env, term, &d)) [[unlikely]]
+          return false;
         char buf[32];
         auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-        if (ec != std::errc{}) return false;
+        if (ec != std::errc{}) [[unlikely]]
+          return false;
         m_out.push(buf, e - buf);
         return true;
       }
       case ERL_NIF_TERM_TYPE_ATOM: {
         char buf[256];
         std::string_view sv;
-        if (!atom_to_sv(m_env, term, buf, sizeof(buf), sv)) return false;
+        if (!atom_to_sv(m_env, term, buf, sizeof(buf), sv)) [[unlikely]]
+          return false;
         push_field_raw(sv);
         return true;
       }
@@ -924,8 +774,11 @@ struct CsvEncoder {
     while (enif_get_list_cell(m_env, tail, &head, &tail)) {
       if (!first) m_out.push(m_opts.delimiter);
       first = false;
-      if (!encode_field(head)) { m_err = "cannot encode CSV field"; return false; }
+      if (!encode_field(head)) [[unlikely]]
+        return error("cannot encode CSV field", head);
     }
+    if (!enif_is_empty_list(m_env, tail)) [[unlikely]]
+      return error("cannot encode improper list as CSV row", tail);
     m_out.push(m_opts.line_ending);
     return true;
   }
@@ -936,7 +789,8 @@ struct CsvEncoder {
       if (i > 0) m_out.push(m_opts.delimiter);
       ERL_NIF_TERM val;
       if (!enif_get_map_value(m_env, map, header[i], &val)) continue; // missing key -> empty field
-      if (!encode_field(val)) { m_err = "cannot encode CSV field"; return false; }
+      if (!encode_field(val)) [[unlikely]]
+        return error("cannot encode CSV field", val);
     }
     m_out.push(m_opts.line_ending);
     return true;
@@ -960,45 +814,52 @@ struct CsvEncoder {
         // Determine column order from the first row's map keys.
         ERL_NIF_TERM head, tail = term;
         enif_get_list_cell(m_env, tail, &head, &tail);
-        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) {
-          m_err = "headers option requires rows to be maps";
-          return false;
-        }
+        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+          return error("headers option requires rows to be maps", head);
 
         ERL_NIF_TERM key, val;
-        ErlNifMapIterator it;
-        enif_map_iterator_create(m_env, head, &it, ERL_NIF_MAP_ITERATOR_FIRST);
-        while (enif_map_iterator_get_pair(m_env, &it, &key, &val)) {
+        auto it = MapIterator::create(m_env, head);
+        if (!it) [[unlikely]]
+          return error("failed to create a map iterator", AM_NIL);
+        while (it->get_pair(&key, &val)) {
           header.push_back(key);
-          enif_map_iterator_next(m_env, &it);
+          it->next();
         }
-        enif_map_iterator_destroy(m_env, &it);
       }
 
       // Emit header row.
       for (size_t i = 0; i < header.size(); ++i) {
         if (i > 0) m_out.push(m_opts.delimiter);
-        if (!encode_field(header[i])) { m_err = "cannot encode CSV header"; return false; }
+        if (!encode_field(header[i])) [[unlikely]]
+          return error("cannot encode CSV header", header[i]);
       }
       m_out.push(m_opts.line_ending);
 
       ERL_NIF_TERM row, rest = term;
       while (enif_get_list_cell(m_env, rest, &row, &rest)) {
-        if (enif_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) {
-          m_err = "headers option requires rows to be maps";
+        if (enif_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+          return error("headers option requires rows to be maps", row);
+        if (!encode_map_row(row, header)) [[unlikely]]
           return false;
-        }
-        if (!encode_map_row(row, header)) return false;
       }
       return true;
     }
 
     ERL_NIF_TERM row, rest = term;
     while (enif_get_list_cell(m_env, rest, &row, &rest)) {
-      if (!enif_is_list(m_env, row)) { m_err = "expected each row to be a list"; return false; }
-      if (!encode_row(row)) return false;
+      if (!enif_is_list(m_env, row)) [[unlikely]]
+        return error("expected each row to be a list", row);
+      if (!encode_row(row)) [[unlikely]]
+        return false;
     }
     return true;
+  }
+private:
+  template <int N>
+  bool error(const char (&err)[N], ERL_NIF_TERM term) {
+    m_err      = err;
+    m_err_term = term;
+    return false;
   }
 };
 

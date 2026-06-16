@@ -130,6 +130,17 @@ encode_map_keys_test_() ->
     ?_assertMatch(<<"{", _/binary>>, glazer_json:encode(#{<<"a">> => 1}))
   ].
 
+%% Improper lists (e.g. [1|2]) must be rejected with an encode_error rather
+%% than silently truncated to the proper prefix — see issue #4.
+encode_improper_list_test_() ->
+  [
+    ?_assertError({encode_error, _}, glazer_json:encode([1|2])),
+    ?_assertError({encode_error, _}, glazer_json:encode([1, 2|3])),
+    ?_assertError({encode_error, _}, glazer_json:encode([<<"a">>|<<"b">>])),
+    %% nested improper list is also caught
+    ?_assertError({encode_error, _}, glazer_json:encode([[1|2]]))
+  ].
+
 pretty_test_() ->
   Compact = <<"[1,2,3]">>,
   Pretty = glazer_json:prettify(Compact),

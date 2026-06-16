@@ -253,6 +253,75 @@ struct KeyCache {
 };
 
 //-----------------------------------------------------------------------------
+// RAII wrapper for ErlNifMapIterator — automatically calls
+// enif_map_iterator_destroy on scope exit.
+//
+// Only constructible via the static factory:
+//   auto iter = MapIterator::create(env, map);   // std::optional<MapIterator>
+//   if (!iter) return false;
+//   while (iter->get_pair(&k, &v)) { ...; iter->next(); }
+//-----------------------------------------------------------------------------
+
+struct MapIterator {
+  MapIterator(const MapIterator&)            = delete;
+  MapIterator& operator=(const MapIterator&) = delete;
+
+  MapIterator(MapIterator&& o) noexcept
+    : m_env(o.m_env), m_iter(o.m_iter), m_live(o.m_live)
+  {
+    o.m_live = false;
+  }
+
+  MapIterator& operator=(MapIterator&& o) noexcept
+  {
+    if (this != &o) {
+      destroy();
+      m_env  = o.m_env;
+      m_iter = o.m_iter;
+      m_live = o.m_live;
+      o.m_live = false;
+    }
+    return *this;
+  }
+
+  ~MapIterator() { destroy(); }
+
+  static std::optional<MapIterator> create(
+    ErlNifEnv* env, ERL_NIF_TERM map,
+    ErlNifMapIteratorEntry entry = ERL_NIF_MAP_ITERATOR_FIRST)
+  {
+    MapIterator it;
+    if (!enif_map_iterator_create(env, map, &it.m_iter, entry))
+      return std::nullopt;
+    it.m_env  = env;
+    it.m_live = true;
+    return it;
+  }
+
+  bool get_pair(ERL_NIF_TERM* key, ERL_NIF_TERM* val)
+  {
+    return enif_map_iterator_get_pair(m_env, &m_iter, key, val);
+  }
+
+  void next() { enif_map_iterator_next(m_env, &m_iter); }
+
+private:
+  ErlNifEnv*        m_env;
+  ErlNifMapIterator m_iter;
+  bool              m_live{false};
+
+  MapIterator() = default;
+
+  void destroy()
+  {
+    if (m_live) {
+      enif_map_iterator_destroy(m_env, &m_iter);
+      m_live = false;
+    }
+  }
+};
+
+//-----------------------------------------------------------------------------
 // Atom / UTF-8 helpers shared by the JSON and YAML encoders
 //-----------------------------------------------------------------------------
 
@@ -368,5 +437,160 @@ inline const char* find_byte(const char* p, const char* end, char c) noexcept
   while (p < end && *p != c) ++p;
   return p;
 }
+
+//-----------------------------------------------------------------------------
+// Minimal strptime-like parser, used to turn a `{datetime, InputFormat}`
+// field into Unix epoch seconds (UTC).
+//
+// Supported directives: %Y %y %m %d %H %M %S %f %z, and literal `%%`.
+// Any other character in the format must match the input literally; a space
+// in the format matches a run of one-or-more whitespace characters in the
+// input (as with strptime).
+//-----------------------------------------------------------------------------
+
+namespace datetime {
+
+  // Days since 1970-01-01 for the given proleptic-Gregorian civil date.
+  // Howard Hinnant's `days_from_civil` algorithm (public domain).
+  inline int64_t days_from_civil(int64_t y, unsigned m, unsigned d)
+  {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);          // [0, 399]
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;          // [0, 146096]
+    return era * 146097 + static_cast<int64_t>(doe) - 719468;
+  }
+
+  inline bool parse_uint(const char*& p, const char* end, int max_digits, int& out)
+  {
+    const char* start = p;
+    out = 0;
+    while (p < end && (p - start) < max_digits && *p >= '0' && *p <= '9') {
+      out = out * 10 + (*p - '0');
+      ++p;
+    }
+    return p > start;
+  }
+
+  // Parses `input` according to `format` (a strptime-like format string) and
+  // returns the corresponding Unix epoch time in seconds (UTC), or
+  // `std::nullopt` if the input doesn't match the format.
+  // NOTE: we could use std::get_time(), but it's locale-dependent and doesn't
+  // support fractional seconds or timezone offsets, so we implement our own
+  inline std::optional<int64_t> parse(std::string_view input, std::string_view format)
+  {
+    const char* p   = input.data();
+    const char* end = p + input.size();
+    const char* f   = format.data();
+    const char* fe  = f + format.size();
+
+    int year = 1970, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+    bool have_date = false;
+    int tz_offset_sec = 0;
+
+    while (f < fe) {
+      char fc = *f;
+
+      if (fc == '%' && f + 1 < fe) {
+        char spec = f[1];
+        f += 2;
+        switch (spec) {
+          case 'Y': {
+            int v;
+            if (!parse_uint(p, end, 4, v)) return std::nullopt;
+            year = v; have_date = true;
+            break;
+          }
+          case 'y': {
+            int v;
+            if (!parse_uint(p, end, 2, v)) return std::nullopt;
+            year = (v <= 68) ? 2000 + v : 1900 + v; have_date = true;
+            break;
+          }
+          case 'm': {
+            int v;
+            if (!parse_uint(p, end, 2, v) || v < 1 || v > 12) return std::nullopt;
+            month = v; have_date = true;
+            break;
+          }
+          case 'd': {
+            int v;
+            if (!parse_uint(p, end, 2, v) || v < 1 || v > 31) return std::nullopt;
+            day = v; have_date = true;
+            break;
+          }
+          case 'H': {
+            int v;
+            if (!parse_uint(p, end, 2, v) || v > 23) return std::nullopt;
+            hour = v;
+            break;
+          }
+          case 'M': {
+            int v;
+            if (!parse_uint(p, end, 2, v) || v > 59) return std::nullopt;
+            minute = v;
+            break;
+          }
+          case 'S': {
+            int v;
+            if (!parse_uint(p, end, 2, v) || v > 60) return std::nullopt;
+            second = v;
+            break;
+          }
+          case 'f': {
+            // Fractional seconds — consume digits, discard.
+            int v;
+            if (!parse_uint(p, end, 9, v)) return std::nullopt;
+            break;
+          }
+          case 'z': {
+            if (p < end && (*p == 'Z' || *p == 'z')) { ++p; tz_offset_sec = 0; break; }
+            if (p >= end || (*p != '+' && *p != '-'))
+              return std::nullopt;
+            auto neg = *p == '-';
+            ++p;
+            int hh, mm = 0;
+            if (!parse_uint(p, end, 2, hh))
+              return std::nullopt;
+            if (p < end && *p == ':') ++p;
+            if (p < end && *p >= '0' && *p <= '9' && !parse_uint(p, end, 2, mm))
+              return std::nullopt;
+            tz_offset_sec = (hh * 3600 + mm * 60) * (neg ? -1 : 1);
+            break;
+          }
+          case '%':
+            if (p >= end || *p != '%')
+              return std::nullopt;
+            ++p;
+            break;
+          default:
+            return std::nullopt;
+        }
+        continue;
+      }
+
+      if (fc == ' ') {
+        if (p >= end || !std::isspace(static_cast<uint8_t>(*p))) [[unlikely]]
+          return std::nullopt;
+        while (p < end && std::isspace(static_cast<uint8_t>(*p))) ++p;
+        ++f;
+        continue;
+      }
+
+      if (p >= end || *p != fc) [[unlikely]]
+        return std::nullopt;
+      ++p; ++f;
+    }
+
+    if (p != end)   return std::nullopt; // trailing input not consumed by format
+    if (!have_date) return std::nullopt;
+
+    auto days = days_from_civil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+    auto secs = days * 86400 + hour * 3600 + minute * 60 + second - tz_offset_sec;
+    return secs;
+  }
+
+} // namespace datetime
 
 } // namespace glz

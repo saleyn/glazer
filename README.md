@@ -524,7 +524,7 @@ All functions below are in `glazer_json`.
 |---|---|
 | `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
 | `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
-| `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary |
+| `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary; raises `{encode_error, {Msg, Term}}` on failure |
 | `'decode!'/1` | Decode a JSON binary or iolist to an Erlang term (alias for `decode/1`) |
 | `'encode!'/1` | Encode an Erlang term to a JSON binary (alias for `encode/1`) |
 | `'encode_to_iodata!'/1` | Encode an Erlang term to JSON as iodata (alias for `encode/1`) |
@@ -582,7 +582,8 @@ Erlang type (binaries, numbers, booleans, or `null`):
 
 `encode/1,2` encodes an Erlang term to YAML in block style
 (2-space indentation, sequences at the same indentation as the mapping
-key that owns them).
+key that owns them). Raises `{encode_error, {Msg, Term}}` if the data
+contains a value that cannot be represented as YAML.
 
 ### [Streaming](#table-of-contents)
 
@@ -635,7 +636,7 @@ All functions below are in `glazer_yaml`.
 |---|---|
 | `decode/1`, `decode/2` | Decode a YAML binary or iolist to an Erlang term |
 | `try_decode/1`, `try_decode/2` | Decode YAML, returning `{ok, Term}` or `{error, Msg}` instead of raising |
-| `encode/1`, `encode/2` | Encode an Erlang term to a YAML binary in block style |
+| `encode/1`, `encode/2` | Encode an Erlang term to a YAML binary in block style; raises `{encode_error, {Msg, Term}}` on failure |
 | `read_file/1`, `read_file/2` | Read a file and decode its contents as YAML |
 | `write_file/2`, `write_file/3` | Encode a term to YAML and write it to a file |
 
@@ -849,7 +850,7 @@ All functions below are in `glazer_csv`.
 |---|---|
 | `decode/1`, `decode/2` | Decode a CSV binary or iolist to a list of rows (or maps with `headers`) |
 | `try_decode/1`, `try_decode/2` | Decode CSV, returning `{ok, Rows}` or `{error, Reason}` instead of raising |
-| `encode/1`, `encode/2` | Encode a list of rows (or maps with `headers`) to a CSV binary |
+| `encode/1`, `encode/2` | Encode a list of rows (or maps with `headers`) to a CSV binary; raises `{encode_error, {Msg, Term}}` on failure |
 | `read_file/1`, `read_file/2` | Read a file and decode its contents as CSV |
 | `write_file/2`, `write_file/3` | Encode rows to CSV and write them to a file |
 | `stream_decoder/0`, `stream_decoder/1` | Create an incremental CSV decode state for chunked input |

@@ -594,6 +594,17 @@ encode_opts_test_() ->
     ?_assertEqual(<<"a: null\n">>, glazer_yaml:encode(#{<<"a">> => my_nil}, [{null_term, my_nil}]))
   ].
 
+%% Improper lists (e.g. [1|2]) must be rejected with an encode_error rather
+%% than silently truncated to the proper prefix — see issue #4.
+encode_improper_list_test_() ->
+  [
+    ?_assertError({encode_error, _}, glazer_yaml:encode([1|2])),
+    ?_assertError({encode_error, _}, glazer_yaml:encode([1, 2|3])),
+    ?_assertError({encode_error, _}, glazer_yaml:encode([<<"a">>|<<"b">>])),
+    %% nested improper list inside a mapping value is also caught
+    ?_assertError({encode_error, _}, glazer_yaml:encode(#{<<"a">> => [1|2]}))
+  ].
+
 %% ----------------------------------------------------------------------------
 %% read_file/1,2, write_file/2,3
 %% ----------------------------------------------------------------------------

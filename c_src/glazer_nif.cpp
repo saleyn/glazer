@@ -241,11 +241,11 @@ static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
     return enif_make_badarg(env);
 
   OutBuf out;
-  Encoder enc{env, opts, out};
-  if (!enc.encode(argv[0]))
+  JsonEncoder enc{env, opts, out};
+  if (!enc.encode(argv[0])) [[unlikely]]
     return enif_raise_exception(env,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
-        make_binary(env, std::string_view("cannot encode term to JSON"))));
+        enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
 
   if (!opts.pretty) {
     update_reduction_count(env, out.view().size());
@@ -291,10 +291,13 @@ static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
 
   OutBuf out;
   YamlEncoder enc{env, opts, out};
-  if (!enc.encode(argv[0]))
-    return enif_raise_exception(env,
-      enif_make_tuple2(env, AM_ENCODE_ERROR,
-        make_binary(env, std::string_view("cannot encode term to YAML"))));
+  if (!enc.encode(argv[0])) {
+    if (enc.m_err)
+      return enif_raise_exception(env,
+        enif_make_tuple2(env, AM_ENCODE_ERROR,
+          enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+    return enif_raise_exception(env, AM_INVALID_INPUT);
+  }
 
   update_reduction_count(env, out.view().size());
   return make_binary(env, out.view());
@@ -332,10 +335,10 @@ static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 
   OutBuf out;
   CsvEncoder enc{env, opts, out};
-  if (!enc.encode(argv[0]))
+  if (!enc.encode(argv[0])) [[unlikely]]
     return enif_raise_exception(env,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
-        make_binary(env, std::string_view("cannot encode term to CSV"))));
+        enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
 
   update_reduction_count(env, out.view().size());
   return make_binary(env, out.view());

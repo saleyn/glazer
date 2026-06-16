@@ -112,7 +112,7 @@ $(TARGET): $(OBJ) | $(PRIV_DIR)
 # Note: GCC writes .gcda files under a path derived from the source file's
 # absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
 # GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
-$(OBJ): $(SRC) $(if $(filter use,$(PGO)),force) \
+$(OBJ): $(SRC) $(wildcard *.hpp) $(if $(filter use,$(PGO)),force) \
         | $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 

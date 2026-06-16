@@ -888,11 +888,13 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
   out.push('"');
 }
 
-struct Encoder {
+struct JsonEncoder {
   ErlNifEnv*        m_env;
   const EncodeOpts& m_opts;
   OutBuf&           m_out;
   char              m_atom_buf[256]; // scratch for atom → string_view
+  const char*       m_err;
+  ERL_NIF_TERM      m_err_term;
 
   void escape_string(std::string_view sv)
   {
@@ -919,20 +921,18 @@ struct Encoder {
 
       case ERL_NIF_TERM_TYPE_MAP: {
         m_out.push('{');
-        ErlNifMapIterator iter;
-        if (!enif_map_iterator_create(m_env, term, &iter, ERL_NIF_MAP_ITERATOR_FIRST))
-          return false;
+        auto iter = MapIterator::create(m_env, term);
+        if (!iter) [[unlikely]] return false;
         ERL_NIF_TERM k, v;
         bool first = true;
-        while (enif_map_iterator_get_pair(m_env, &iter, &k, &v)) {
+        while (iter->get_pair(&k, &v)) {
           if (!first) m_out.push(',');
           first = false;
-          if (!encode_key(k)) { enif_map_iterator_destroy(m_env, &iter); return false; }
+          if (!encode_key(k)) [[unlikely]] return error("cannot encode key", k);
           m_out.push(':');
-          if (!encode(v))     { enif_map_iterator_destroy(m_env, &iter); return false; }
-          enif_map_iterator_next(m_env, &iter);
+          if (!encode(v))     [[unlikely]] return error("cannot encode value", v);
+          iter->next();
         }
-        enif_map_iterator_destroy(m_env, &iter);
         m_out.push('}');
         return true;
       }
@@ -944,8 +944,11 @@ struct Encoder {
         while (enif_get_list_cell(m_env, t, &h, &t)) {
           if (!first) m_out.push(',');
           first = false;
-          if (!encode(h)) return false;
+          if (!encode(h)) [[unlikely]]
+            return error("cannot encode list element", h);
         }
+        if (!enif_is_empty_list(m_env, t)) [[unlikely]]  // improper list
+          return error("improper list", t);
         m_out.push(']');
         return true;
       }
@@ -957,20 +960,28 @@ struct Encoder {
         if (enif_is_identical(term, AM_NULL))  { m_out.push("null",  4); return true; }
         if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
         std::string_view sv;
-        if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
+        if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) [[unlikely]]
+          return error("cannot convert atom to string", term);
         escape_string(sv);
         return true;
       }
 
       case ERL_NIF_TERM_TYPE_FLOAT: {
         double d;
-        if (!enif_get_double(m_env, term, &d)) return false;
-        if (!std::isfinite(d)) { m_out.push("null", 4); return true; }
+        if (!enif_get_double(m_env, term, &d))
+          return error("not a float", term);
+        if (!std::isfinite(d)) {
+          m_out.push("null", 4);
+          return true;
+        }
         char buf[32];
         auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
         if (ec == std::errc{}) {
-          bool has_dot = false;
-          for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
+          auto has_dot = false;
+          for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') {
+            has_dot = true;
+            break;
+          }
           m_out.push(buf, e - buf);
           if (!has_dot) m_out.push(".0", 2);
         } else {
@@ -984,23 +995,26 @@ struct Encoder {
         // {[{K,V}...]} proplist → object
         int arity; const ERL_NIF_TERM* tp;
         enif_get_tuple(m_env, term, &arity, &tp);
-        if (arity == 1 && enif_is_list(m_env, tp[0])) {
+        if (arity == 1 && enif_is_list(m_env, tp[0])) [[likely]] {
           m_out.push('{');
           ERL_NIF_TERM h, t = tp[0];
           bool first = true;
           while (enif_get_list_cell(m_env, t, &h, &t)) {
             int pa; const ERL_NIF_TERM* pp;
-            if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) return false;
+            if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) [[unlikely]]
+              return error("not a tuple", h);
             if (!first) m_out.push(',');
             first = false;
-            if (!encode_key(pp[0])) return false;
+            if (!encode_key(pp[0])) [[unlikely]]
+              return error("cannot encode key", pp[0]);
             m_out.push(':');
-            if (!encode(pp[1])) return false;
+            if (!encode(pp[1])) [[unlikely]]
+              return error("cannot encode value", pp[1]);
           }
           m_out.push('}');
           return true;
         }
-        return false;
+        return error("tuple is not an object", term);
       }
 
       default:
@@ -1022,6 +1036,13 @@ struct Encoder {
       escape_string(sv);
       return true;
     }
+    return false;
+  }
+private:
+  template <int N>
+  bool error(const char (&err)[N], ERL_NIF_TERM term) {
+    m_err = err;
+    m_err_term = term;
     return false;
   }
 };

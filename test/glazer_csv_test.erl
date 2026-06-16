@@ -537,7 +537,10 @@ encode_error_test_() ->
     %% headers option requires the rows to be maps
     ?_assertError({encode_error, _}, glazer_csv:encode([[<<"a">>, <<"b">>]], [headers])),
     %% top-level term must be a list
-    ?_assertError({encode_error, _}, glazer_csv:encode(not_a_list))
+    ?_assertError({encode_error, _}, glazer_csv:encode(not_a_list)),
+    %% improper row lists must be rejected rather than silently truncated — see issue #4
+    ?_assertError({encode_error, _}, glazer_csv:encode([[<<"a">>|<<"b">>]])),
+    ?_assertError({encode_error, _}, glazer_csv:encode([[<<"a">>, <<"b">>|<<"c">>]]))
   ].
 
 %% ----------------------------------------------------------------------------

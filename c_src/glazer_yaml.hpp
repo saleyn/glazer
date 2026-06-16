@@ -1472,6 +1472,8 @@ struct YamlEncoder {
   const YamlEncodeOpts& m_opts;
   OutBuf&               m_out;
   char                  m_atom_buf[256];
+  const char*           m_err;
+  ERL_NIF_TERM          m_err_term;
 
   // -------------------------------------------------------------------------
   // Scalar string analysis / emission
@@ -1709,15 +1711,18 @@ struct YamlEncoder {
         // {[{K,V}...]} proplist -> mapping
         int arity; const ERL_NIF_TERM* tp;
         enif_get_tuple(m_env, term, &arity, &tp);
-        if (arity == 1 && enif_is_list(m_env, tp[0])) {
-          if (enif_is_empty_list(m_env, tp[0])) { m_out.push("{}", 2); return true; }
-          return encode_proplist(tp[0], indent);
+        if (arity != 1 || !enif_is_list(m_env, tp[0])) [[unlikely]]
+          return error("tuple is not an object", term);
+
+        if (enif_is_empty_list(m_env, tp[0])) {
+          m_out.push("{}", 2);
+          return true;
         }
-        return false;
+        return encode_proplist(tp[0], indent);
       }
 
       default:
-        return false;
+        return error("unsupported term type", term);
     }
   }
 
@@ -1734,7 +1739,11 @@ struct YamlEncoder {
     auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
     if (ec == std::errc{}) {
       bool has_dot = false;
-      for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
+      for (char* p = buf; p < e; ++p)
+        if (*p == '.' || *p == 'e' || *p == 'E') {
+          has_dot = true;
+          break;
+        }
       m_out.push(buf, e - buf);
       if (!has_dot) m_out.push(".0", 2);
     } else {
@@ -1786,12 +1795,15 @@ struct YamlEncoder {
       case ERL_NIF_TERM_TYPE_TUPLE: {
         int arity; const ERL_NIF_TERM* tp;
         enif_get_tuple(m_env, term, &arity, &tp);
-        if (arity == 1 && enif_is_list(m_env, tp[0])) {
-          if (enif_is_empty_list(m_env, tp[0])) { m_out.push(" {}", 3); return true; }
-          m_out.push('\n');
-          return encode_proplist(tp[0], indent + 2);
+        if (arity != 1 || !enif_is_list(m_env, tp[0])) [[unlikely]]
+          return error("tuple is not an object", term);
+
+        if (enif_is_empty_list(m_env, tp[0])) {
+          m_out.push(" {}", 3);
+          return true;
         }
-        return false;
+        m_out.push('\n');
+        return encode_proplist(tp[0], indent + 2);
       }
       default:
         m_out.push(' ');
@@ -1807,21 +1819,18 @@ struct YamlEncoder {
   // begun by the caller (e.g. right after "- " for a mapping that is a
   // sequence item) — in that case the first entry's indent is skipped.
   bool encode_map(ERL_NIF_TERM term, size_t indent, bool at_line_start = true) {
-    ErlNifMapIterator iter;
-    if (!enif_map_iterator_create(m_env, term, &iter, ERL_NIF_MAP_ITERATOR_FIRST))
-      return false;
+    auto iter = MapIterator::create(m_env, term);
+    if (!iter) return false;
 
     ERL_NIF_TERM k, v;
     bool first = true;
-    bool ok = true;
-    while (enif_map_iterator_get_pair(m_env, &iter, &k, &v)) {
+    while (iter->get_pair(&k, &v)) {
       if (!first || at_line_start) { if (!first) m_out.push('\n'); push_indent(m_out, indent); }
       first = false;
-      if (!encode_key(k) || !encode_map_value(v, indent)) { ok = false; break; }
-      enif_map_iterator_next(m_env, &iter);
+      if (!encode_key(k) || !encode_map_value(v, indent)) return false;
+      iter->next();
     }
-    enif_map_iterator_destroy(m_env, &iter);
-    return ok;
+    return true;
   }
 
   bool encode_proplist(ERL_NIF_TERM list, size_t indent, bool at_line_start = true) {
@@ -1829,11 +1838,14 @@ struct YamlEncoder {
     bool first = true;
     while (enif_get_list_cell(m_env, t, &h, &t)) {
       int pa; const ERL_NIF_TERM* pp;
-      if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) return false;
+      if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) [[unlikely]]
+        return error("proplist element is not a 2-tuple", h);
       if (!first || at_line_start) { if (!first) m_out.push('\n'); push_indent(m_out, indent); }
       first = false;
       if (!encode_key(pp[0]) || !encode_map_value(pp[1], indent)) return false;
     }
+    if (!enif_is_empty_list(m_env, t)) [[unlikely]]
+      return error("cannot encode improper list as proplist", t);
     return true;
   }
 
@@ -1855,7 +1867,7 @@ struct YamlEncoder {
         if (!glz::BigInt::encode(m_env, k, m_out)) return false;
         break;
       default:
-        return false;
+        return error("unsupported map key type", k);
     }
     m_out.push(':');
     return true;
@@ -1874,6 +1886,8 @@ struct YamlEncoder {
       m_out.push("- ", 2);
       if (!encode_item(h, indent + 2)) return false;
     }
+    if (!enif_is_empty_list(m_env, t)) [[unlikely]]
+      return error("cannot encode improper list as sequence", t);
     return true;
   }
 
@@ -1918,7 +1932,17 @@ struct YamlEncoder {
       if (!encode_item(h, indent + 2)) return false;
       first = false;
     }
+    if (!enif_is_empty_list(m_env, t)) [[unlikely]]
+      return error("cannot encode improper list as sequence", t);
     return true;
+  }
+
+private:
+  template <int N>
+  bool error(const char (&err)[N], ERL_NIF_TERM term) {
+    m_err      = err;
+    m_err_term = term;
+    return false;
   }
 };
 

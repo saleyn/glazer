@@ -207,6 +207,10 @@ try_decode(Input, Opts) ->
 -doc """
 Encode an Erlang term to a JSON binary.
 
+Raises `{encode_error, {Msg, Term}}` if `Data` contains a value that
+cannot be represented as JSON (e.g. an improper list, a pid, or an
+unsupported tuple).
+
 ## Examples
 
 ```erlang
@@ -218,6 +222,9 @@ Encode an Erlang term to a JSON binary.
 
 3> glazer_json:encode(123456789012345678901234567890).
 <<"123456789012345678901234567890">>
+
+4> glazer_json:encode([1|2]).
+** exception error: {encode_error,{<<"improper list">>,2}}
 ```
 """.
 -spec encode(term()) -> binary().
@@ -226,6 +233,9 @@ encode(Data) ->
 
 -doc """
 Encode an Erlang term to a JSON binary with options (see `t:encode_opts/0`).
+
+Raises `{encode_error, {Msg, Term}}` if `Data` contains a value that
+cannot be represented as JSON.
 
 ## Examples
 

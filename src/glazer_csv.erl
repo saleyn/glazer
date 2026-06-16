@@ -336,6 +336,9 @@ Each row is a list of fields (binaries, atoms, integers, or floats).
 Fields containing the delimiter, a double quote, or a line break are
 quoted per RFC 4180, with embedded quotes doubled.
 
+Raises `{encode_error, {Msg, Term}}` if any row or field cannot be
+encoded (e.g. an improper list, a map field, or a tuple field).
+
 ## Examples
 
 ```erlang
@@ -347,6 +350,9 @@ quoted per RFC 4180, with embedded quotes doubled.
 
 3> glazer_csv:encode([]).
 <<>>
+
+4> glazer_csv:encode([[<<"a">>|<<"b">>]]).
+** exception error: {encode_error,{<<"cannot encode improper list as CSV row">>,<<"b">>}}
 ```
 """.
 -spec encode([[term()]] | [map()]) -> binary().
@@ -359,6 +365,8 @@ Encode a list of rows to a CSV binary, with options.
 With the `headers` option, `Data` is a list of maps: the first map's keys
 become the header row (in iteration order), and each map is encoded as a
 row in that column order.
+
+Raises `{encode_error, {Msg, Term}}` if any row or field cannot be encoded.
 
 ## Examples
 
