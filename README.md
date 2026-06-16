@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
 [![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
-The fastest Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
+`glazer` - the fastest Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
 built around hand-rolled recursive-descent decoders and direct
 term-to-text encoders that produce/consume native Erlang terms in a
 single pass. The JSON implementation was inspired by the
