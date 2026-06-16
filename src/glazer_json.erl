@@ -153,8 +153,7 @@ decode(Input, Opts) ->
 
 -doc """
 Decode a JSON binary to an Erlang term. Equivalent to `decode/1`, provided
-for API parity with Elixir's
-[`JSON.decode!/1`](`m:JSON#function-decode!/1`). Raises `{parse_error,
+for API parity with Elixir's `JSON.decode!/1`. Raises `{parse_error,
 Reason}` on invalid input.
 
 ## Examples
@@ -273,8 +272,7 @@ encode(Data, Opts) ->
 
 -doc """
 Encode an Erlang term to a JSON binary. Equivalent to `encode/1`, provided
-for API parity with Elixir's
-[`JSON.encode!/1`](`m:JSON#function-encode!/1`). Raises `{encode_error, Msg}`
+for API parity with Elixir's `JSON.encode!/1`. Raises `{encode_error, Msg}`
 if `Data` cannot be encoded.
 
 ## Examples
@@ -291,9 +289,8 @@ if `Data` cannot be encoded.
 -doc """
 Encode an Erlang term to JSON as iodata. Equivalent to `encode/1` (which
 already returns a binary, itself valid iodata), provided for API parity with
-Elixir's
-[`JSON.encode_to_iodata!/1`](`m:JSON#function-encode_to_iodata!/1`). Raises
-`{encode_error, Msg}` if `Data` cannot be encoded.
+Elixir's `JSON.encode_to_iodata!/1`. Raises `{encode_error, Msg}` if `Data`
+cannot be encoded.
 
 ## Examples
 
