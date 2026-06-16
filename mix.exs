@@ -23,7 +23,7 @@ defmodule Glazer.MixProject do
       {:jiffy,        "~> 2.0",   only: :bench},
       {:thoas,        "~> 1.2",   only: :bench},
       {:euneus,       "~> 2.0",   only: :bench},
-      {:torque,       "~> 0.1.9", only: :bench},
+      {:torque,       "~> 0.2.1", only: :bench},
       {:yamerl,       "~> 0.10",  only: :bench},
       {:fast_yaml,    "~> 1.0",   only: :bench},
       {:ymlr,         "~> 5.1",   only: :bench},
