@@ -18,6 +18,9 @@
 #if defined(__SSE2__)
 #  include <immintrin.h>
 #endif
+#if defined(__ARM_NEON__)
+#  include <arm_neon.h>
+#endif
 
 namespace glz {
 
@@ -366,6 +369,39 @@ inline void push_uescape(OutBuf& out, uint32_t cp)
   }
 }
 
+// Dense escape table: for each byte, stores the escape sequence as a
+// length-prefixed 7-byte payload.  len==0 means no escaping needed.
+// Layout per entry: [len][c0][c1][c2][c3][c4][c5][c6]  (8 bytes total)
+struct EscapeEntry { uint8_t len; char seq[7]; };
+static constexpr std::array<EscapeEntry, 256> build_escape_tab() {
+  std::array<EscapeEntry, 256> tab{};
+  const char* hex = "0123456789abcdef";
+  for (int i = 0; i < 0x20; ++i) {
+    tab[i].len    = 6;
+    tab[i].seq[0] = '\\'; tab[i].seq[1] = 'u';
+    tab[i].seq[2] = '0';  tab[i].seq[3] = '0';
+    tab[i].seq[4] = hex[(i >> 4) & 0xF];
+    tab[i].seq[5] = hex[i & 0xF];
+  }
+  tab['\b'] = {2, {'\\','b'}};
+  tab['\f'] = {2, {'\\','f'}};
+  tab['\n'] = {2, {'\\','n'}};
+  tab['\r'] = {2, {'\\','r'}};
+  tab['\t'] = {2, {'\\','t'}};
+  tab['"']  = {2, {'\\','"'}};
+  tab['\\'] = {2, {'\\','\\'}};
+  return tab;
+}
+static constexpr std::array<EscapeEntry, 256> ESCAPE_TAB = build_escape_tab();
+
+// NEEDS_ESCAPE_TAB: quick bool check for find_escape_pos scalar fallback.
+static constexpr std::array<bool, 256> build_needs_escape_tab() {
+  std::array<bool, 256> tab{};
+  for (int i = 0; i < 256; ++i) tab[i] = ESCAPE_TAB[i].len > 0;
+  return tab;
+}
+static constexpr std::array<bool, 256> NEEDS_ESCAPE_TAB = build_needs_escape_tab();
+
 // Decode one UTF-8 sequence starting at p (p < end). Returns the code point
 // and advances p past the sequence. On invalid/truncated input, returns the
 // Unicode replacement character (U+FFFD) and advances p by one byte.
@@ -436,6 +472,75 @@ inline const char* find_byte(const char* p, const char* end, char c) noexcept
   }
 #endif
   while (p < end && *p != c) ++p;
+  return p;
+}
+
+// Return a pointer to the first byte in [p, end) that needs JSON/YAML escaping
+// (control char < 0x20, '"', or '\').  Returns end if none found.
+// Uses NEON (16 B/iter) → AVX2 (32 B/iter) → SSE2 (16 B/iter) → table.
+// The bias trick converts unsigned c < 0x20 to a signed comparison:
+// (c ^ 0x80) < 0xA0 (signed), which SSE2/NEON signed-compare handles.
+inline const char* find_escape_pos(const char* p, const char* end) noexcept
+{
+#if defined(__ARM_NEON__)
+  {
+    const uint8x16_t vq    = vdupq_n_u8('"');
+    const uint8x16_t vbs   = vdupq_n_u8('\\');
+    const uint8x16_t vbias = vdupq_n_u8(0x80);
+    const uint8x16_t vcmp  = vdupq_n_u8(0xA0);
+    while (p + 16 <= end) {
+      uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t biased = veorq_u8(v, vbias);
+      uint8x16_t hit    = vorrq_u8(vorrq_u8(
+        vcltq_u8(biased, vcmp), vceqq_u8(v, vq)), vceqq_u8(v, vbs));
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#endif
+#if defined(__AVX2__)
+  {
+    const __m256i vq    = _mm256_set1_epi8('"');
+    const __m256i vbs   = _mm256_set1_epi8('\\');
+    const __m256i vbias = _mm256_set1_epi8(-128);
+    const __m256i vcmp  = _mm256_set1_epi8(-96);
+    while (p + 32 <= end) {
+      __m256i  v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      __m256i  biased = _mm256_xor_si256(v, vbias);
+      uint32_t mask   = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(_mm256_or_si256(
+        _mm256_cmpgt_epi8(vcmp, biased),
+        _mm256_cmpeq_epi8(v, vq)),
+        _mm256_cmpeq_epi8(v, vbs)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 32;
+    }
+  }
+#endif
+#if defined(__SSE2__)
+  {
+    const __m128i vq    = _mm_set1_epi8('"');
+    const __m128i vbs   = _mm_set1_epi8('\\');
+    const __m128i vbias = _mm_set1_epi8(-128);
+    const __m128i vcmp  = _mm_set1_epi8(-96);
+    while (p + 16 <= end) {
+      __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      __m128i  biased = _mm_xor_si128(v, vbias);
+      unsigned mask   = (unsigned)_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(
+        _mm_cmpgt_epi8(vcmp, biased),
+        _mm_cmpeq_epi8(v, vq)),
+        _mm_cmpeq_epi8(v, vbs)));
+      if (mask) return p + __builtin_ctz(mask);
+      p += 16;
+    }
+  }
+#endif
+  while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p]) ++p;
   return p;
 }
 

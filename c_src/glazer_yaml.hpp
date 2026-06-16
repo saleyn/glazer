@@ -25,6 +25,9 @@
 #include <vector>
 
 #include <erl_nif.h>
+#if defined(__ARM_NEON__)
+#  include <arm_neon.h>
+#endif
 
 #include "fast_float.hpp"
 #include "glazer_atoms.hpp"
@@ -45,6 +48,24 @@ namespace glz {
 
 static const char* find_break(const char* p, const char* end) noexcept
 {
+#if defined(__ARM_NEON__)
+  {
+    const uint8x16_t vn = vdupq_n_u8('\n');
+    const uint8x16_t vr = vdupq_n_u8('\r');
+    while (p + 16 <= end) {
+      uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t hit = vorrq_u8(vceqq_u8(v, vn), vceqq_u8(v, vr));
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#endif
 #if defined(__AVX2__)
   {
     const __m256i vn = _mm256_set1_epi8('\n');
@@ -80,6 +101,27 @@ static const char* find_break(const char* p, const char* end) noexcept
 // double-quoted YAML scalar.
 static const char* find_dq_special(const char* p, const char* end) noexcept
 {
+#if defined(__ARM_NEON__)
+  {
+    const uint8x16_t vq  = vdupq_n_u8('"');
+    const uint8x16_t vbs = vdupq_n_u8('\\');
+    const uint8x16_t vn  = vdupq_n_u8('\n');
+    const uint8x16_t vr  = vdupq_n_u8('\r');
+    while (p + 16 <= end) {
+      uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t hit = vorrq_u8(vorrq_u8(vceqq_u8(v, vq), vceqq_u8(v, vbs)),
+                                 vorrq_u8(vceqq_u8(v, vn), vceqq_u8(v, vr)));
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#endif
 #if defined(__AVX2__)
   {
     const __m256i vq  = _mm256_set1_epi8('"');
@@ -1489,7 +1531,8 @@ struct YamlEncoder {
   // after a single branch instead of running the full literal/number checks.
   static bool looks_like_non_string_scalar(std::string_view s) {
     if (s.empty()) return true;
-    switch (s.front()) {
+    auto c = s.front();
+    switch (c) {
       case '~':
         return s == "~";
       case 'n': return s == "null"  || s == "no";
@@ -1510,10 +1553,10 @@ struct YamlEncoder {
             s == "-.inf" || s == "-.Inf" || s == "-.INF")
           return true;
         break;
-      case '0': case '1': case '2': case '3': case '4':
-      case '5': case '6': case '7': case '8': case '9':
-        break;
       default:
+        // Is c in range '0'-'9'?
+        if ((unsigned char)(c - '0') <= 9)
+          break;
         return false;
     }
 
@@ -1632,24 +1675,28 @@ struct YamlEncoder {
 
   // Emit `s` double-quoted with full C-style escaping (the JSON-compatible
   // escape subset is always valid YAML).
+  // Pre-reserves worst-case space then writes via raw pointer — same strategy
+  // as json_escape_string in glazer_json.hpp.  ESCAPE_TAB replaces the switch.
+  // Uses find_escape_pos (from glazer_json.hpp, defined below) which detects
+  // all control chars < 0x20, '"', and '\' in bulk via NEON/AVX2/SSE2/table.
   void emit_double_quoted(std::string_view s) {
-    m_out.push('"');
-    for (unsigned char c : s) {
-      switch (c) {
-        case '"':  m_out.push("\\\"", 2); break;
-        case '\\': m_out.push("\\\\", 2); break;
-        case '\n': m_out.push("\\n",  2); break;
-        case '\r': m_out.push("\\r",  2); break;
-        case '\t': m_out.push("\\t",  2); break;
-        case '\b': m_out.push("\\b",  2); break;
-        case '\f': m_out.push("\\f",  2); break;
-        default:
-          if (c < 0x20) { char esc[6]; write_uescape(esc, c); m_out.push(esc, 6); }
-          else            m_out.push((char)c);
-          break;
-      }
+    m_out.ensure(s.size() * 6 + 2);
+    char* dst       = m_out.m_data + m_out.m_len;
+    *dst++          = '"';
+    const char* p   = s.data();
+    const char* end = p + s.size();
+    while (p < end) {
+      const char* special = find_escape_pos(p, end);
+      size_t run = static_cast<size_t>(special - p);
+      if (run) { memcpy(dst, p, run); dst += run; }
+      p = special;
+      if (p >= end) break;
+      const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+      memcpy(dst, e.seq, e.len);
+      dst += e.len;
     }
-    m_out.push('"');
+    *dst++ = '"';
+    m_out.m_len = static_cast<size_t>(dst - m_out.m_data);
   }
 
   // Emit a string scalar, choosing plain / single-quoted / double-quoted.
@@ -1737,13 +1784,10 @@ struct YamlEncoder {
     }
     char buf[32];
     auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-    if (ec == std::errc{}) {
+    if (ec == std::errc{}) [[likely]] {
       bool has_dot = false;
       for (char* p = buf; p < e; ++p)
-        if (*p == '.' || *p == 'e' || *p == 'E') {
-          has_dot = true;
-          break;
-        }
+        if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
       m_out.push(buf, e - buf);
       if (!has_dot) m_out.push(".0", 2);
     } else {

@@ -20,6 +20,9 @@
 #include <string_view>
 
 #include <erl_nif.h>
+#if defined(__ARM_NEON__)
+#  include <arm_neon.h>
+#endif
 
 #include "fast_float.hpp"
 #include "glazer_atoms.hpp"
@@ -102,6 +105,7 @@ struct Decoder {
   const char*       m_beg;  // start of input (for error reporting)
   const char*       m_p;    // current position
   const char*       m_end;
+  ERL_NIF_TERM      m_input_bin; // original binary term — used for zero-copy sub_binary
   KeyCache          m_key_cache;
   bool              m_use_key_cache;
   unsigned          m_depth = 0;
@@ -120,8 +124,10 @@ struct Decoder {
   // each frame considerably compared to a normal build).
   static constexpr unsigned MAX_DEPTH = 256;
 
-  Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size)
+  Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size,
+          ERL_NIF_TERM input_bin)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
+      m_input_bin(input_bin),
       m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   // Increments the shared depth counter for the lifetime of a parse_array /
@@ -315,11 +321,17 @@ struct Decoder {
   }
 
   // Make an Erlang binary from a JSON string span (handles escapes).
-  // buf is scratch storage reused across calls.
+  // When there are no escapes the span points directly into the original input
+  // buffer — use enif_make_sub_binary for a zero-copy reference rather than
+  // allocating and copying.  Only escaped strings pay the copy cost.
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
-    return make_binary(m_env, sv);
+    if (!has_escape) [[likely]] {
+      // s is within [m_beg, m_end): produce a sub-binary of the input term.
+      size_t offset = static_cast<size_t>(s - m_beg);
+      return enif_make_sub_binary(m_env, m_input_bin, offset, len);
+    }
+    return make_binary(m_env, unescape(s, len, buf));
   }
 
   // Make a key term (binary / atom / existing_atom).
@@ -402,8 +414,8 @@ struct Decoder {
     skip_ws();
     if (m_p >= m_end) [[unlikely]]
       return 0;
-
-    switch (*m_p) {
+    auto c = *m_p;
+    switch (c) {
       case '"': {
         const char* s; size_t len; bool has_escape;
         if (!read_string_raw(s, len, has_escape)) return 0;
@@ -414,17 +426,27 @@ struct Decoder {
       case '[': return parse_array(scratch);
 
       case 't':
-        if (m_p + 4 <= m_end && memcmp(m_p, "true", 4) == 0)  { m_p += 4; return AM_TRUE;  } return 0;
+        if (m_p + 4 <= m_end && memcmp(m_p, "true", 4) == 0) {
+          m_p += 4;
+          return AM_TRUE;
+        }
+        return 0;
       case 'f':
-        if (m_p + 5 <= m_end && memcmp(m_p, "false", 5) == 0) { m_p += 5; return AM_FALSE; } return 0;
+        if (m_p + 5 <= m_end && memcmp(m_p, "false", 5) == 0) {
+          m_p += 5;
+          return AM_FALSE;
+        }
+        return 0;
       case 'n':
-        if (m_p + 4 <= m_end && memcmp(m_p, "null", 4) == 0)  { m_p += 4; return m_opts.null_term; } return 0;
+        if (m_p + 4 <= m_end && memcmp(m_p, "null", 4) == 0) {
+          m_p += 4;
+          return m_opts.null_term;
+        }
+        return 0;
 
-      case '-': case '0': case '1': case '2': case '3': case '4':
-      case '5': case '6': case '7': case '8': case '9':
-        return parse_number();
-
-      default: return 0;
+      default:
+        // The expression checks if the number is in []'-','0'-'9'] range:
+        return ((unsigned char)(c - '0') <= 9 || c == '-') ? parse_number() : 0;
     }
   }
 
@@ -734,98 +756,40 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
 // Direct Erlang-term → JSON encoder (no intermediate generic_u64 tree)
 //-----------------------------------------------------------------------------
 
-// Bytes that must be escaped in a JSON string: control chars, '"', '\'.
-// Everything else (including all UTF-8 continuation/lead bytes) passes through.
-static constexpr bool needs_escape(unsigned char c) {
-  return c < 0x20 || c == '"' || c == '\\';
-}
+// ESCAPE_TAB, NEEDS_ESCAPE_TAB, and EscapeEntry are defined in glazer_common.hpp.
 
-static constexpr std::array<bool, 256> build_needs_escape_tab() {
-  std::array<bool, 256> tab{};
-  for (int i = 0; i < 256; ++i) tab[i] = needs_escape((unsigned char)i);
-  return tab;
-}
-static constexpr std::array<bool, 256> NEEDS_ESCAPE_TAB = build_needs_escape_tab();
-
-// Return a pointer to the first byte in [p, end) that needs JSON escaping
-// (control char < 0x20, '"', or '\').  Returns end if none found.
-// Uses AVX2 (32 B/iter) → SSE2 (16 B/iter) → byte table, whichever the
-// CPU supports.  The bias trick converts unsigned c < 0x20 to a signed
-// comparison: (c ^ 0x80) < 0xA0 (signed), which SSE2 _cmpgt handles.
-static const char* find_escape_pos(const char* p, const char* end) noexcept
-{
-#if defined(__AVX2__)
-  {
-    const __m256i vq    = _mm256_set1_epi8('"');
-    const __m256i vbs   = _mm256_set1_epi8('\\');
-    const __m256i vbias = _mm256_set1_epi8(-128);   // XOR: unsigned→signed shift
-    const __m256i vcmp  = _mm256_set1_epi8(-96);    // 0xA0: biased < this ↔ c < 0x20
-    while (p + 32 <= end) {
-      __m256i  v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
-      __m256i  biased = _mm256_xor_si256(v, vbias);
-      uint32_t mask   = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(_mm256_or_si256(
-        _mm256_cmpgt_epi8(vcmp, biased),
-        _mm256_cmpeq_epi8(v, vq)),
-        _mm256_cmpeq_epi8(v, vbs)));
-      if (mask) return p + __builtin_ctz(mask);
-      p += 32;
-    }
-  }
-#endif
-#if defined(__SSE2__)
-  {
-    const __m128i vq    = _mm_set1_epi8('"');
-    const __m128i vbs   = _mm_set1_epi8('\\');
-    const __m128i vbias = _mm_set1_epi8(-128);
-    const __m128i vcmp  = _mm_set1_epi8(-96);
-    while (p + 16 <= end) {
-      __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
-      __m128i  biased = _mm_xor_si128(v, vbias);
-      unsigned mask   = (unsigned)_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(
-        _mm_cmpgt_epi8(vcmp, biased),
-        _mm_cmpeq_epi8(v, vq)),
-        _mm_cmpeq_epi8(v, vbs)));
-      if (mask) return p + __builtin_ctz(mask);
-      p += 16;
-    }
-  }
-#endif
-  while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p]) ++p;
-  return p;
-}
+// find_escape_pos is defined in glazer_common.hpp and shared with glazer_yaml.hpp.
 
 // JSON-escape a UTF-8 byte sequence into out.
-// Uses find_escape_pos to bulk-skip clean runs (AVX2/SSE2/table); only the
-// per-byte switch runs for the rare escape characters.
+// Pre-reserves worst-case space (6 bytes per input byte + 2 quotes) in one
+// shot, then writes into the already-reserved tail via raw pointer — no
+// further ensure() calls inside the loop.  find_escape_pos bulk-skips clean
+// runs (NEON/AVX2/SSE2/table); ESCAPE_TAB handles special bytes with a
+// single indexed load + memcpy instead of a switch branch.
 static void json_escape_string(std::string_view sv, OutBuf& out)
 {
-  out.push('"');
+  // Worst case: every byte escapes to 6 chars (\uXXXX), plus 2 quotes.
+  out.ensure(sv.size() * 6 + 2);
+
+  char* dst       = out.m_data + out.m_len;
+  *dst++          = '"';
   const char* p   = sv.data();
   const char* end = p + sv.size();
 
   while (p < end) {
     const char* special = find_escape_pos(p, end);
-    if (special > p) out.push(p, special - p);
+    size_t      run     = static_cast<size_t>(special - p);
+    if (run) { memcpy(dst, p, run); dst += run; }
     p = special;
     if (p >= end) break;
 
-    unsigned char c = (unsigned char)*p++;
-    switch (c) {
-      case '"':  out.push("\\\"", 2); break;
-      case '\\': out.push("\\\\", 2); break;
-      case '\b': out.push("\\b",  2); break;
-      case '\f': out.push("\\f",  2); break;
-      case '\n': out.push("\\n",  2); break;
-      case '\r': out.push("\\r",  2); break;
-      case '\t': out.push("\\t",  2); break;
-      default: {
-        char esc[6]; write_uescape(esc, c);
-        out.push(esc, 6);
-        break;
-      }
-    }
+    const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+    memcpy(dst, e.seq, e.len);
+    dst += e.len;
   }
-  out.push('"');
+
+  *dst++ = '"';
+  out.m_len = static_cast<size_t>(dst - out.m_data);
 }
 
 // JSON-escape a UTF-8 byte sequence, additionally escaping every non-ASCII
@@ -974,17 +938,19 @@ struct JsonEncoder {
           m_out.push("null", 4);
           return true;
         }
+        // chars_format::general produces the shortest round-trip representation
+        // (same as ryu's output), which is typically shorter than %.17g.
         char buf[32];
         auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-        if (ec == std::errc{}) {
-          auto has_dot = false;
-          for (char* p = buf; p < e; ++p) if (*p == '.' || *p == 'e' || *p == 'E') {
-            has_dot = true;
-            break;
+        if (ec == std::errc{}) [[likely]] {
+          bool has_dot = false;
+          for (char* p = buf; p < e; ++p) {
+            if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
           }
           m_out.push(buf, e - buf);
           if (!has_dot) m_out.push(".0", 2);
         } else {
+          // Fallback: should never happen for finite doubles, but be safe.
           int n = snprintf(buf, sizeof(buf), "%.17g", d);
           m_out.push(buf, n);
         }

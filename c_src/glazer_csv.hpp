@@ -255,10 +255,10 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
 }
 
 struct CsvEncodeOpts {
-  char        delimiter = ',';
-  bool        headers   = false;
-  bool        explicit_headers = false;       // {headers, [List]}: explicit column order
-  std::vector<ERL_NIF_TERM> header_list;       // populated when explicit_headers is true
+  char delimiter        = ',';
+  bool headers          = false;
+  bool explicit_headers = false;          // {headers, [List]}: explicit column order
+  std::vector<ERL_NIF_TERM> header_list;  // populated when explicit_headers is true
   std::string_view line_ending = "\r\n";
 };
 
@@ -305,6 +305,25 @@ static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvEncodeOp
 
 static const char* find_field_end(const char* p, const char* end, char delim) noexcept
 {
+#if defined(__ARM_NEON__)
+  {
+    const uint8x16_t vd = vdupq_n_u8(static_cast<uint8_t>(delim));
+    const uint8x16_t vn = vdupq_n_u8('\n');
+    const uint8x16_t vr = vdupq_n_u8('\r');
+    while (p + 16 <= end) {
+      uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t hit = vorrq_u8(vorrq_u8(vceqq_u8(v, vd), vceqq_u8(v, vn)), vceqq_u8(v, vr));
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#endif
 #if defined(__AVX2__)
   {
     const __m256i vd = _mm256_set1_epi8(delim);
@@ -343,6 +362,27 @@ static const char* find_field_end(const char* p, const char* end, char delim) no
 // the delimiter, a double-quote, a newline, or a carriage return.
 static const char* find_csv_special(const char* p, const char* end, char delim) noexcept
 {
+#if defined(__ARM_NEON__)
+  {
+    const uint8x16_t vd = vdupq_n_u8(static_cast<uint8_t>(delim));
+    const uint8x16_t vq = vdupq_n_u8('"');
+    const uint8x16_t vn = vdupq_n_u8('\n');
+    const uint8x16_t vr = vdupq_n_u8('\r');
+    while (p + 16 <= end) {
+      uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t hit = vorrq_u8(vorrq_u8(vceqq_u8(v, vd), vceqq_u8(v, vq)),
+                                vorrq_u8(vceqq_u8(v, vn), vceqq_u8(v, vr)));
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#endif
 #if defined(__AVX2__)
   {
     const __m256i vd = _mm256_set1_epi8(delim);

@@ -54,7 +54,7 @@ static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
+  Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode(reinterpret_cast<const char*>(bin.data), bin.size));
   update_reduction_count(env, bin.size);
   return result;
