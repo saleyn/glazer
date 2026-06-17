@@ -167,6 +167,11 @@ struct YamlDecodeOpts {
   bool         label_atom    = false;
   bool         label_existing_atom = false;
   bool         yaml_1_1_bools = false;
+  // When true, scalars are copied into fresh binaries instead of referencing
+  // the input via sub-binary. Use this when decoded scalars will outlive the
+  // input binary by a large margin: without it, one live scalar keeps the
+  // entire input buffer from being collected.
+  bool         copy_strings  = false;
 };
 
 static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecodeOpts& opts)
@@ -175,6 +180,7 @@ static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecode
   while (enif_get_list_cell(env, tail, &head, &tail)) {
     if      (enif_is_identical(head, AM_USE_NIL))        opts.null_term      = AM_NIL;
     else if (enif_is_identical(head, AM_YAML_1_1_BOOLS)) opts.yaml_1_1_bools = true;
+    else if (enif_is_identical(head, AM_COPY_STRINGS))   opts.copy_strings   = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -220,6 +226,7 @@ struct YamlDecoder {
   const char*           m_beg;
   const char*           m_p;
   const char*           m_end;
+  ERL_NIF_TERM          m_input_bin; // original binary term — used for zero-copy sub_binary
   KeyCache              m_key_cache;
   bool                  m_use_key_cache;
   unsigned              m_depth = 0;
@@ -230,9 +237,10 @@ struct YamlDecoder {
   static constexpr size_t   KEY_CACHE_MIN_SIZE = 2048;
   static constexpr unsigned MAX_DEPTH = 256;
 
-  YamlDecoder(ErlNifEnv* e, const YamlDecodeOpts& o, const char* data, size_t size)
+  YamlDecoder(ErlNifEnv* e, const YamlDecodeOpts& o, const char* data, size_t size,
+              ERL_NIF_TERM input_bin)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
-      m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
+      m_input_bin(input_bin), m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   struct DepthGuard {
     explicit DepthGuard(YamlDecoder* d) : d(d) { ++d->m_depth; }
@@ -768,7 +776,7 @@ struct YamlDecoder {
 
     if (ERL_NIF_TERM num = try_parse_number(s)) return num;
 
-    return make_binary(m_env, s);
+    return make_span_term(m_env, m_input_bin, m_beg, m_end, s, m_opts.copy_strings);
   }
 
   // Returns 0 if `s` doesn't look like a YAML core-schema int/float.
@@ -848,26 +856,36 @@ struct YamlDecoder {
   // Block-style parsing
   // -------------------------------------------------------------------------
 
-  // Make a key term honoring label_atom / label_existing_atom (mirrors
-  // Decoder::make_key_term in glazer_json.hpp, minus the escape-aware cache
-  // bypass since YAML keys are resolved scalars already in `s`).
+  // True iff `s` is a sub-span of the original input buffer — i.e. safe to
+  // retain a pointer into (KeyCache::insert) rather than a transient local
+  // buffer (a quoted-scalar `out` or a fold/unescape `scratch`) that is
+  // destroyed when the caller returns.
+  bool is_input_span(std::string_view s) const {
+    return s.data() >= m_beg && s.data() + s.size() <= m_end;
+  }
+
+  // Make a key term honoring label_atom / label_existing_atom. Mirrors
+  // Decoder::make_key_term in glazer_json.hpp: the key cache only retains
+  // keys backed by the original input (mirrors JSON's has_escape bypass) —
+  // `s` may instead be a quoted-scalar or line-folded scratch buffer local
+  // to the caller, which must never be cached by pointer.
   ERL_NIF_TERM make_key_term(std::string_view s) {
     if (m_opts.label_atom)
       return enif_make_atom_len(m_env, s.data(), s.size());
     if (m_opts.label_existing_atom) {
       ERL_NIF_TERM t;
       return enif_make_existing_atom_len(m_env, s.data(), s.size(), &t, ERL_NIF_LATIN1)
-           ? t : make_binary(m_env, s);
+           ? t : make_span_term(m_env, m_input_bin, m_beg, m_end, s, m_opts.copy_strings);
     }
-    if (m_use_key_cache) {
+    if (m_use_key_cache && is_input_span(s)) {
       uint32_t h = KeyCache::hash_of(s.data(), s.size());
       if (ERL_NIF_TERM cached = m_key_cache.lookup(s.data(), s.size(), h))
         return cached;
-      auto term = make_binary(m_env, s);
+      auto term = make_span_term(m_env, m_input_bin, m_beg, m_end, s, m_opts.copy_strings);
       m_key_cache.insert(s.data(), s.size(), h, term);
       return term;
     }
-    return make_binary(m_env, s);
+    return make_span_term(m_env, m_input_bin, m_beg, m_end, s, m_opts.copy_strings);
   }
 
   // Parses a single scalar token at the current position (plain, single- or

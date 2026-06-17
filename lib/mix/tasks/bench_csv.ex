@@ -71,6 +71,11 @@ defmodule Mix.Tasks.BenchCsv do
        fn rows -> IO.iodata_to_binary(GlazerBench.NimbleCSVParser.dump_to_iodata(rows)) end,
        NimbleCSV},
 
+      {"rusty_csv",
+       fn b -> RustyCSV.RFC4180.parse_string(b) end,
+       fn _rows -> nil end,
+       RustyCSV.RFC4180},
+
       {"csv",
        fn b ->
          b

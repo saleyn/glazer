@@ -140,6 +140,29 @@ struct SmallTermVec {
 };
 
 //-----------------------------------------------------------------------------
+// Zero-copy span term — shared by the JSON, YAML, and CSV decoders.
+//
+// Returns a sub-binary referencing `[beg, beg+end)` within `input_bin` when
+// `copy_strings` is false (the default) and `sv` actually lies within
+// `[beg, end)`: no allocation, but `input_bin` stays alive as long as any
+// sub-binary referencing it is reachable. Falls back to copying — via
+// make_binary — when `copy_strings` is true, or when `sv` does not point
+// into the `[beg, end)` span (e.g. a scratch buffer used to fold/unescape
+// multi-line scalars): callers may pass either a raw input slice or a
+// locally-built buffer without needing to track which case applies.
+//-----------------------------------------------------------------------------
+
+inline ERL_NIF_TERM make_span_term(ErlNifEnv* env, ERL_NIF_TERM input_bin, const char* beg,
+                                    const char* end, std::string_view sv, bool copy_strings)
+{
+  if (!copy_strings && sv.data() >= beg && sv.data() + sv.size() <= end)
+    return enif_make_sub_binary(env, input_bin, static_cast<size_t>(sv.data() - beg), sv.size());
+  auto [term, p] = make_binary(env, sv.size());
+  memcpy(p, sv.data(), sv.size());
+  return term;
+}
+
+//-----------------------------------------------------------------------------
 // Output buffer — 4 KB inline, grows to heap
 //-----------------------------------------------------------------------------
 

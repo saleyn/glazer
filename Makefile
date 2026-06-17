@@ -115,14 +115,21 @@ memcheck:
 doc docs:
 	$(REBAR) ex_doc
 
+# yaml_rustler and rusty_csv can't be resolved together (see mix.exs), so a
+# full `make bench` run only includes whichever one BENCH_SET selects.
+# Use `make bench-yaml BENCH_SET=yaml` / `make bench-csv BENCH_SET=csv` to
+# get both libraries benchmarked across two runs.
 benchmark bench: do-bench
 
 do-bench: deps
 	@rm .perf.txt
 	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix bench | tee .perf.txt
 
+bench-yaml: BENCH_SET ?= yaml
+bench-csv:  BENCH_SET ?= csv
+
 bench-yaml bench-json bench-csv: deps
-	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix $@
+	@BENCH_SET=$(BENCH_SET) PARALLEL=$(if $(PARALLEL),$(PARALLEL),2) MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
@@ -139,7 +146,16 @@ optimize:
 	@echo "==> PGO build complete"
 
 deps:
-	@mix deps.get
+	@if [ "$(BENCH_SET)" = "yaml" ] && grep -q '"rusty_csv"' mix.lock 2>/dev/null; then \
+	  echo "==> BENCH_SET=yaml but mix.lock has rusty_csv locked; re-resolving"; \
+	  rm -f mix.lock; \
+	  rm -rf _build/bench deps/rusty_csv deps/rustler_precompiled deps/rustler; \
+	elif [ "$(BENCH_SET)" = "csv" ] && grep -q '"yaml_rustler"' mix.lock 2>/dev/null; then \
+	  echo "==> BENCH_SET=csv but mix.lock has yaml_rustler locked; re-resolving"; \
+	  rm -f mix.lock; \
+	  rm -rf _build/bench deps/yaml_rustler deps/rustler_precompiled deps/rustler; \
+	fi
+	@BENCH_SET=$(BENCH_SET) mix deps.get
 
 publish: docs
 	$(REBAR) hex publish$(if $(replace), --replace)
@@ -173,4 +189,5 @@ bump-version:
 	fi
 
 .PHONY: all help doc compile clean distclean test cover check dialyzer memcheck nif \
-        optimize benchmark bench publish deprecate bump-version
+        optimize benchmark bench publish deprecate bump-version deps \
+        bench-yaml bench-json bench-csv do-bench

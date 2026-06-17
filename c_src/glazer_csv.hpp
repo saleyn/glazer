@@ -89,6 +89,11 @@ struct CsvDecodeOpts {
   std::vector<CsvFieldSpec> fields;
   size_t skip_rows         = 0;             // {skip, N}: skip first N data rows
   size_t limit             = 0;             // {limit, N}: max data rows (0 = unlimited)
+  // When true, fields are copied into fresh binaries instead of referencing
+  // the input via sub-binary. Use this when decoded fields will outlive the
+  // input binary by a large margin: without it, one live field keeps the
+  // entire input buffer from being collected.
+  bool copy_strings        = false;
 };
 
 // Parses a `field_type()`:
@@ -176,7 +181,8 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if (enif_is_identical(head, AM_HEADERS)) { opts.headers = true; continue; }
+    if (enif_is_identical(head, AM_HEADERS))      { opts.headers      = true; continue; }
+    if (enif_is_identical(head, AM_COPY_STRINGS)) { opts.copy_strings = true; continue; }
 
     int arity; const ERL_NIF_TERM* tp;
     if (!enif_get_tuple(env, head, &arity, &tp) || arity != 2) continue;
@@ -426,11 +432,14 @@ static const char* find_csv_special(const char* p, const char* end, char delim) 
 struct CsvDecoder {
   ErlNifEnv*           m_env;
   const CsvDecodeOpts& m_opts;
+  const char*          m_beg;
   const char*          m_p;
   const char*          m_end;
+  ERL_NIF_TERM         m_input_bin; // original binary term — used for zero-copy sub_binary
 
-  CsvDecoder(ErlNifEnv* e, const CsvDecodeOpts& o, const char* data, size_t size)
-    : m_env(e), m_opts(o), m_p(data), m_end(data + size) {}
+  CsvDecoder(ErlNifEnv* e, const CsvDecodeOpts& o, const char* data, size_t size,
+             ERL_NIF_TERM input_bin)
+    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size), m_input_bin(input_bin) {}
 
   static bool is_eol(char c) { return c == '\n' || c == '\r'; }
 
@@ -439,12 +448,23 @@ struct CsvDecoder {
     if (m_p < m_end && *m_p == '\n') ++m_p;
   }
 
+  // Makes a field term from a span of the input that needs no unescaping.
+  // Default (copy_strings == false): a zero-copy sub-binary referencing the
+  // original input — no allocation, but the input binary stays alive as
+  // long as any sub-binary referencing it does.
+  // With copy_strings == true: always allocates a fresh binary, allowing the
+  // GC to reclaim the input buffer independently of the decoded results.
+  ERL_NIF_TERM make_raw_field_term(std::string_view sv)
+  {
+    return make_span_term(m_env, m_input_bin, m_beg, m_end, sv, m_opts.copy_strings);
+  }
+
   // Unescapes doubled quotes by copying the runs *between* them in bulk,
   // rather than byte-by-byte — for a field with a handful of escaped quotes
   // this is a handful of memcpy calls instead of one push_back per byte.
   ERL_NIF_TERM make_field_term(std::string_view sv, bool has_quote_escape)
   {
-    if (!has_quote_escape) return make_binary(m_env, sv);
+    if (!has_quote_escape) return make_raw_field_term(sv);
 
     std::string buf;
     buf.reserve(sv.size());
@@ -485,7 +505,7 @@ struct CsvDecoder {
     // SIMD: advance past bytes that are not the delimiter, '\n', or '\r'.
     const char* start = m_p;
     m_p = find_field_end(m_p, m_end, m_opts.delimiter);
-    return make_binary(m_env, std::string_view(start, static_cast<size_t>(m_p - start)));
+    return make_raw_field_term(std::string_view(start, static_cast<size_t>(m_p - start)));
   }
 
   // Reads one record (row) into `fields`. Returns false at end of input with

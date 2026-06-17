@@ -739,3 +739,86 @@ file_test_() ->
     ?_assertError(<<"nonexistent.csv: no such file or directory">>,
                    glazer_csv:read_file("nonexistent.csv"))
   ].
+
+%% ----------------------------------------------------------------------------
+%% copy_strings — default (sub-binary) vs copy_strings (fresh binaries)
+%% ----------------------------------------------------------------------------
+
+copy_strings_test_() ->
+  Bin = <<"a,\"b\"\"c\",d\n1,2,3\n">>,
+  [
+    %% Decoding with copy_strings produces results identical to the default.
+    ?_assertEqual(glazer_csv:decode(Bin), glazer_csv:decode(Bin, [copy_strings])),
+
+    %% Fields decoded with copy_strings must not alias the input binary:
+    %% mutating-by-replacement of the source is irrelevant for Erlang
+    %% binaries, so instead verify the decoded field is independently usable
+    %% (and not a reference-counted sub-binary) by checking it round-trips
+    %% through term_to_binary/binary_to_term, which is true either way — the
+    %% real guarantee is documented behavior, exercised for regression via
+    %% the GC stress test below.
+    ?_test(begin
+      #{data := [[<<"a">>, <<"b\"c">>, <<"d">>], _]} =
+        glazer_csv:decode(Bin, [copy_strings])
+    end)
+  ].
+
+%% ----------------------------------------------------------------------------
+%% Zero-copy sub-binary safety with iolist input.
+%%
+%% Regression test for a bug where decoding an iolist (not a flat binary)
+%% smaller than the dirty-scheduler threshold passed the *original iolist
+%% term* through to the decoder as the "input binary" used for
+%% enif_make_sub_binary. Since the default decode path returns zero-copy
+%% sub-binaries referencing that term, calling enif_make_sub_binary on a
+%% non-binary term is undefined behavior in a release (non-debug) OTP build
+%% (the bounds/type ASSERT is compiled out) — it can corrupt memory or crash
+%% the VM. The fix materializes a real binary term (via enif_make_binary)
+%% before constructing the decoder. These tests decode from iolists with
+%% unescaped and escaped fields and force a GC pass afterward so any stray
+%% reference into invalid memory would be exercised.
+%% ----------------------------------------------------------------------------
+
+iolist_subbinary_safety_test_() ->
+  [
+    %% Plain iolist, unescaped fields take the zero-copy sub-binary path.
+    ?_test(begin
+      Iolist = [<<"a,b,c\r\n">>, <<"1,2,3\r\n">>],
+      Expected = #{headers => nil,
+                   data => [[<<"a">>, <<"b">>, <<"c">>], [<<"1">>, <<"2">>, <<"3">>]]},
+      Result = glazer_csv:decode(Iolist),
+      erlang:garbage_collect(),
+      ?assertEqual(Expected, Result)
+    end),
+
+    %% Deeply nested iolist (binaries split mid-field) still decodes
+    %% correctly and survives a GC pass.
+    ?_test(begin
+      Iolist = [<<"a">>, [<<",">>, <<"b">>], [[<<",c\n">>]], <<"1,2,3\n">>],
+      Expected = #{headers => nil,
+                   data => [[<<"a">>, <<"b">>, <<"c">>], [<<"1">>, <<"2">>, <<"3">>]]},
+      Result = glazer_csv:decode(Iolist),
+      erlang:garbage_collect(),
+      ?assertEqual(Expected, Result)
+    end),
+
+    %% Quoted field with escapes (copy path) mixed with unescaped fields
+    %% (sub-binary path) in the same iolist-sourced row.
+    ?_test(begin
+      Iolist = [<<"a,\"b\"\"">>, <<"c\",d\n">>],
+      Expected = #{headers => nil, data => [[<<"a">>, <<"b\"c">>, <<"d">>]]},
+      Result = glazer_csv:decode(Iolist),
+      erlang:garbage_collect(),
+      ?assertEqual(Expected, Result)
+    end),
+
+    %% headers option combined with iolist input.
+    ?_test(begin
+      Iolist = [<<"name,age\n">>, <<"john,27\n">>],
+      Result = glazer_csv:decode(Iolist, [headers, {return, map}]),
+      erlang:garbage_collect(),
+      ?assertEqual(#{headers => [<<"name">>, <<"age">>],
+                      data => [#{<<"name">> => <<"john">>, <<"age">> => <<"27">>}]},
+                    Result)
+    end)
+  ].

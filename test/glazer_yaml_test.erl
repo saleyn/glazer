@@ -628,3 +628,72 @@ file_test_() ->
     ?_assertError(<<"nonexistent.yaml: no such file or directory">>,
                    glazer_yaml:read_file("nonexistent.yaml"))
   ].
+
+%% ----------------------------------------------------------------------------
+%% copy_strings — default (sub-binary) vs copy_strings (fresh binaries)
+%% ----------------------------------------------------------------------------
+
+copy_strings_test_() ->
+  Bin = <<"a: plain\nb: \"quoted\"\nc: 'single'\n">>,
+  [
+    ?_assertEqual(glazer_yaml:decode(Bin), glazer_yaml:decode(Bin, [copy_strings])),
+    ?_assertEqual(#{<<"a">> => <<"plain">>, <<"b">> => <<"quoted">>, <<"c">> => <<"single">>},
+                  glazer_yaml:decode(Bin, [copy_strings]))
+  ].
+
+%% ----------------------------------------------------------------------------
+%% Zero-copy sub-binary safety with iolist input.
+%%
+%% Regression test mirroring the CSV/JSON iolist-input fix: decoding an
+%% iolist (not a flat binary) smaller than the dirty-scheduler threshold must
+%% not pass the original iolist term through to enif_make_sub_binary. See
+%% glazer_csv_test.erl / glazer_json_test.erl for the full bug writeup.
+%% ----------------------------------------------------------------------------
+
+iolist_subbinary_safety_test_() ->
+  [
+    ?_test(begin
+      Iolist = [<<"a: ">>, <<"hello\n">>],
+      Result = glazer_yaml:decode(Iolist),
+      erlang:garbage_collect(),
+      ?assertEqual(#{<<"a">> => <<"hello">>}, Result)
+    end),
+
+    ?_test(begin
+      Iolist = [<<"a: hel">>, [[<<"lo">>], <<"\nb: ">>], <<"42\n">>],
+      Result = glazer_yaml:decode(Iolist),
+      erlang:garbage_collect(),
+      ?assertEqual(#{<<"a">> => <<"hello">>, <<"b">> => 42}, Result)
+    end)
+  ].
+
+%% ----------------------------------------------------------------------------
+%% KeyCache safety with quoted/folded mapping keys.
+%%
+%% Regression test for a heap-use-after-free: the key cache (active once the
+%% document is >= 2048 bytes) must never retain a pointer into a transient
+%% buffer — a quoted key's unescape buffer, or a folded plain-key scratch
+%% buffer — since that buffer is destroyed once the enclosing parse_mapping
+%% call returns, before a later occurrence of the same key performs its
+%% cache lookup. Confirmed via AddressSanitizer (heap-use-after-free in
+%% KeyCache::lookup) before the fix (gating the cache on the key being a
+%% direct sub-span of the original input).
+%% ----------------------------------------------------------------------------
+
+key_cache_quoted_key_safety_test_() ->
+  Filler = binary:copy(<<"a">>, 100),
+  Pad = [[<<"\"pad">>, integer_to_binary(N), <<"\": ">>, Filler, <<"\n">>]
+         || N <- lists:seq(1, 25)],
+  LongKey = <<"this_is_a_long_quoted_mapping_key_that_forces_heap_allocation">>,
+  Doc = iolist_to_binary([
+    Pad, <<"\"">>, LongKey, <<"\": value1\n">>,
+    Pad, <<"\"">>, LongKey, <<"\": value2\n">>
+  ]),
+  [
+    ?_test(begin
+      ?assert(byte_size(Doc) >= 2048),
+      Result = glazer_yaml:decode(Doc),
+      erlang:garbage_collect(),
+      ?assertEqual(<<"value2">>, maps:get(LongKey, Result))
+    end)
+  ].

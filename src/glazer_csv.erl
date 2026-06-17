@@ -110,7 +110,8 @@ table of all available options and their effects.
   | {null_term, atom()}
   | {return, list | map | tuple}
   | {skip, non_neg_integer() | {pos_integer(), pos_integer()}}
-  | {limit, pos_integer()}.
+  | {limit, pos_integer()}
+  | copy_strings.
 
 -doc """
 CSV decode options:
@@ -133,6 +134,7 @@ CSV decode options:
 | `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
 | `{limit, N}` | Process at most `N` data rows (after skipping) |
 | `{null_term, Atom}` | Atom to use for `on_failure => null`; overrides the library-wide `null` env var |
+| `copy_strings` | Always allocate a fresh binary for each decoded field, rather than returning a sub-binary that references the original input. By default (without this option) fields are zero-copy sub-binaries of the input, which is faster but keeps the entire input binary alive in memory as long as any decoded field referencing it is reachable. Use `copy_strings` when decoded fields are long-lived and the input is large, to allow the GC to reclaim the input buffer independently. |
 """.
 -type decode_opts() :: [decode_opt()].
 

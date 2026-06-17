@@ -38,7 +38,8 @@ See also [https://github.com/stephenberry/glaze]
     use_nil
   | {null_term, atom()}
   | {keys, atom | existing_atom | binary}
-  | yaml_1_1_bools.
+  | yaml_1_1_bools
+  | copy_strings.
 
 -doc """
 YAML decode options:
@@ -51,6 +52,14 @@ YAML decode options:
 - `yaml_1_1_bools`      - additionally treat `yes`/`no`/`on`/`off` (and case
   variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2
   core schema) only `true`/`false` are recognized as booleans.
+- `copy_strings`        - always allocate a fresh binary for each decoded
+  scalar, rather than returning a sub-binary that references the original
+  input. By default (without this option) single-line plain scalars are
+  zero-copy sub-binaries of the input, which is faster but keeps the entire
+  input binary alive in memory as long as any decoded scalar referencing it
+  is reachable. Use `copy_strings` when decoded scalars are long-lived and
+  the input is large, to allow the GC to reclaim the input buffer
+  independently.
 """.
 -type decode_opts() :: [decode_opt()].
 

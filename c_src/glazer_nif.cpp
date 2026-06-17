@@ -81,9 +81,17 @@ static ERL_NIF_TERM nif_json_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
     sched_argv[0] = argv[0];
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
-    if (bin.size < DIRTY_THRESHOLD)
-      return do_json_decode(env, bin, argc, argv);
-    sched_argv[0] = enif_make_binary(env, &bin);
+    // argv[0] is an iolist, not itself a binary term — enif_make_binary
+    // materializes a real binary term so any zero-copy sub_binary taken
+    // against it downstream (decode keeps a reference for the whole call)
+    // is valid; passing the raw iolist term to enif_make_sub_binary would
+    // be undefined behaviour.
+    ERL_NIF_TERM bin_term = enif_make_binary(env, &bin);
+    if (bin.size < DIRTY_THRESHOLD) {
+      ERL_NIF_TERM inline_argv[2] = { bin_term, argc > 1 ? argv[1] : enif_make_list(env, 0) };
+      return do_json_decode(env, bin, argc, inline_argv);
+    }
+    sched_argv[0] = bin_term;
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else {
     return enif_make_badarg(env);
@@ -102,7 +110,7 @@ static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int 
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  YamlDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
+  YamlDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode());
   update_reduction_count(env, bin.size);
   return result;
@@ -129,9 +137,16 @@ static ERL_NIF_TERM nif_yaml_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
     sched_argv[0] = argv[0];
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
-    if (bin.size < DIRTY_THRESHOLD)
-      return do_yaml_decode(env, bin, argc, argv);
-    sched_argv[0] = enif_make_binary(env, &bin);
+    // argv[0] is an iolist, not itself a binary term — enif_make_binary
+    // materializes a real binary term so any zero-copy sub_binary taken
+    // against it downstream is valid; passing the raw iolist term to
+    // enif_make_sub_binary would be undefined behaviour.
+    ERL_NIF_TERM bin_term = enif_make_binary(env, &bin);
+    if (bin.size < DIRTY_THRESHOLD) {
+      ERL_NIF_TERM inline_argv[2] = { bin_term, argc > 1 ? argv[1] : enif_make_list(env, 0) };
+      return do_yaml_decode(env, bin, argc, inline_argv);
+    }
+    sched_argv[0] = bin_term;
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else {
     return enif_make_badarg(env);
@@ -150,7 +165,7 @@ static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int a
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size);
+  CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode());
   update_reduction_count(env, bin.size);
   return result;
@@ -177,9 +192,16 @@ static ERL_NIF_TERM nif_csv_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_T
     sched_argv[0] = argv[0];
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else if (enif_inspect_iolist_as_binary(env, argv[0], &bin)) {
-    if (bin.size < DIRTY_THRESHOLD)
-      return do_csv_decode(env, bin, argc, argv);
-    sched_argv[0] = enif_make_binary(env, &bin);
+    // argv[0] is an iolist, not itself a binary term — enif_make_binary
+    // materializes a real binary term so any zero-copy sub_binary taken
+    // against it downstream is valid; passing the raw iolist term to
+    // enif_make_sub_binary would be undefined behaviour.
+    ERL_NIF_TERM bin_term = enif_make_binary(env, &bin);
+    if (bin.size < DIRTY_THRESHOLD) {
+      ERL_NIF_TERM inline_argv[2] = { bin_term, argc > 1 ? argv[1] : enif_make_list(env, 0) };
+      return do_csv_decode(env, bin, argc, inline_argv);
+    }
+    sched_argv[0] = bin_term;
     sched_argv[1] = argc > 1 ? argv[1] : enif_make_list(env, 0);
   } else {
     return enif_make_badarg(env);

@@ -334,13 +334,8 @@ struct Decoder {
   // GC to reclaim the input buffer independently of the decoded results.
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (!has_escape) [[likely]] {
-      if (!m_opts.copy_strings) {
-        size_t offset = static_cast<size_t>(s - m_beg);
-        return enif_make_sub_binary(m_env, m_input_bin, offset, len);
-      }
-      return make_binary(m_env, std::string_view(s, len));
-    }
+    if (!has_escape) [[likely]]
+      return make_span_term(m_env, m_input_bin, m_beg, m_end, std::string_view(s, len), m_opts.copy_strings);
     return make_binary(m_env, unescape(s, len, buf));
   }
 

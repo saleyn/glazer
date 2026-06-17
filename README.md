@@ -360,6 +360,7 @@ overridden:
 | `{keys, existing_atom}` | Decode object keys as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | Decode object keys as binaries (default) |
 | `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
+| `copy_strings` | Always allocate a fresh binary for each decoded string, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
 
 ```erlang
 1> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
@@ -604,6 +605,7 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 | `{keys, existing_atom}` | Decode mapping keys as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | Decode mapping keys as binaries (default) |
 | `yaml_1_1_bools` | Additionally treat `yes`/`no`/`on`/`off` (and case variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2 core schema) only `true`/`false` are recognized as booleans |
+| `copy_strings` | Always allocate a fresh binary for each decoded scalar, instead of a zero-copy sub-binary of the input for single-line plain scalars (see [Performance Optimization Details](#performance-optimization-details)) |
 
 ```erlang
 1> glazer_yaml:decode(<<"a: ~\n">>, [use_nil]).
@@ -759,6 +761,7 @@ skipped, matching `decode/2`.
 | `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
 | `{limit, N}` | Process at most `N` data rows (after skipping) |
 | `{null_term, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
+| `copy_strings` | Always allocate a fresh binary for each decoded field, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
 
 ### [Field type conversion](#table-of-contents)
 
@@ -968,15 +971,17 @@ of the gap over the slower contenders:
   Erlang terms. This removes a whole staging allocate-and-copy pass that
   tree-based decoders pay for.
 
-- **Sub-binary string values (zero allocation on decode).** Unescaped JSON
-  string values are returned as `enif_make_sub_binary` terms — a slice of
-  the original input binary — rather than newly allocated copies. No
-  `memcpy` or heap allocation occurs for the common case where strings
-  contain no `\` escapes. Only escaped strings pay the copy cost (to
-  materialise the unescaped bytes). The `copy_strings` decode option opts
-  back into copying when decoded strings are long-lived and the input is
-  large (keeping one sub-binary alive would otherwise pin the entire input
-  buffer in memory).
+- **Sub-binary string/field values (zero allocation on decode).** Shared
+  across the JSON, YAML, and CSV decoders: unescaped scalars are returned as
+  `enif_make_sub_binary` terms — a slice of the original input binary —
+  rather than newly allocated copies. No `memcpy` or heap allocation occurs
+  for the common case (JSON strings with no `\` escapes, CSV fields without
+  embedded quotes, single-line YAML plain scalars). Only values that need
+  unescaping or reassembly (escaped JSON strings, quoted/folded YAML
+  scalars, CSV fields with doubled quotes) pay the copy cost. The
+  `copy_strings` decode option opts back into copying for every value when
+  decoded results are long-lived and the input is large (keeping one
+  sub-binary alive would otherwise pin the entire input buffer in memory).
 
 - **Inline, growable output buffer (`OutBuf`).** Encoding writes into a
   4 KB stack-allocated buffer first; only documents that exceed that spill
