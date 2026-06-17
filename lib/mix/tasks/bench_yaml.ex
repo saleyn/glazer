@@ -69,7 +69,7 @@ defmodule Mix.Tasks.BenchYaml do
          {:ok, doc} = YamlRustler.parse(b)
          doc
        end,
-       :no_encode,
+       nil,
        YamlRustler},
 
        {"fast_yaml",
@@ -85,11 +85,11 @@ defmodule Mix.Tasks.BenchYaml do
          [doc | _] = :yamerl_constr.string(to_charlist(b))
          doc
        end,
-       :no_encode,
+       nil,
        :yamerl_constr},
 
       {"ymlr",
-       :no_decode,
+       nil,
        fn t -> Ymlr.document!(t) end,
        Ymlr},
     ]
@@ -133,9 +133,12 @@ defmodule Mix.Tasks.BenchYaml do
   # Benchmark runner
   # ---------------------------------------------------------------------------
 
-  defp iterations(size) when size > 200_000, do: 200
-  defp iterations(size) when size >  10_000, do: 1_000
-  defp iterations(_),                        do: 5_000
+  @iteration_thresholds [{200_000, 100}, {10_000, 250}]
+  @default_iterations   5_000
+
+  defp iterations(size) do
+    Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
+  end
 
   defp run_file(bin, suites, parallelism) do
     n       = iterations(byte_size(bin))
@@ -152,12 +155,12 @@ defmodule Mix.Tasks.BenchYaml do
             try do
               {dt, decoded} =
                 case decode do
-                  :no_decode -> {:na, :glazer_yaml.decode(bin)}
+                  nil        -> {:na, :glazer_yaml.decode(bin)}
                   decode_fun -> {Mix.Tasks.Bench.Common.measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
                 end
               et =
                 case encode do
-                  :no_encode -> :na
+                  nil        -> :na
                   encode_fun -> Mix.Tasks.Bench.Common.measure(n, fn -> encode_fun.(decoded) end)
                 end
               {:ok, dt, et}

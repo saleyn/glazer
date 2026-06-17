@@ -462,22 +462,31 @@ struct CsvDecoder {
   // Unescapes doubled quotes by copying the runs *between* them in bulk,
   // rather than byte-by-byte — for a field with a handful of escaped quotes
   // this is a handful of memcpy calls instead of one push_back per byte.
+  // Writes directly into the destination Erlang binary (sized exactly to
+  // the unescaped length up front) instead of building an intermediate
+  // std::string and copying it again via make_binary: one allocation and
+  // one pass over the bytes instead of two of each.
   ERL_NIF_TERM make_field_term(std::string_view sv, bool has_quote_escape)
   {
     if (!has_quote_escape) return make_raw_field_term(sv);
 
-    std::string buf;
-    buf.reserve(sv.size());
-    size_t start = 0;
+    size_t escapes = 0;
+    for (size_t i = 0; i + 1 < sv.size(); ++i)
+      if (sv[i] == '"' && sv[i+1] == '"') { ++escapes; ++i; }
+
+    auto [term, dst] = make_binary(m_env, sv.size() - escapes);
+    size_t start = 0, out = 0;
     for (size_t i = 0; i < sv.size(); ++i) {
       if (sv[i] == '"' && i + 1 < sv.size() && sv[i+1] == '"') {
-        buf.append(sv.data() + start, i + 1 - start); // include first quote
+        size_t n = i + 1 - start;
+        memcpy(dst + out, sv.data() + start, n); // include first quote
+        out += n;
         start = i + 2; // skip the second quote
         ++i;
       }
     }
-    buf.append(sv.data() + start, sv.size() - start);
-    return make_binary(m_env, buf);
+    memcpy(dst + out, sv.data() + start, sv.size() - start);
+    return term;
   }
 
   // Reads one field starting at m_p. Advances m_p past the field (not past
@@ -681,6 +690,11 @@ struct CsvDecoder {
     SmallTermVec<64> fields;
     SmallTermVec<64> header;
     std::vector<ERL_NIF_TERM> rows;
+    // Conservative row-count estimate (4 B/row minimum, e.g. "a,b\n") avoids
+    // the ~15 doubling reallocations a 25K-row file would otherwise pay as
+    // `rows` grows one push_back at a time; an overestimate only wastes
+    // unused capacity, never time, so erring high for short rows is fine.
+    rows.reserve((m_end - m_beg) / 4);
     size_t row_num  = 0;
     // Hoist as_map before any goto so no initialization is jumped over.
     const bool as_map = m_opts.return_kind == CsvReturnKind::map && m_opts.headers;

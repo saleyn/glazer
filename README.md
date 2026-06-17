@@ -53,6 +53,7 @@ formats.
   - [CSV Encode options](#csv-encode-options)
   - [API](#api-2)
   - [Benchmarking CSV](#benchmarking-csv)
+    - [glazer vs rusty\_csv](#glazer-vs-rusty_csv)
 - [Big integers](#big-integers)
   - [API](#api-3)
 - [Limitations](#limitations)
@@ -547,20 +548,20 @@ A comparison benchmark against other JSON libraries (`simdjsone`,
 
 ```sh
 $ PARALLEL=2 make bench-json
-==> Running benchmarks with parallelism: 2
+==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
 
 (numbers in µs)
 JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
             decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      3217.7   1037.4     3591.6   2405.9        5.7      4.5        3.7      2.9        0.8      0.9
-torque      4074.8   1500.3     3934.3   2987.2        6.2      6.4        4.1      4.6        0.9      1.0
-simdjsone   4642.8   3496.7     7807.8   6070.4       11.9     15.9        7.8      9.0        1.4      2.2
-jiffy       6046.4   2454.6     8537.8   4435.1       13.8     12.9       10.6      6.5        2.2      2.1
-jason       9813.3   8312.8    19166.3  17119.0       29.3     21.2       15.5     15.5        3.2      3.8
-thoas       9815.5   9135.8    19704.7  18182.2       26.3     22.9       18.3     18.2        2.8      3.9
-euneus     11229.4   6791.9    14531.6  12595.9       25.5     17.9       11.6     11.1        2.8      2.2
-json       10993.4   6560.2    13935.0  12331.8       22.9     17.1       10.7      8.2        2.4      2.0
+glazer      2429.7    983.3     2595.8   1694.6        6.1      4.8        4.3      2.8        0.8      0.8
+torque      2967.5   1194.8     3170.2   1865.2        7.0      6.0        4.0      2.8        1.0      0.8
+simdjsone   3043.1   2511.1     4583.2   4970.7       12.0     12.9        6.4      8.4        1.3      2.1
+jiffy       5177.4   1885.6     6792.4   3261.6       13.5     10.9        7.7      6.0        2.0      1.9
+jason       7550.7   6365.9    15760.1  14812.5       24.5     22.6       13.6     14.7        2.6      2.1
+thoas       7711.6   7082.7    15776.5  16042.0       23.9     23.1       15.6     16.3        2.9      2.3
+euneus      8814.3   5076.9    11915.8   9334.9       23.8     18.8       10.9      9.7        2.8      2.0
+json        8245.4   4779.5    11010.5   9050.0       21.6     18.8       10.0      8.2        2.3      1.9
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -646,17 +647,17 @@ All functions below are in `glazer_yaml`.
 
 ```sh
 $ PARALLEL=2 make bench-yaml
-==> Running benchmarks with parallelism: 2
+==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
 
 (numbers in µs)
 YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
                 decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer            59.4      9.5       28.6      5.6        8.6      1.1
-yaml_rustler     133.4      n/a       99.5      n/a       12.4      n/a
-fast_yaml        203.4     90.8      103.4     40.3       18.0      8.0
-yamerl          1469.0      n/a     1006.9      n/a      494.2      n/a
-ymlr               n/a     46.9        n/a     39.0        n/a      5.2
+glazer            18.4      8.5        9.2      3.3        1.4      0.8
+yaml_rustler     104.8      n/a       66.3      n/a       10.3      n/a
+fast_yaml        130.7     51.1       79.0     31.6       15.4      5.8
+yamerl          1108.5      n/a      859.0      n/a      422.5      n/a
+ymlr               n/a     39.0        n/a     36.4        n/a      4.3
 ```
 
 ## [CSV](#table-of-contents)
@@ -864,17 +865,62 @@ All functions below are in `glazer_csv`.
 
 ```sh
 $ PARALLEL=2 make bench-csv
-==> Running benchmarks with parallelism: 2
+==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
 
 (numbers in µs)
 CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
                 decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer            10.6        3.9        839.3      382.2      32962.9    10706.1
-nimble_csv        45.9       27.4       3522.8     2785.7     168599.8    93305.1
-csv               73.8      214.2       5873.3    16112.3      TIMEOUT    TIMEOUT
-erl_csv          406.6      333.5      38773.1    25074.8    1333590.6   599183.0
+glazer             9.3        3.8        676.9      239.1      20867.1     9657.3
+nimble_csv        29.6       27.7       3469.0     2694.8     144525.9   100152.0
+rusty_csv         27.8        n/a        740.6        n/a      22251.9        n/a
+csv               65.3      156.3       5733.1    16888.9     298011.0   467137.4
+erl_csv          440.8      296.6      37380.3    22897.5      TIMEOUT    TIMEOUT
 ```
+
+#### [glazer vs rusty_csv](#table-of-contents)
+
+> Note: [`rusty_csv`](https://hex.pm/packages/rusty_csv) is a Rust NIF (via
+`rustler`) and the closest performance comparison for glazer's CSV
+decoder — both use SIMD (AVX2/SSE2) to scan for delimiters/quotes and
+return zero-copy sub-binaries for unescaped fields. It's excluded from the
+default `make bench-csv` table above because it can't be `deps.get`'d
+alongside `yaml_rustler` (incompatible `rustler` version constraints — see
+the `BENCH_SET` note in the Makefile); run it explicitly with
+`make bench-csv BENCH_SET=csv`:
+>
+```sh
+$ PARALLEL=2 make bench-csv BENCH_SET=csv
+```
+>
+> The benchmarking table above has the merged results of running with `BENCH_SET=csv`
+and without.
+>
+> (`rusty_csv` has no CSV encoder, so its encode column is `n/a`.)
+
+Decode is within a few percent either way across file sizes — small-input
+overhead favors glazer (no per-call Rust/NIF marshalling layer beyond
+`rustler`'s own), and medium/large decode is close to a tie, with the
+remainder being run-to-run noise rather than a structural gap. Profiling
+glazer's large-file decode (3.4 MB / 25K rows / 150K fields) by
+incrementally stubbing out parts of the pipeline shows where the time
+actually goes:
+
+| Stage | Share of decode time |
+|---|---|
+| SIMD scan (find delimiters/quotes) | ~7% |
+| `enif_make_sub_binary` per field | ~31% |
+| `enif_make_list_from_array` per row | ~26% |
+| Remaining bookkeeping (field/row vectors, outer list) | ~34% |
+
+Scanning is a small fraction of the total; the dominant cost is the NIF
+term-construction calls inherent to the `[[field, ...], ...]` row-of-lists
+shape both libraries return — `rusty_csv` pays the same `enif_make_sub_binary`
+and list-construction costs per field/row, just batched at the end of a
+two-phase scan-then-extract design instead of interleaved during scanning
+like glazer. There's no scanning-strategy change available that would close
+the remaining gap without changing the output term shape itself (e.g.
+`{return, tuple}`, which avoids rebuilding a list per row).
 
 ## [Big integers](#table-of-contents)
 
@@ -943,11 +989,13 @@ recursive descent on adversarial input.
 ## [Performance Optimization Details](#table-of-contents)
 
 `glazer` is faster than all competitors on both encoding and decoding in all
-data formats - JSON/YAML/CSV. On JSON decoding it leads `torque` (Rust
-`sonic-rs` NIF) by ~25–40% across every benchmarked workload, and on encoding
-by ~10–30%. Both sit well ahead of the remaining contenders (`simdjsone`,
-`jiffy`, and the pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's
-built-in `json`).
+data formats - JSON/YAML/CSV. On JSON decoding it has a slight edge over
+`torque` (Rust `sonic-rs` NIF) across every benchmarked workload, and on encoding
+the lead is by by ~10–30%. Both sit well ahead of the remaining contenders
+(`simdjsone`, `jiffy`, and the pure-Elixir libraries `jason`, `thoas`, `euneus`,
+and OTP's built-in `json`). On CSV it's close competitor is also Rust-backended
+`rusty_csv` project, though that project is missing encoding implementation.
+Here are some observations about `glazer`'s design:
 
 - **No tuple-of-binaries intermediate representation.** `glazer` decodes
   straight to native Erlang terms (maps, lists, binaries, numbers) and

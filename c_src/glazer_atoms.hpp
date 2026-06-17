@@ -91,6 +91,12 @@ static ERL_NIF_TERM AM_ITERATE;
 static ERL_NIF_TERM AM_INDEX;
 static ERL_NIF_TERM AM_INVALID_PATH;
 
+// info/0 result atoms
+static ERL_NIF_TERM AM_VERSION;
+static ERL_NIF_TERM AM_APP_VERSION;
+static ERL_NIF_TERM AM_PGO;
+static ERL_NIF_TERM AM_OPTIMIZATION;
+
 // The runtime null value (configurable via NIF load)
 static ERL_NIF_TERM am_null;
 
@@ -172,6 +178,11 @@ inline void init_atoms(ErlNifEnv* env)
   AM_ITERATE                   = enif_make_atom(env, "iterate");
   AM_INDEX                     = enif_make_atom(env, "index");
   AM_INVALID_PATH              = enif_make_atom(env, "invalid_path");
+
+  AM_VERSION                   = enif_make_atom(env, "version");
+  AM_APP_VERSION               = enif_make_atom(env, "app_version");
+  AM_PGO                       = enif_make_atom(env, "pgo");
+  AM_OPTIMIZATION              = enif_make_atom(env, "optimization");
 
   am_null                      = AM_NULL;
 }

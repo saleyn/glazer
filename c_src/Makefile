@@ -74,23 +74,31 @@ PGO      ?= 0
 PGO_DIR  := $(OBJ_DIR)/pgo
 ASAN     ?= 0
 
+# Build metadata exposed at runtime via glazer:info/0 — see nif_info() in
+# glazer_nif.cpp. GLAZER_VERSION is the git describe of the checkout used to
+# build this .so; GLAZER_APP_VERSION is the `vsn` from glazer.app.src;
+# GLAZER_OPT_LEVEL/GLAZER_PGO reflect the flags chosen below.
+GLAZER_VERSION     := $(shell git -C $(BASEDIR) describe --tags --dirty --always --abbrev=6 2>/dev/null | sed 's/g//; s/-dirty/*/')
+GLAZER_APP_VERSION := $(shell sed -nE 's/.*\{vsn, *"([^"]+)".*/\1/p' $(BASEDIR)/src/*.app.src | head -n1)
+CXXFLAGS += -DGLAZER_VERSION='"$(GLAZER_VERSION)"' -DGLAZER_APP_VERSION='"$(GLAZER_APP_VERSION)"'
+
 ifeq ($(DEBUG),1)
-  CXXFLAGS += -O0 -g
+  CXXFLAGS += -O0 -g -DGLAZER_OPT_LEVEL='"none"'
 else ifeq ($(ASAN),1)
   # Compile with ASan instrumentation but do NOT link -fsanitize=address.
   # Linking it would embed or reference the runtime inside the NIF .so; when
   # the Erlang VM dlopen's that .so the runtime loads too late and ASan aborts.
   # Instead all __asan_* symbols stay undefined in the .so and are resolved
   # from the runtime preloaded via LD_PRELOAD (Linux only — see Makefile).
-  CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer
+  CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer -DGLAZER_OPT_LEVEL='"O1"'
 else
-  CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS)
+  CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
   LDFLAGS  += $(LINK_FLAGS)
   ifeq ($(PGO),generate)
     CXXFLAGS += -fprofile-generate=$(PGO_DIR)
     LDFLAGS  += -fprofile-generate=$(PGO_DIR)
   else ifeq ($(PGO),use)
-    CXXFLAGS += -fprofile-use=$(PGO_DIR) -fprofile-correction -Wno-missing-profile
+    CXXFLAGS += -fprofile-use=$(PGO_DIR) -fprofile-correction -Wno-missing-profile -DGLAZER_PGO=1
     LDFLAGS  += -fprofile-use=$(PGO_DIR)
   endif
 endif

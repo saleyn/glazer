@@ -618,6 +618,49 @@ static ERL_NIF_TERM nif_compile_path(ErlNifEnv* env, int argc, const ERL_NIF_TER
 }
 
 //-----------------------------------------------------------------------------
+// NIF: info
+//-----------------------------------------------------------------------------
+
+#ifndef GLAZER_VERSION
+#define GLAZER_VERSION "unknown"
+#endif
+#ifndef GLAZER_APP_VERSION
+#define GLAZER_APP_VERSION "unknown"
+#endif
+#ifndef GLAZER_OPT_LEVEL
+#define GLAZER_OPT_LEVEL "none"
+#endif
+#ifndef GLAZER_PGO
+#define GLAZER_PGO 0
+#endif
+
+static ERL_NIF_TERM nif_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc != 0) [[unlikely]]
+    return enif_make_badarg(env);
+
+  auto opt = [=]() {
+    if (!strcmp(GLAZER_OPT_LEVEL, "none")) return enif_make_atom(env, GLAZER_OPT_LEVEL);
+    if (!strcmp(GLAZER_OPT_LEVEL, "O1"))   return enif_make_int(env, 1);
+    if (!strcmp(GLAZER_OPT_LEVEL, "O2"))   return enif_make_int(env, 2);
+    if (!strcmp(GLAZER_OPT_LEVEL, "O3"))   return enif_make_int(env, 3);
+    return make_binary(env, std::string_view(GLAZER_OPT_LEVEL));
+  };
+
+  ERL_NIF_TERM keys[]   = { AM_VERSION, AM_APP_VERSION, AM_PGO, AM_OPTIMIZATION };
+  ERL_NIF_TERM values[] = {
+    make_binary(env, std::string_view(GLAZER_VERSION)),
+    make_binary(env, std::string_view(GLAZER_APP_VERSION)),
+    GLAZER_PGO ? AM_TRUE : AM_FALSE,
+    opt()
+  };
+
+  ERL_NIF_TERM map;
+  enif_make_map_from_arrays(env, keys, values, 4, &map);
+  return map;
+}
+
+//-----------------------------------------------------------------------------
 // NIF: encode_integer / try_decode_integer
 //-----------------------------------------------------------------------------
 
@@ -686,6 +729,7 @@ static ErlNifFunc nif_funcs[] = {
   {"encode_integer",     1, nif_encode_integer,     0},
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
   {"nif_compile_path",   1, nif_compile_path,       0},
+  {"nif_info",           0, nif_info,               0},
 };
 
 } // namespace glz

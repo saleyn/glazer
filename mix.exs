@@ -8,7 +8,13 @@ defmodule Glazer.MixProject do
       elixir:   "~> 1.15",
       deps:     deps(),
       aliases:  aliases(),
-      language: :erlang
+      language: :erlang,
+      # yaml_rustler/rusty_csv are conditionally fetched (see bench_set_deps/0
+      # below); when skipped, the bench task modules that reference them
+      # directly (bench_yaml.ex, bench_csv.ex) would otherwise trigger
+      # "module is undefined" compiler warnings, which warn_skipped_bench_dep/2
+      # already explains on screen — so suppress the warnings themselves here.
+      elixirc_options: [no_warn_undefined: [YamlRustler, RustyCSV.RFC4180]]
     ]
   end
 
@@ -39,11 +45,37 @@ defmodule Glazer.MixProject do
     ] ++ bench_set_deps()
   end
 
+  # Emitted (once, before deps are fetched/compiled) whenever BENCH_SET
+  # leaves one or both of yaml_rustler/rusty_csv unresolved, so the
+  # "X.Y is undefined" compiler warnings that follow during `mix compile`
+  # have an explanation already on screen instead of appearing unexplained.
+  defp warn_skipped_bench_dep(name, hex_name) do
+    # Plain IO.puts, not IO.warn/Mix.shell().error: this is informational
+    # context for the compiler warnings that follow, not a code-quality
+    # warning, so it shouldn't carry IO.warn's attached stacktrace.
+    #IO.puts("""
+    #==> #{name} is not being fetched (BENCH_SET=#{inspect(System.get_env("BENCH_SET"))}), so the \
+    #compiler warnings below about its module being undefined are expected — it depends on a \
+    #:rustler version that conflicts with the other Rust NIF dep's, so the two can't be \
+    #deps.get'd together (see the BENCH_SET note above and in the Makefile). Run with \
+    #BENCH_SET=#{hex_name} to fetch and benchmark against #{name} specifically.
+    #""")
+  end
+
   defp bench_set_deps do
     case System.get_env("BENCH_SET") do
-      "yaml" -> [{:yaml_rustler, "~> 0.1.6",  only: :bench}]
-      "csv"  -> [{:rusty_csv,    "~> 0.3.11", only: :bench}]
-      _      -> []
+      "yaml" ->
+        warn_skipped_bench_dep("rusty_csv",   "csv")
+        [{:yaml_rustler, "~> 0.1.6",  only: :bench}]
+
+      "csv" ->
+        warn_skipped_bench_dep("yaml_rustler", "yaml")
+        [{:rusty_csv,    "~> 0.3.11", only: :bench}]
+
+      _ ->
+        warn_skipped_bench_dep("yaml_rustler", "yaml")
+        warn_skipped_bench_dep("rusty_csv",     "csv")
+        []
     end
   end
 

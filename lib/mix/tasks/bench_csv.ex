@@ -16,6 +16,12 @@ defmodule Mix.Tasks.BenchCsv do
   """
   use Mix.Task
 
+  # rusty_csv is only fetched when BENCH_SET=csv (see mix.exs); calling
+  # RustyCSV.RFC4180.parse_string/1 directly otherwise compiles fine
+  # (module_available?/1 guards it at runtime) but the compiler still warns
+  # it's undefined.
+  @compile {:no_warn_undefined, RustyCSV.RFC4180}
+
   @lib_w 11
   @col_w 9
   @sep   2
@@ -73,7 +79,7 @@ defmodule Mix.Tasks.BenchCsv do
 
       {"rusty_csv",
        fn b -> RustyCSV.RFC4180.parse_string(b) end,
-       fn _rows -> nil end,
+       nil,
        RustyCSV.RFC4180},
 
       {"csv",
@@ -146,9 +152,12 @@ defmodule Mix.Tasks.BenchCsv do
   # Benchmark runner
   # ---------------------------------------------------------------------------
 
-  defp iterations(size) when size > 1_000_000, do: 20
-  defp iterations(size) when size >    10_000, do: 200
-  defp iterations(_),                          do: 2_000
+  @iteration_thresholds [{1_000_000, 10}, {10_000, 100}]
+  @default_iterations   2_000
+
+  defp iterations(size) do
+    Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
+  end
 
   defp run_file(bin, suites, parallelism) do
     n       = iterations(byte_size(bin))
@@ -164,8 +173,13 @@ defmodule Mix.Tasks.BenchCsv do
           result =
             try do
               dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
-              decoded = decode.(bin)
-              et = Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
+              et =
+                if is_function(encode) do
+                  decoded = decode.(bin)
+                  Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
+                else
+                  :na
+                end
               {:ok, dt, et}
             rescue
               e -> {:error, Exception.message(e)}
@@ -229,10 +243,15 @@ defmodule Mix.Tasks.BenchCsv do
       cols = Enum.map_join(files_data, "", fn {_label, results} ->
         case List.keyfind(results, name, 0) do
           {_, {:ok, dt, et}} ->
+            et_str =
+              case et do
+                :na -> "n/a"
+                _   -> :io_lib.format("~.1f", [et]) |> IO.iodata_to_binary()
+              end
             "  " <>
             String.pad_leading(:io_lib.format("~.1f", [dt]) |> IO.iodata_to_binary(), col_w) <>
             "  " <>
-            String.pad_leading(:io_lib.format("~.1f", [et]) |> IO.iodata_to_binary(), col_w) <>
+            String.pad_leading(et_str, col_w) <>
             String.duplicate(" ", sep)
 
           {_, {:error, "timeout"}} ->

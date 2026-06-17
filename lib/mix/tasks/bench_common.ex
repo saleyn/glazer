@@ -28,7 +28,11 @@ defmodule Mix.Tasks.Bench.Common do
           end
       end
 
-    IO.puts("==> Running benchmarks with parallelism: #{nworkers}")
+    info = :glazer.info()
+    opt  = info.optimization
+    pgo  = info.pgo && " - PGO" || ""
+
+    IO.puts("==> Running benchmarks with parallelism: #{nworkers} (#{opt == :none && "non optimized" || "optimization: O#{opt}"}#{pgo})")
     nworkers
   end
 
@@ -51,5 +55,21 @@ defmodule Mix.Tasks.Bench.Common do
   def repeat(n, f) do
     f.()
     repeat(n - 1, f)
+  end
+
+  @doc """
+  Pick an iteration count for a payload of `size` bytes from a `thresholds`
+  list of `{min_size, n}` pairs, sorted by descending `min_size`. Returns the
+  `n` for the first threshold that `size` meets or exceeds, falling back to
+  the last (smallest-size) entry's `n` otherwise.
+
+      iterations(750_000, [{200_000, 200}, {10_000, 1_000}], 5_000)
+      #=> 200
+  """
+  def iterations(size, thresholds, default) do
+    case Enum.find(thresholds, fn {min_size, _n} -> size > min_size end) do
+      {_min_size, n} -> n
+      nil -> default
+    end
   end
 end

@@ -19,7 +19,7 @@ config :glazer, null: nil
 ```
 """.
 -export([encode_integer/1, decode_integer/1, try_decode_integer/1,
-         compile_path/1, find/2]).
+         compile_path/1, find/2, info/0]).
 
 -type path_step() :: {field, binary()} | iterate | {index, integer()}.
 -type path()      :: [path_step()].
@@ -195,6 +195,35 @@ compile_path(Filter) ->
 
 -spec nif_compile_path(binary()) -> {ok, path()} | {error, {invalid_path, binary()}}.
 nif_compile_path(_Filter) ->
+  ?NOT_LOADED_ERROR.
+
+-doc """
+Return build information about the loaded NIF library:
+
+- `app_version`: the `vsn` from `glazer.app.src` that this build was made
+                  from (e.g. `<<"0.5.9">>`)
+- `version`:     `git describe` of the checkout the NIF was built from
+                  (e.g. `<<"0.5.9-3-abc123">>`, with a trailing `*` if the
+                  working tree was dirty at build time)
+- `pgo`:         `true` if built with profile-guided optimisation
+                  (`make optimize` / `make PGO=use`)
+- `optimization`: `none`, `'O1'` (debug/ASan builds), or `'O3'` (release)
+
+## Example
+
+```erlang
+1> glazer:info().
+#{app_version => <<"0.5.9">>, version => <<"0.5.9-3-abc123">>,
+  pgo => true, optimization => 'O3'}
+```
+""".
+-spec info() -> #{app_version => binary(), version => binary(),
+                   pgo => boolean(), optimization => none | 'O1' | 'O3'}.
+info() ->
+  nif_info().
+
+-spec nif_info() -> map().
+nif_info() ->
   ?NOT_LOADED_ERROR.
 
 -doc """

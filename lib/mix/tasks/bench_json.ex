@@ -35,6 +35,7 @@ defmodule Mix.Tasks.BenchJson do
   @impl Mix.Task
   def run(args) do
     Mix.env() != :bench && Mix.raise("mix bench must be run with MIX_ENV=bench")
+    System.delete_env("BENCH_SET")
 
     # Ensure all deps are started so NIFs get loaded.
     Mix.Task.run("app.start")
@@ -146,9 +147,12 @@ defmodule Mix.Tasks.BenchJson do
   # Benchmark runner
   # ---------------------------------------------------------------------------
 
-  defp iterations(size) when size > 200_000, do: 200
-  defp iterations(size) when size >  10_000, do: 1_000
-  defp iterations(_),                        do: 5_000
+  @iteration_thresholds [{200_000, 100}, {10_000, 250}]
+  @default_iterations   5_000
+
+  defp iterations(size) do
+    Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
+  end
 
   defp run_file(bin, suites, parallelism) do
     n       = iterations(byte_size(bin))
