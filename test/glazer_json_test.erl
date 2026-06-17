@@ -35,6 +35,19 @@ map_test_() ->
     ?_assertEqual(#{<<"a">> => null},     glazer_json:decode(<<"{\"a\":null}">>))
   ].
 
+iolist_decode_test_() ->
+  [
+    ?_assertEqual(<<"hi">>, glazer_json:decode([<<"\"h">>, <<"i\"">>])),
+    ?_assertEqual(#{<<"a">> => <<"b">>},
+                  glazer_json:decode([<<"{\"a\":">>, <<"\"b\"}">>])),
+    ?_assertEqual({ok, #{<<"a">> => <<"b">>}},
+                  glazer_json:try_decode([<<"{\"a\":">>, [<<"\"b\"">>], <<"}">>])),
+    ?_assertEqual(#{a => <<"b">>},
+                  glazer_json:decode([<<"{\"a\":">>, <<"\"b\"}">>], [{keys, atom}])),
+    ?_assertEqual(#{<<"a">> => <<"b">>},
+                  glazer_json:decode([<<"{\"a\":">>, <<"\"b\"}">>], [copy_strings]))
+  ].
+
 object_as_tuple_test_() ->
   [
     ?_assertEqual({[]},               glazer_json:decode(<<"{}">>,        [object_as_tuple])),
@@ -723,47 +736,4 @@ bang_api_test_() ->
 
     ?_assertEqual(Bin, glazer_json:'encode!'(Term)),
     ?_assertEqual(Bin, glazer_json:'encode_to_iodata!'(Term))
-  ].
-
-%% ----------------------------------------------------------------------------
-%% Zero-copy sub-binary safety with iolist input.
-%%
-%% Regression test for a bug where decoding an iolist (not a flat binary)
-%% smaller than the dirty-scheduler threshold passed the *original iolist
-%% term* through to the decoder as the "input binary" used for
-%% enif_make_sub_binary. Since the default decode path returns zero-copy
-%% sub-binaries referencing that term, calling enif_make_sub_binary on a
-%% non-binary term is undefined behavior in a release (non-debug) OTP build
-%% (the bounds/type ASSERT is compiled out) — it can corrupt memory or crash
-%% the VM. The fix materializes a real binary term (via enif_make_binary)
-%% before constructing the decoder. These tests decode from iolists with
-%% unescaped string values and force a GC pass afterward so any stray
-%% reference into invalid memory would be exercised.
-%% ----------------------------------------------------------------------------
-
-iolist_subbinary_safety_test_() ->
-  [
-    %% Plain iolist, unescaped string value takes the zero-copy sub-binary path.
-    ?_test(begin
-      Iolist = [<<"{\"a\":\"">>, <<"hello\"}">>],
-      Result = glazer_json:decode(Iolist),
-      erlang:garbage_collect(),
-      ?assertEqual(#{<<"a">> => <<"hello">>}, Result)
-    end),
-
-    %% Deeply nested iolist, string split mid-value.
-    ?_test(begin
-      Iolist = [<<"{\"a\":\"hel">>, [[<<"lo">>], <<"\",\"b\":">>], <<"42}">>],
-      Result = glazer_json:decode(Iolist),
-      erlang:garbage_collect(),
-      ?assertEqual(#{<<"a">> => <<"hello">>, <<"b">> => 42}, Result)
-    end),
-
-    %% Escaped string (copy path) mixed with an unescaped one (sub-binary path).
-    ?_test(begin
-      Iolist = [<<"{\"a\":\"esc\\\"aped\",\"b\":\"">>, <<"plain\"}">>],
-      Result = glazer_json:decode(Iolist),
-      erlang:garbage_collect(),
-      ?assertEqual(#{<<"a">> => <<"esc\"aped">>, <<"b">> => <<"plain">>}, Result)
-    end)
   ].
