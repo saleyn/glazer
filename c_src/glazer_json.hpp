@@ -102,6 +102,24 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, EncodeOpts& opt
 }
 
 //-----------------------------------------------------------------------------
+// JSON \X single-character escape lookup — shared by JSON's unescape().
+// table[c] == 0 means "not a recognized single-char escape" (covers '\uXXXX'
+// and the default/pass-through case, both handled separately by the caller).
+//-----------------------------------------------------------------------------
+static constexpr auto JSON_ESCAPE_CHAR_TABLE = [] {
+  std::array<char, 256> t{};
+  t['"']  = '"';
+  t['\\'] = '\\';
+  t['/']  = '/';
+  t['b']  = '\b';
+  t['f']  = '\f';
+  t['n']  = '\n';
+  t['r']  = '\r';
+  t['t']  = '\t';
+  return t;
+}();
+
+//-----------------------------------------------------------------------------
 // Zero-copy JSON decoder — parses raw bytes, emits Erlang terms directly
 //-----------------------------------------------------------------------------
 
@@ -282,7 +300,7 @@ struct Decoder {
       if (s >= end) break;
       char ec = *s++;
       if (ec != 'u') {
-        char rep = json_unescape_char(static_cast<unsigned char>(ec));
+        char rep = JSON_ESCAPE_CHAR_TABLE[static_cast<unsigned char>(ec)];
         buf += rep ? rep : ec; // rep == 0: unrecognized escape, pass through verbatim
         continue;
       }

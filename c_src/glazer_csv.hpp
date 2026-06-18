@@ -257,6 +257,10 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
       opts.fields = std::move(fields);
     }
   }
+
+  if (opts.return_kind == CsvReturnKind::map && !opts.headers)
+    opts.return_kind = CsvReturnKind::list;
+
   return true;
 }
 
@@ -570,7 +574,7 @@ struct CsvDecoder {
       }
       case CsvFieldType::datetime: {
         auto secs = datetime::parse(sv, spec.format);
-        if (!secs) return 0;
+        if (!secs) [[unlikely]] return 0;
         return enif_make_int64(m_env, *secs);
       }
       case CsvFieldType::charlist: {
@@ -696,10 +700,6 @@ struct CsvDecoder {
     // unused capacity, never time, so erring high for short rows is fine.
     rows.reserve((m_end - m_beg) / 4);
     size_t row_num  = 0;
-    // Hoist as_map before any goto so no initialization is jumped over.
-    const bool as_map = m_opts.return_kind == CsvReturnKind::map && m_opts.headers;
-    const bool as_tuple = m_opts.return_kind == CsvReturnKind::tuple;
-
     bool err = false;
     auto rec = read_record(fields, err);
 
@@ -726,26 +726,60 @@ struct CsvDecoder {
       }
     }
 
-    // Data rows: maps when {return, map} + headers, field lists otherwise.
-    while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
-      ++row_num;
-      if (!m_opts.fields.empty()) {
-        if (size_t col = convert_fields(fields))
-          return std::make_tuple(false, enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                                           enif_make_uint64(m_env, row_num),
-                                                           enif_make_uint64(m_env, col)));
-      }
-      if (as_map) {
-        ERL_NIF_TERM map = fields.to_erl_map(m_env, header);
-        if (!map) [[unlikely]]
-          return std::make_tuple(false, AM_DUPLICATE_HEADER);
-        rows.push_back(map);
-      } else if (as_tuple) {
-        rows.push_back(fields.to_erl_tuple(m_env));
-      } else {
-        rows.push_back(fields.to_erl_list(m_env));
-      }
-      rec = read_record(fields, err);
+    // Data rows: maps, tuples, or field lists per {return, ...} (map implies
+    // headers — enforced by parse_csv_decode_opts). Dispatch on return_kind
+    // once here rather than per-record inside the loop below.
+    switch (m_opts.return_kind) {
+      case CsvReturnKind::map:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          ERL_NIF_TERM map = fields.to_erl_map(m_env, header);
+          if (!map) [[unlikely]]
+            return std::make_tuple(false, AM_DUPLICATE_HEADER);
+          rows.push_back(map);
+          rec = read_record(fields, err);
+        }
+        break;
+
+      case CsvReturnKind::tuple:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          rows.push_back(fields.to_erl_tuple(m_env));
+          rec = read_record(fields, err);
+        }
+        break;
+
+      case CsvReturnKind::list:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          rows.push_back(fields.to_erl_list(m_env));
+          rec = read_record(fields, err);
+        }
+        break;
     }
 
   DONE:

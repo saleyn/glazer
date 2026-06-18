@@ -144,43 +144,20 @@ struct SmallTermVec {
 // escape decoders. A 256-entry table turns the 3-branch chain
 // ('0'-'9' / 'a'-'f' / 'A'-'F') into a single array index.
 //-----------------------------------------------------------------------------
+static constexpr auto HEX_DIGIT_VALUES = [] {
+  std::array<int8_t, 256> t{};
+  t.fill(-1);
+  for (int i = 0; i <= 9; ++i) t['0' + i] = static_cast<int8_t>(i);
+  for (int i = 0; i <  6; ++i) {
+    t['a' + i] = static_cast<int8_t>(10 + i);
+    t['A' + i] = static_cast<int8_t>(10 + i);
+  }
+  return t;
+}();
 
 inline int hex_digit_value(unsigned char c)
 {
-  static constexpr auto table = [] {
-    std::array<int8_t, 256> t{};
-    t.fill(-1);
-    for (int i = 0; i <= 9; ++i) t['0' + i] = static_cast<int8_t>(i);
-    for (int i = 0; i <  6; ++i) {
-      t['a' + i] = static_cast<int8_t>(10 + i);
-      t['A' + i] = static_cast<int8_t>(10 + i);
-    }
-    return t;
-  }();
-  return table[c];
-}
-
-//-----------------------------------------------------------------------------
-// JSON \X single-character escape lookup — shared by JSON's unescape().
-// table[c] == 0 means "not a recognized single-char escape" (covers '\uXXXX'
-// and the default/pass-through case, both handled separately by the caller).
-//-----------------------------------------------------------------------------
-
-inline char json_unescape_char(unsigned char c)
-{
-  static constexpr auto table = [] {
-    std::array<char, 256> t{};
-    t['"']  = '"';
-    t['\\'] = '\\';
-    t['/']  = '/';
-    t['b']  = '\b';
-    t['f']  = '\f';
-    t['n']  = '\n';
-    t['r']  = '\r';
-    t['t']  = '\t';
-    return t;
-  }();
-  return table[c];
+  return HEX_DIGIT_VALUES[c];
 }
 
 //-----------------------------------------------------------------------------
@@ -227,7 +204,7 @@ struct OutBuf {
     while (nc < m_len + need) nc *= 2;
     if (m_data == m_inline) [[unlikely]] {
       // Can't realloc a stack array — first spill to the heap requires a copy.
-      std::unique_ptr<char[]> nb = std::unique_ptr<char[]>(static_cast<char*>(malloc(nc)));
+      auto nb = std::unique_ptr<char[]>(static_cast<char*>(malloc(nc)));
       memcpy(nb.get(), m_data, m_len);
       m_data = nb.release();
     } else {
@@ -286,11 +263,18 @@ struct KeyCache {
 
   KeyCache() : m_epoch(next_epoch()) {}
 
-  // FNV-1a — cheap, decent distribution, computed once per key and reused
-  // for both the lookup and (on a miss) the subsequent insert.
+  // FNV-1a, mixed 4 bytes per multiply instead of 1 — cheap, decent
+  // distribution, computed once per key and reused for both the lookup
+  // and (on a miss) the subsequent insert.
   static uint32_t hash_of(const char* s, size_t len) {
     uint32_t h = 2166136261u;
-    for (size_t i = 0; i < len; ++i) {
+    size_t   i = 0;
+    for (; i + 4 <= len; i += 4) {
+      uint32_t w;
+      memcpy(&w, s + i, 4);
+      h = (h ^ w) * 16777619u;
+    }
+    for (; i < len; ++i) {
       h ^= static_cast<unsigned char>(s[i]);
       h *= 16777619u;
     }
@@ -347,9 +331,9 @@ struct MapIterator {
   {
     if (this != &o) {
       destroy();
-      m_env  = o.m_env;
-      m_iter = o.m_iter;
-      m_live = o.m_live;
+      m_env    = o.m_env;
+      m_iter   = o.m_iter;
+      m_live   = o.m_live;
       o.m_live = false;
     }
     return *this;
@@ -410,13 +394,15 @@ inline bool atom_to_sv(ErlNifEnv* env, ERL_NIF_TERM atom, char* buf, size_t bufs
 // cu <= 0xFFFF directly into dst, without going through snprintf.
 inline void write_uescape(char* dst, uint32_t cu)
 {
-  static constexpr char HEX[] = "0123456789abcdef";
-  dst[0] = '\\';
-  dst[1] = 'u';
-  dst[2] = HEX[(cu >> 12) & 0xF];
-  dst[3] = HEX[(cu >>  8) & 0xF];
-  dst[4] = HEX[(cu >>  4) & 0xF];
-  dst[5] = HEX[ cu        & 0xF];
+  static constexpr char     HEX[]    = "0123456789abcdef";
+  static constexpr uint16_t PREFIX   = '\\' | ('u' << 8);
+  memcpy(dst, &PREFIX, 2);
+
+  uint32_t packed = (uint32_t(HEX[(cu >> 12) & 0xF])      ) |
+                    (uint32_t(HEX[(cu >>  8) & 0xF]) <<  8) |
+                    (uint32_t(HEX[(cu >>  4) & 0xF]) << 16) |
+                    (uint32_t(HEX[ cu        & 0xF]) << 24);
+  memcpy(dst + 2, &packed, 4);
 }
 
 // Emit a single Unicode code point as a \uXXXX escape (or a surrogate pair
@@ -440,7 +426,8 @@ inline void push_uescape(OutBuf& out, uint32_t cp)
 // length-prefixed 7-byte payload.  len==0 means no escaping needed.
 // Layout per entry: [len][c0][c1][c2][c3][c4][c5][c6]  (8 bytes total)
 struct EscapeEntry { uint8_t len; char seq[7]; };
-static constexpr std::array<EscapeEntry, 256> build_escape_tab() {
+
+static constexpr auto ESCAPE_TAB = []{
   std::array<EscapeEntry, 256> tab{};
   const char* hex = "0123456789abcdef";
   for (int i = 0; i < 0x20; ++i) {
@@ -458,16 +445,14 @@ static constexpr std::array<EscapeEntry, 256> build_escape_tab() {
   tab['"']  = {2, {'\\','"'}};
   tab['\\'] = {2, {'\\','\\'}};
   return tab;
-}
-static constexpr std::array<EscapeEntry, 256> ESCAPE_TAB = build_escape_tab();
+}();
 
 // NEEDS_ESCAPE_TAB: quick bool check for find_escape_pos scalar fallback.
-static constexpr std::array<bool, 256> build_needs_escape_tab() {
+static constexpr auto NEEDS_ESCAPE_TAB = [] {
   std::array<bool, 256> tab{};
   for (int i = 0; i < 256; ++i) tab[i] = ESCAPE_TAB[i].len > 0;
   return tab;
-}
-static constexpr std::array<bool, 256> NEEDS_ESCAPE_TAB = build_needs_escape_tab();
+}();
 
 // Decode one UTF-8 sequence starting at p (p < end). Returns the code point
 // and advances p past the sequence. On invalid/truncated input, returns the
@@ -482,7 +467,8 @@ inline uint32_t decode_utf8(const char*& p, const char* end)
   if (c < 0x80) [[likely]] { ++p; return c; }
 
   if ((c & 0xE0) == 0xC0 && cont(p+1)) {
-    uint32_t cp = (uint32_t(c & 0x1F) << 6) | (uint32_t((unsigned char)p[1]) & 0x3F);
+    auto cp = (uint32_t(c & 0x1F) << 6)
+            | (uint32_t((unsigned char)p[1]) & 0x3F);
     p += 2;
     return cp >= 0x80 ? cp : 0xFFFD;
   }
@@ -638,11 +624,10 @@ namespace datetime {
   inline bool parse_uint(const char*& p, const char* end, int max_digits, int& out)
   {
     const char* start = p;
+    const char* cend  = std::min(end, p+max_digits);
     out = 0;
-    while (p < end && (p - start) < max_digits && *p >= '0' && *p <= '9') {
+    for (out = 0; p < cend && *p >= '0' && *p <= '9'; ++p)
       out = out * 10 + (*p - '0');
-      ++p;
-    }
     return p > start;
   }
 
