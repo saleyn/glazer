@@ -16,12 +16,6 @@ defmodule Mix.Tasks.BenchCsv do
   """
   use Mix.Task
 
-  # rusty_csv is only fetched when BENCH_SET=csv (see mix.exs); calling
-  # RustyCSV.RFC4180.parse_string/1 directly otherwise compiles fine
-  # (module_available?/1 guards it at runtime) but the compiler still warns
-  # it's undefined.
-  @compile {:no_warn_undefined, RustyCSV.RFC4180}
-
   @lib_w 11
   @col_w 9
   @sep   2
@@ -72,15 +66,15 @@ defmodule Mix.Tasks.BenchCsv do
     ]
 
     optional_candidates = [
-      {"nimble_csv",
-       fn b -> GlazerBench.NimbleCSVParser.parse_string(b, skip_headers: false) end,
-       fn rows -> IO.iodata_to_binary(GlazerBench.NimbleCSVParser.dump_to_iodata(rows)) end,
-       NimbleCSV},
-
       {"rusty_csv",
        fn b -> RustyCSV.RFC4180.parse_string(b) end,
        nil,
        RustyCSV.RFC4180},
+
+      {"nimble_csv",
+       fn b -> GlazerBench.NimbleCSVParser.parse_string(b, skip_headers: false) end,
+       fn rows -> IO.iodata_to_binary(GlazerBench.NimbleCSVParser.dump_to_iodata(rows)) end,
+       NimbleCSV},
 
       {"csv",
        fn b ->

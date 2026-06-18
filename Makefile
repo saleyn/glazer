@@ -115,28 +115,21 @@ memcheck:
 doc docs:
 	$(REBAR) ex_doc
 
-# yaml_rustler and rusty_csv can't be resolved together (see mix.exs and the
-# `deps` target below), so a full `make bench` run only includes whichever
-# one BENCH_SET selects (neither, by default). Use `make bench-yaml` /
-# `make bench-csv` (each sets BENCH_SET itself, see below) to benchmark
-# against yaml_rustler/rusty_csv specifically; `make bench-json` needs
-# neither and ignores BENCH_SET.
 benchmark bench: do-bench
 
 do-bench: deps
-	@rm .perf.txt
+	@rm -f .perf.txt
 	@$(MAKE) --no-print-directory optimize
-	for b in json yaml csv; do \
-	  $(MAKE) --no-print-directory bench-$$b | tee -a .perf.txt; \
-	done
+	PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix bench | tee .perf.txt;
 
-bench-yaml: BENCH_SET ?= yaml
-bench-csv:  BENCH_SET ?= csv
+# ELIXIR_ERL_OPTIONS quiets rustler_precompiled's [debug] "Copying NIF from
+# cache and extracting..." noise (torque/yaml_rustler/rusty_csv all use it)
+# without touching the project-wide Logger level — scoped to bench targets
+# only via this env var, not a global :logger config in mix.exs.
 
-bench-json bench-yaml bench-csv:
-	@rm -f mix.lock
-	@BENCH_SET=$(BENCH_SET) mix deps.get
-	BENCH_SET=$(BENCH_SET) PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix $@
+bench-json bench-yaml bench-csv: export ELIXIR_ERL_OPTIONS = -logger level warning
+bench-json bench-yaml bench-csv: deps
+	PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
@@ -152,33 +145,8 @@ optimize:
 	@$(REBAR) compile
 	@echo "==> PGO build complete"
 
-# BENCH_SET picks which of the two mutually-exclusive Rust NIF benchmark
-# deps to resolve: yaml_rustler (BENCH_SET=yaml) or rusty_csv (BENCH_SET=csv).
-# They can't be deps.get'd together because they pin incompatible :rustler
-# versions (~> 0.34.0 vs ~> 0.37) — see mix.exs. `bench-json` and plain
-# `bench`/`do-bench` need neither (mix.exs's bench_set_deps/0 returns [] for
-# an unset/empty BENCH_SET), so whichever of the two was locked by a *prior*
-# `bench-yaml`/`bench-csv` run must be purged first — otherwise mix.lock
-# still pins it while it's absent from deps(), leaving a stale, half-built
-# dependency in _build/bench (e.g. a missing .app file) that crashes
-# `Mix.Task.run("app.start")`. Each branch below detects a leftover lock
-# from the *other* mode (or, for an unset BENCH_SET, either mode) and forces
-# mix to re-resolve from scratch.
 deps:
-	@if [ "$(BENCH_SET)" = "yaml" ] && grep -q '"rusty_csv"' mix.lock 2>/dev/null; then \
-	  echo "==> BENCH_SET=yaml but mix.lock has rusty_csv locked; re-resolving"; \
-	  rm -f mix.lock; \
-	  rm -rf _build/bench deps/rusty_csv deps/rustler_precompiled deps/rustler; \
-	elif [ "$(BENCH_SET)" = "csv" ] && grep -q '"yaml_rustler"' mix.lock 2>/dev/null; then \
-	  echo "==> BENCH_SET=csv but mix.lock has yaml_rustler locked; re-resolving"; \
-	  rm -f mix.lock; \
-	  rm -rf _build/bench deps/yaml_rustler deps/rustler_precompiled deps/rustler; \
-	elif [ -z "$(BENCH_SET)" ] && (grep -q '"rusty_csv"' mix.lock 2>/dev/null || grep -q '"yaml_rustler"' mix.lock 2>/dev/null); then \
-	  echo "==> BENCH_SET unset but mix.lock has rusty_csv/yaml_rustler locked; re-resolving"; \
-	  rm -f mix.lock; \
-	  rm -rf _build/bench deps/rusty_csv deps/yaml_rustler deps/rustler_precompiled deps/rustler; \
-	fi
-	@BENCH_SET=$(BENCH_SET) mix deps.get
+	@mix deps.get
 
 publish: docs
 	$(REBAR) hex publish$(if $(replace), --replace)

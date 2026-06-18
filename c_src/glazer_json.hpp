@@ -280,47 +280,36 @@ struct Decoder {
       char c = *s++;
       if (c != '\\') { buf += c; continue; }
       if (s >= end) break;
-      switch (*s++) {
-        case '"':  buf += '"';  break;
-        case '\\': buf += '\\'; break;
-        case '/':  buf += '/';  break;
-        case 'b':  buf += '\b'; break;
-        case 'f':  buf += '\f'; break;
-        case 'n':  buf += '\n'; break;
-        case 'r':  buf += '\r'; break;
-        case 't':  buf += '\t'; break;
-        case 'u': {
-          if (s + 4 > end) break;
-          auto hex4 = [](const char* p) {
-            int v = 0;
-            for (int i = 0; i < 4; ++i) {
-              char c = p[i];
-              int d = (c >= '0' && c <= '9') ? c - '0'
-                    : (c >= 'a' && c <= 'f') ? c - 'a' + 10
-                    : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
-              if (d < 0) return -1;
-              v = v * 16 + d;
-            }
-            return v;
-          };
-          int cp = hex4(s); s += 4;
-          if (cp >= 0xD800 && cp <= 0xDBFF && s + 6 <= end && s[0] == '\\' && s[1] == 'u') {
-            int lo = hex4(s + 2); s += 6;
-            if (lo >= 0xDC00 && lo <= 0xDFFF)
-              cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-          }
-          // Encode cp as UTF-8
-          if (cp < 0x80) { buf += (char)cp; }
-          else if (cp < 0x800) { buf += (char)(0xC0|(cp>>6)); buf += (char)(0x80|(cp&0x3F)); }
-          else if (cp < 0x10000) {
-            buf += (char)(0xE0|(cp>>12)); buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
-          } else {
-            buf += (char)(0xF0|(cp>>18)); buf += (char)(0x80|((cp>>12)&0x3F));
-            buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
-          }
-          break;
+      char ec = *s++;
+      if (ec != 'u') {
+        char rep = json_unescape_char(static_cast<unsigned char>(ec));
+        buf += rep ? rep : ec; // rep == 0: unrecognized escape, pass through verbatim
+        continue;
+      }
+      if (s + 4 > end) continue;
+      auto hex4 = [](const char* p) {
+        int v = 0;
+        for (int i = 0; i < 4; ++i) {
+          int d = hex_digit_value(static_cast<unsigned char>(p[i]));
+          if (d < 0) return -1;
+          v = v * 16 + d;
         }
-        default: buf += *(s-1); break;
+        return v;
+      };
+      int cp = hex4(s); s += 4;
+      if (cp >= 0xD800 && cp <= 0xDBFF && s + 6 <= end && s[0] == '\\' && s[1] == 'u') {
+        int lo = hex4(s + 2); s += 6;
+        if (lo >= 0xDC00 && lo <= 0xDFFF)
+          cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+      }
+      // Encode cp as UTF-8
+      if (cp < 0x80) { buf += (char)cp; }
+      else if (cp < 0x800) { buf += (char)(0xC0|(cp>>6)); buf += (char)(0x80|(cp&0x3F)); }
+      else if (cp < 0x10000) {
+        buf += (char)(0xE0|(cp>>12)); buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
+      } else {
+        buf += (char)(0xF0|(cp>>18)); buf += (char)(0x80|((cp>>12)&0x3F));
+        buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
       }
     }
     return buf;
@@ -816,16 +805,8 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
         ++p;
       } else {
         if (p > run) out.push(run, p - run);
-        switch (c) {
-          case '"':  out.push("\\\"", 2); break;
-          case '\\': out.push("\\\\", 2); break;
-          case '\b': out.push("\\b",  2); break;
-          case '\f': out.push("\\f",  2); break;
-          case '\n': out.push("\\n",  2); break;
-          case '\r': out.push("\\r",  2); break;
-          case '\t': out.push("\\t",  2); break;
-          default:   push_uescape(out,c); break;
-        }
+        const EscapeEntry& e = ESCAPE_TAB[c];
+        out.push(e.seq, e.len);
         ++p;
         run = p;
       }

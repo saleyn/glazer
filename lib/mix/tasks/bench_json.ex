@@ -35,7 +35,6 @@ defmodule Mix.Tasks.BenchJson do
   @impl Mix.Task
   def run(args) do
     Mix.env() != :bench && Mix.raise("mix bench must be run with MIX_ENV=bench")
-    System.delete_env("BENCH_SET")
 
     # Ensure all deps are started so NIFs get loaded.
     Mix.Task.run("app.start")

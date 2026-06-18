@@ -569,10 +569,7 @@ struct YamlDecoder {
     if (m_p + 1 + ndigits > m_end) { m_err = "truncated hex escape"; return false; }
     uint32_t v = 0;
     for (int i = 1; i <= ndigits; ++i) {
-      char c = m_p[i];
-      int d = (c >= '0' && c <= '9') ? c - '0'
-            : (c >= 'a' && c <= 'f') ? c - 'a' + 10
-            : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+      int d = hex_digit_value(static_cast<unsigned char>(m_p[i]));
       if (d < 0) { m_err = "invalid hex digit in escape"; return false; }
       v = v * 16 + uint32_t(d);
     }
@@ -1604,14 +1601,13 @@ struct YamlEncoder {
   }
 
   static inline bool is_indicator_char(char c) {
-    switch (c) {
-      case '-': case '?': case ':': case ',': case '[': case ']': case '{': case '}':
-      case '#': case '&': case '*': case '!': case '|': case '>': case '\'': case '"':
-      case '%': case '@': case '`':
-        return true;
-      default:
-        return false;
-    }
+    static constexpr auto table = [] {
+      std::array<bool, 256> t{};
+      for (char ind : {'-','?',':',',','[',']','{','}','#','&','*','!','|','>','\'','"','%','@','`'})
+        t[(unsigned char)ind] = true;
+      return t;
+    }();
+    return table[(unsigned char)c];
   }
 
   // Returns true if `s` contains a byte that forces double-quoting (control

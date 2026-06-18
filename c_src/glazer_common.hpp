@@ -140,6 +140,50 @@ struct SmallTermVec {
 };
 
 //-----------------------------------------------------------------------------
+// Hex digit lookup — shared by the JSON \uXXXX and YAML \xXX/\uXXXX/\UXXXXXXXX
+// escape decoders. A 256-entry table turns the 3-branch chain
+// ('0'-'9' / 'a'-'f' / 'A'-'F') into a single array index.
+//-----------------------------------------------------------------------------
+
+inline int hex_digit_value(unsigned char c)
+{
+  static constexpr auto table = [] {
+    std::array<int8_t, 256> t{};
+    t.fill(-1);
+    for (int i = 0; i <= 9; ++i) t['0' + i] = static_cast<int8_t>(i);
+    for (int i = 0; i <  6; ++i) {
+      t['a' + i] = static_cast<int8_t>(10 + i);
+      t['A' + i] = static_cast<int8_t>(10 + i);
+    }
+    return t;
+  }();
+  return table[c];
+}
+
+//-----------------------------------------------------------------------------
+// JSON \X single-character escape lookup — shared by JSON's unescape().
+// table[c] == 0 means "not a recognized single-char escape" (covers '\uXXXX'
+// and the default/pass-through case, both handled separately by the caller).
+//-----------------------------------------------------------------------------
+
+inline char json_unescape_char(unsigned char c)
+{
+  static constexpr auto table = [] {
+    std::array<char, 256> t{};
+    t['"']  = '"';
+    t['\\'] = '\\';
+    t['/']  = '/';
+    t['b']  = '\b';
+    t['f']  = '\f';
+    t['n']  = '\n';
+    t['r']  = '\r';
+    t['t']  = '\t';
+    return t;
+  }();
+  return table[c];
+}
+
+//-----------------------------------------------------------------------------
 // Zero-copy span term — shared by the JSON, YAML, and CSV decoders.
 //
 // Returns a sub-binary referencing `[beg, beg+end)` within `input_bin` when
