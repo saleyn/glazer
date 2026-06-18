@@ -35,11 +35,11 @@ namespace glz {
 // Options
 //-----------------------------------------------------------------------------
 
-struct DecodeOpts {
+struct JSONDecodeOpts {
   bool         object_as_tuple     = false;
   ERL_NIF_TERM null_term           = 0;
-  bool         label_atom          = false;
-  bool         label_existing_atom = false;
+  bool         hdr_atom          = false;
+  bool         hdr_existing_atom = false;
   bool         dedupe_keys         = false;
   // When true, unescaped strings are copied into fresh binaries instead of
   // referencing the input via sub-binary.  Use this when decoded strings
@@ -48,7 +48,7 @@ struct DecodeOpts {
   bool         copy_strings        = false;
 };
 
-struct EncodeOpts {
+struct JSONEncodeOpts {
   bool         pretty     = false;
   bool         uescape    = false;
   bool         force_utf8 = false;
@@ -59,7 +59,7 @@ struct EncodeOpts {
 // Option parsing
 //-----------------------------------------------------------------------------
 
-static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opts)
+static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -72,10 +72,10 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
         if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
           opts.null_term = tp[1];
-        else if (enif_is_identical(tp[0], AM_KEYS) || enif_is_identical(tp[0], AM_LABEL_ATOM)) {
-          if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
-          else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
-          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.label_atom = false; opts.label_existing_atom = false; }
+        else if (enif_is_identical(tp[0], AM_KEYS) || enif_is_identical(tp[0], AM_ATOM)) {
+          if      (enif_is_identical(tp[1], AM_ATOM))          opts.hdr_atom = true;
+          else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) opts.hdr_existing_atom = true;
+          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.hdr_atom = false; opts.hdr_existing_atom = false; }
         }
       }
     }
@@ -83,7 +83,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, DecodeOpts& opt
   return true;
 }
 
-static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, EncodeOpts& opts)
+static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -123,9 +123,9 @@ static constexpr auto JSON_ESCAPE_CHAR_TABLE = [] {
 // Zero-copy JSON decoder — parses raw bytes, emits Erlang terms directly
 //-----------------------------------------------------------------------------
 
-struct Decoder {
+struct JSONDecoder {
   ErlNifEnv*        m_env;
-  const DecodeOpts& m_opts;
+  const JSONDecodeOpts& m_opts;
   const char*       m_beg;  // start of input (for error reporting)
   const char*       m_p;    // current position
   const char*       m_end;
@@ -148,7 +148,7 @@ struct Decoder {
   // each frame considerably compared to a normal build).
   static constexpr unsigned MAX_DEPTH = 256;
 
-  Decoder(ErlNifEnv* e, const DecodeOpts& o, const char* data, size_t size,
+  JSONDecoder(ErlNifEnv* e, const JSONDecodeOpts& o, const char* data, size_t size,
           ERL_NIF_TERM input_bin)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
       m_input_bin(input_bin),
@@ -158,7 +158,7 @@ struct Decoder {
   // parse_object call, so every return path (including early `return 0`)
   // restores it.
   struct DepthGuard {
-    explicit DepthGuard(Decoder* d) : d(d) { ++d->m_depth; }
+    explicit DepthGuard(JSONDecoder* d) : d(d) { ++d->m_depth; }
     ~DepthGuard() { --d->m_depth; }
 
     bool check() const {
@@ -171,7 +171,7 @@ struct Decoder {
       return true;
     }
   private:
-    Decoder* d;
+    JSONDecoder* d;
   };
 
   // ---- whitespace ----
@@ -349,11 +349,11 @@ struct Decoder {
   // Make a key term (binary / atom / existing_atom).
   ERL_NIF_TERM make_key_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (m_opts.label_atom) {
+    if (m_opts.hdr_atom) {
       std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       return enif_make_atom_len(m_env, sv.data(), sv.size());
     }
-    if (m_opts.label_existing_atom) {
+    if (m_opts.hdr_existing_atom) {
       std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       ERL_NIF_TERM t;
       // enif_make_existing_atom_len avoids the std::string copy the old code paid
@@ -856,9 +856,9 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
   out.push('"');
 }
 
-struct JsonEncoder {
+struct JSONEncoder {
   ErlNifEnv*        m_env;
-  const EncodeOpts& m_opts;
+  const JSONEncodeOpts& m_opts;
   OutBuf&           m_out;
   char              m_atom_buf[256]; // scratch for atom → string_view
   const char*       m_err;

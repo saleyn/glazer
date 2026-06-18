@@ -431,7 +431,7 @@ query(Input, Filter) ->
   glazer:json_query(Input, Filter).
 
 -doc """
-Like `query/2`, but decodes each result term using `DecodeOpts`
+Like `query/2`, but decodes each result term using `JSONDecodeOpts`
 (see `decode/2`).
 
 ## Examples
@@ -446,8 +446,8 @@ Like `query/2`, but decodes each result term using `DecodeOpts`
 """.
 -spec query(binary() | iolist(), binary() | iolist(), decode_opts()) ->
   {ok, [term()]} | {error, query_reason()}.
-query(Input, Filter, DecodeOpts) ->
-  glazer:json_query(Input, Filter, DecodeOpts).
+query(Input, Filter, JSONDecodeOpts) ->
+  glazer:json_query(Input, Filter, JSONDecodeOpts).
 
 -doc """
 Locate the end of the next complete top-level JSON value in `Bin`, without

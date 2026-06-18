@@ -39,7 +39,7 @@ namespace glz {
 // Per-column field type conversion (`{fields, [Type, ...]}` decode option)
 //-----------------------------------------------------------------------------
 
-enum class CsvFieldType {
+enum class CSVFieldType {
   none,          // leave as binary (default)
   integer,
   floatp,        // {float, Precision}
@@ -52,20 +52,20 @@ enum class CsvFieldType {
 };
 
 // What to do with a field that fails to convert to the requested type.
-enum class CsvOnFailure {
+enum class CSVOnFailure {
   binary,         // leave the original binary (default)
   raise,          // fail the whole decode with {invalid_field_value, Row, Col}
-  default_value,  // use CsvFieldSpec::default_term
+  default_value,  // use CSVFieldSpec::default_term
   null,           // use the configured null term (am_null)
 };
 
-struct CsvFieldSpec {
-  CsvFieldType type        = CsvFieldType::none;
+struct CSVFieldSpec {
+  CSVFieldType type        = CSVFieldType::none;
   int          precision   = 0; // for floatp
   int64_t      scale       = 1; // for floatp
   std::string  format;          // for datetime (strptime-like)
   std::vector<std::string> atoms; // for {atom, ExistingAtoms}
-  CsvOnFailure on_failure   = CsvOnFailure::binary;
+  CSVOnFailure on_failure   = CSVOnFailure::binary;
   ERL_NIF_TERM default_term = 0;  // for empty fields, or on_failure == default_value
   bool         has_default  = false;
 };
@@ -74,38 +74,38 @@ struct CsvFieldSpec {
 // Options
 //-----------------------------------------------------------------------------
 
-enum class CsvReturnKind { list, map, tuple };
+enum class CSVReturnKind { list, map, tuple };
 
-struct CsvDecodeOpts {
-  char delimiter           = ',';
-  bool headers             = false;          // bare `headers` atom or {headers, ...}
-  bool label_atom          = false;          // {headers, atom}
-  bool label_existing_atom = false;          // {headers, existing_atom}
-  bool label_charlist      = false;          // {headers, charlist}
-  CsvReturnKind return_kind = CsvReturnKind::list; // {return, list | map | tuple}
-  bool explicit_headers    = false;          // {headers, [List]}: no header row in data
-  ERL_NIF_TERM null_term   = 0;
-  std::vector<ERL_NIF_TERM> header_list;    // populated when explicit_headers is true
-  std::vector<CsvFieldSpec> fields;
-  size_t skip_rows         = 0;             // {skip, N}: skip first N data rows
-  size_t limit             = 0;             // {limit, N}: max data rows (0 = unlimited)
+struct CSVDecodeOpts {
+  char delimiter            = ',';
+  bool headers              = false;         // bare `headers` atom or {headers, ...}
+  bool hdr_atom             = false;         // {headers, atom}
+  bool hdr_existing_atom    = false;         // {headers, existing_atom}
+  bool hdr_charlist         = false;         // {headers, charlist}
+  CSVReturnKind return_kind = CSVReturnKind::list; // {return, list | map | tuple}
+  bool explicit_headers     = false;         // {headers, [List]}: no header row in data
+  ERL_NIF_TERM null_term    = 0;
+  std::vector<ERL_NIF_TERM> header_list;     // populated when explicit_headers is true
+  std::vector<CSVFieldSpec> fields;
+  size_t skip_rows          = 0;             // {skip, N}: skip first N data rows
+  size_t limit              = 0;             // {limit, N}: max data rows (0 = unlimited)
   // When true, fields are copied into fresh binaries instead of referencing
   // the input via sub-binary. Use this when decoded fields will outlive the
   // input binary by a large margin: without it, one live field keeps the
   // entire input buffer from being collected.
-  bool copy_strings        = false;
+  bool copy_strings         = false;
 };
 
 // Parses a `field_type()`:
 //   integer | {float, Precision} | boolean | {datetime, InputFormat}
 //   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
-static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec& spec)
+static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
 {
-  if (enif_is_identical(term, AM_INTEGER))       { spec.type = CsvFieldType::integer;       return true; }
-  if (enif_is_identical(term, AM_BOOLEAN))       { spec.type = CsvFieldType::boolean;       return true; }
-  if (enif_is_identical(term, AM_BINARY))        { spec.type = CsvFieldType::binary;        return true; }
-  if (enif_is_identical(term, AM_CHARLIST))      { spec.type = CsvFieldType::charlist;      return true; }
-  if (enif_is_identical(term, AM_EXISTING_ATOM)) { spec.type = CsvFieldType::existing_atom; return true; }
+  if (enif_is_identical(term, AM_INTEGER))       { spec.type = CSVFieldType::integer;       return true; }
+  if (enif_is_identical(term, AM_BOOLEAN))       { spec.type = CSVFieldType::boolean;       return true; }
+  if (enif_is_identical(term, AM_BINARY))        { spec.type = CSVFieldType::binary;        return true; }
+  if (enif_is_identical(term, AM_CHARLIST))      { spec.type = CSVFieldType::charlist;      return true; }
+  if (enif_is_identical(term, AM_EXISTING_ATOM)) { spec.type = CSVFieldType::existing_atom; return true; }
 
   int arity; const ERL_NIF_TERM* tp;
   if (!enif_get_tuple(env, term, &arity, &tp) || arity != 2) return false;
@@ -113,7 +113,7 @@ static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec
   if (enif_is_identical(tp[0], AM_FLOAT)) {
     int precision;
     if (!enif_get_int(env, tp[1], &precision) || precision < 0) return false;
-    spec.type      = CsvFieldType::floatp;
+    spec.type      = CSVFieldType::floatp;
     spec.precision = precision;
     spec.scale     = glz::power(10LL, static_cast<size_t>(precision));
     return true;
@@ -122,7 +122,7 @@ static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec
   if (enif_is_identical(tp[0], AM_DATETIME)) {
     ErlNifBinary bin;
     if (!enif_inspect_binary(env, tp[1], &bin)) return false;
-    spec.type   = CsvFieldType::datetime;
+    spec.type   = CSVFieldType::datetime;
     spec.format.assign(reinterpret_cast<const char*>(bin.data), bin.size);
     return true;
   }
@@ -137,7 +137,7 @@ static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec
       if (!atom_to_sv(env, ahead, buf, sizeof(buf), sv)) return false;
       atoms.emplace_back(sv);
     }
-    spec.type  = CsvFieldType::atom_list;
+    spec.type  = CSVFieldType::atom_list;
     spec.atoms = std::move(atoms);
     return true;
   }
@@ -150,7 +150,7 @@ static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec
 //             | #{type => field_type(), default => Term, on_failure => binary | raise | default | null}
 //   field_type() :: integer | {float, Precision} | boolean | {datetime, InputFormat}
 //   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
-static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec& spec)
+static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
 {
   if (!enif_is_map(env, term))
     return parse_csv_field_type(env, term, spec);
@@ -167,17 +167,17 @@ static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CsvFieldSpec
 
   ERL_NIF_TERM on_failure_term;
   if (enif_get_map_value(env, term, AM_ON_FAILURE, &on_failure_term)) {
-    if      (enif_is_identical(on_failure_term, AM_BINARY))  spec.on_failure = CsvOnFailure::binary;
-    else if (enif_is_identical(on_failure_term, AM_RAISE))   spec.on_failure = CsvOnFailure::raise;
-    else if (enif_is_identical(on_failure_term, AM_DEFAULT)) spec.on_failure = CsvOnFailure::default_value;
-    else if (enif_is_identical(on_failure_term, AM_NULL))    spec.on_failure = CsvOnFailure::null;
+    if      (enif_is_identical(on_failure_term, AM_BINARY))  spec.on_failure = CSVOnFailure::binary;
+    else if (enif_is_identical(on_failure_term, AM_RAISE))   spec.on_failure = CSVOnFailure::raise;
+    else if (enif_is_identical(on_failure_term, AM_DEFAULT)) spec.on_failure = CSVOnFailure::default_value;
+    else if (enif_is_identical(on_failure_term, AM_NULL))    spec.on_failure = CSVOnFailure::null;
     else return false;
   }
 
   return true;
 }
 
-static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOpts& opts)
+static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -195,9 +195,9 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
       if (!enif_is_atom(env, tp[1])) return false;
       opts.null_term = tp[1];
     } else if (enif_is_identical(tp[0], AM_RETURN)) {
-      if      (enif_is_identical(tp[1], AM_MAP))   opts.return_kind = CsvReturnKind::map;
-      else if (enif_is_identical(tp[1], AM_TUPLE)) opts.return_kind = CsvReturnKind::tuple;
-      else if (enif_is_identical(tp[1], AM_LIST))  opts.return_kind = CsvReturnKind::list;
+      if      (enif_is_identical(tp[1], AM_MAP))   opts.return_kind = CSVReturnKind::map;
+      else if (enif_is_identical(tp[1], AM_TUPLE)) opts.return_kind = CSVReturnKind::tuple;
+      else if (enif_is_identical(tp[1], AM_LIST))  opts.return_kind = CSVReturnKind::list;
     } else if (enif_is_identical(tp[0], AM_HEADERS)) {
       // {headers, [List]}  — explicit column names, no header row in data
       // {headers, binary | string} — 1st row → binary keys
@@ -211,19 +211,19 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
         while (enif_get_list_cell(env, htail, &hhead, &htail))
           opts.header_list.push_back(hhead);
       } else if (enif_is_identical(tp[1], AM_BINARY) || enif_is_identical(tp[1], AM_STRING)) {
-        opts.headers          = true;
-        opts.label_atom          = false;
-        opts.label_existing_atom = false;
-        opts.label_charlist      = false;
-      } else if (enif_is_identical(tp[1], AM_LABEL_ATOM)) {
-        opts.headers          = true;
-        opts.label_atom       = true;
+        opts.headers           = true;
+        opts.hdr_atom          = false;
+        opts.hdr_existing_atom = false;
+        opts.hdr_charlist      = false;
+      } else if (enif_is_identical(tp[1], AM_ATOM)) {
+        opts.headers           = true;
+        opts.hdr_atom          = true;
       } else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) {
-        opts.headers             = true;
-        opts.label_existing_atom = true;
+        opts.headers           = true;
+        opts.hdr_existing_atom = true;
       } else if (enif_is_identical(tp[1], AM_CHARLIST)) {
-        opts.headers         = true;
-        opts.label_charlist  = true;
+        opts.headers           = true;
+        opts.hdr_charlist      = true;
       }
     } else if (enif_is_identical(tp[0], AM_SKIP)) {
       // {skip, N} or {skip, {From, To}} (1-based, inclusive)
@@ -248,9 +248,9 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
     } else if (enif_is_identical(tp[0], AM_FIELDS)) {
       if (!enif_is_list(env, tp[1])) return false;
       ERL_NIF_TERM fhead, ftail = tp[1];
-      std::vector<CsvFieldSpec> fields;
+      std::vector<CSVFieldSpec> fields;
       while (enif_get_list_cell(env, ftail, &fhead, &ftail)) {
-        CsvFieldSpec spec;
+        CSVFieldSpec spec;
         if (!parse_csv_field_spec(env, fhead, spec)) return false;
         fields.push_back(spec);
       }
@@ -258,13 +258,13 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvDecodeOp
     }
   }
 
-  if (opts.return_kind == CsvReturnKind::map && !opts.headers)
-    opts.return_kind = CsvReturnKind::list;
+  if (opts.return_kind == CSVReturnKind::map && !opts.headers)
+    opts.return_kind = CSVReturnKind::list;
 
   return true;
 }
 
-struct CsvEncodeOpts {
+struct CSVEncodeOpts {
   char delimiter        = ',';
   bool headers          = false;
   bool explicit_headers = false;          // {headers, [List]}: explicit column order
@@ -272,7 +272,7 @@ struct CsvEncodeOpts {
   std::string_view line_ending = "\r\n";
 };
 
-static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CsvEncodeOpts& opts)
+static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -430,18 +430,18 @@ static const char* find_csv_special(const char* p, const char* end, char delim) 
 }
 
 //-----------------------------------------------------------------------------
-// Decoder
+// CSVDecoder
 //-----------------------------------------------------------------------------
 
-struct CsvDecoder {
+struct CSVDecoder {
   ErlNifEnv*           m_env;
-  const CsvDecodeOpts& m_opts;
+  const CSVDecodeOpts& m_opts;
   const char*          m_beg;
   const char*          m_p;
   const char*          m_end;
   ERL_NIF_TERM         m_input_bin; // original binary term — used for zero-copy sub_binary
 
-  CsvDecoder(ErlNifEnv* e, const CsvDecodeOpts& o, const char* data, size_t size,
+  CSVDecoder(ErlNifEnv* e, const CSVDecodeOpts& o, const char* data, size_t size,
              ERL_NIF_TERM input_bin)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size), m_input_bin(input_bin) {}
 
@@ -549,15 +549,15 @@ struct CsvDecoder {
 
   // Attempts the type-specific conversion of `sv` per `spec`. Returns 0 on a
   // value that doesn't match the requested type.
-  ERL_NIF_TERM try_convert(std::string_view sv, const CsvFieldSpec& spec)
+  ERL_NIF_TERM try_convert(std::string_view sv, const CSVFieldSpec& spec)
   {
     switch (spec.type) {
-      case CsvFieldType::integer: {
+      case CSVFieldType::integer: {
         if (sv.empty()) return 0;
         ERL_NIF_TERM r = glz::BigInt::decode(m_env, sv.data(), sv.data() + sv.size());
         return r;
       }
-      case CsvFieldType::floatp: {
+      case CSVFieldType::floatp: {
         if (sv.empty())
           return 0;
         double d;
@@ -567,17 +567,17 @@ struct CsvDecoder {
         d = std::round(d * spec.scale) / spec.scale;
         return enif_make_double(m_env, d);
       }
-      case CsvFieldType::boolean: {
+      case CSVFieldType::boolean: {
         if (sv == "true"  || sv == "TRUE"  || sv == "True")  return AM_TRUE;
         if (sv == "false" || sv == "FALSE" || sv == "False") return AM_FALSE;
         return 0;
       }
-      case CsvFieldType::datetime: {
+      case CSVFieldType::datetime: {
         auto secs = datetime::parse(sv, spec.format);
         if (!secs) [[unlikely]] return 0;
         return enif_make_int64(m_env, *secs);
       }
-      case CsvFieldType::charlist: {
+      case CSVFieldType::charlist: {
         std::vector<ERL_NIF_TERM> cps;
         cps.reserve(sv.size());
         const char* p = sv.data();
@@ -585,12 +585,12 @@ struct CsvDecoder {
         while (p < e) cps.push_back(enif_make_uint(m_env, decode_utf8(p, e)));
         return enif_make_list_from_array(m_env, cps.data(), unsigned(cps.size()));
       }
-      case CsvFieldType::existing_atom: {
+      case CSVFieldType::existing_atom: {
         ERL_NIF_TERM t;
         return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
              ? t : 0;
       }
-      case CsvFieldType::atom_list: {
+      case CSVFieldType::atom_list: {
         for (auto& name : spec.atoms) {
           if (sv == name) {
             ERL_NIF_TERM t;
@@ -608,9 +608,9 @@ struct CsvDecoder {
   // Converts one field term (a binary) per `spec`. Returns 0 to signal
   // {invalid_field_value, Row, Col} (only when `spec.on_failure == raise`);
   // otherwise always returns a valid term, falling back per `on_failure`.
-  ERL_NIF_TERM convert_field(ERL_NIF_TERM term, const CsvFieldSpec& spec)
+  ERL_NIF_TERM convert_field(ERL_NIF_TERM term, const CSVFieldSpec& spec)
   {
-    if (spec.type == CsvFieldType::none || spec.type == CsvFieldType::binary)
+    if (spec.type == CSVFieldType::none || spec.type == CSVFieldType::binary)
       return term;
 
     ErlNifBinary bin;
@@ -626,10 +626,10 @@ struct CsvDecoder {
     if (r) [[likely]] return r;
 
     switch (spec.on_failure) {
-      case CsvOnFailure::binary:        return term;
-      case CsvOnFailure::raise:         return 0;
-      case CsvOnFailure::default_value: return spec.has_default ? spec.default_term : term;
-      case CsvOnFailure::null:          return m_opts.null_term;
+      case CSVOnFailure::binary:        return term;
+      case CSVOnFailure::raise:         return 0;
+      case CSVOnFailure::default_value: return spec.has_default ? spec.default_term : term;
+      case CSVOnFailure::null:          return m_opts.null_term;
     }
     return term;
   }
@@ -653,17 +653,17 @@ struct CsvDecoder {
 
   ERL_NIF_TERM make_header_key(ERL_NIF_TERM bin_term)
   {
-    if (!m_opts.label_atom && !m_opts.label_existing_atom && !m_opts.label_charlist)
+    if (!m_opts.hdr_atom && !m_opts.hdr_existing_atom && !m_opts.hdr_charlist)
       return bin_term;
 
     ErlNifBinary bin;
     if (!enif_inspect_binary(m_env, bin_term, &bin)) return bin_term;
     auto sv = std::string_view(reinterpret_cast<const char*>(bin.data), bin.size);
 
-    if (m_opts.label_atom)
+    if (m_opts.hdr_atom)
       return enif_make_atom_len(m_env, sv.data(), sv.size());
 
-    if (m_opts.label_existing_atom) {
+    if (m_opts.hdr_existing_atom) {
       ERL_NIF_TERM t;
       return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
            ? t : bin_term;
@@ -730,7 +730,7 @@ struct CsvDecoder {
     // headers — enforced by parse_csv_decode_opts). Dispatch on return_kind
     // once here rather than per-record inside the loop below.
     switch (m_opts.return_kind) {
-      case CsvReturnKind::map:
+      case CSVReturnKind::map:
         while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
           ++row_num;
           if (!m_opts.fields.empty()) {
@@ -749,7 +749,7 @@ struct CsvDecoder {
         }
         break;
 
-      case CsvReturnKind::tuple:
+      case CSVReturnKind::tuple:
         while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
           ++row_num;
           if (!m_opts.fields.empty()) {
@@ -765,7 +765,7 @@ struct CsvDecoder {
         }
         break;
 
-      case CsvReturnKind::list:
+      case CSVReturnKind::list:
         while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
           ++row_num;
           if (!m_opts.fields.empty()) {
@@ -805,14 +805,14 @@ struct CsvDecoder {
 // Encoder
 //-----------------------------------------------------------------------------
 
-struct CsvEncoder {
+struct CSVEncoder {
   ErlNifEnv*           m_env;
-  const CsvEncodeOpts& m_opts;
+  const CSVEncodeOpts& m_opts;
   OutBuf&              m_out;
   const char*          m_err;
   ERL_NIF_TERM         m_err_term;
 
-  CsvEncoder(ErlNifEnv* e, const CsvEncodeOpts& o, OutBuf& out)
+  CSVEncoder(ErlNifEnv* e, const CSVEncodeOpts& o, OutBuf& out)
     : m_env(e), m_opts(o), m_out(out), m_err(""), m_err_term(AM_NIL) {}
 
   void push_field_raw(std::string_view sv)

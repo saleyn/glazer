@@ -162,10 +162,10 @@ static const char* find_dq_special(const char* p, const char* end) noexcept
 // Options
 //-----------------------------------------------------------------------------
 
-struct YamlDecodeOpts {
+struct YAMLDecodeOpts {
   ERL_NIF_TERM null_term     = 0;
-  bool         label_atom    = false;
-  bool         label_existing_atom = false;
+  bool         hdr_atom    = false;
+  bool         hdr_existing_atom = false;
   bool         yaml_1_1_bools = false;
   // When true, scalars are copied into fresh binaries instead of referencing
   // the input via sub-binary. Use this when decoded scalars will outlive the
@@ -174,7 +174,7 @@ struct YamlDecodeOpts {
   bool         copy_strings  = false;
 };
 
-static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecodeOpts& opts)
+static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -187,9 +187,9 @@ static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecode
         if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
           opts.null_term = tp[1];
         else if (enif_is_identical(tp[0], AM_KEYS)) {
-          if      (enif_is_identical(tp[1], AM_LABEL_ATOM))          opts.label_atom = true;
-          else if (enif_is_identical(tp[1], AM_LABEL_EXISTING_ATOM)) opts.label_existing_atom = true;
-          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.label_atom = false; opts.label_existing_atom = false; }
+          if      (enif_is_identical(tp[1], AM_ATOM))          opts.hdr_atom = true;
+          else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) opts.hdr_existing_atom = true;
+          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.hdr_atom = false; opts.hdr_existing_atom = false; }
         }
       }
     }
@@ -197,11 +197,11 @@ static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlDecode
   return true;
 }
 
-struct YamlEncodeOpts {
+struct YAMLEncodeOpts {
   ERL_NIF_TERM null_term = 0;
 };
 
-static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlEncodeOpts& opts)
+static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -220,9 +220,9 @@ static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YamlEncode
 // YAML block-style decoder
 //-----------------------------------------------------------------------------
 
-struct YamlDecoder {
+struct YAMLDecoder {
   ErlNifEnv*            m_env;
-  const YamlDecodeOpts& m_opts;
+  const YAMLDecodeOpts& m_opts;
   const char*           m_beg;
   const char*           m_p;
   const char*           m_end;
@@ -237,17 +237,17 @@ struct YamlDecoder {
   static constexpr size_t   KEY_CACHE_MIN_SIZE = 2048;
   static constexpr unsigned MAX_DEPTH = 256;
 
-  YamlDecoder(ErlNifEnv* e, const YamlDecodeOpts& o, const char* data, size_t size,
+  YAMLDecoder(ErlNifEnv* e, const YAMLDecodeOpts& o, const char* data, size_t size,
               ERL_NIF_TERM input_bin)
     : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
       m_input_bin(input_bin), m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   struct DepthGuard {
-    explicit DepthGuard(YamlDecoder* d) : d(d) { ++d->m_depth; }
+    explicit DepthGuard(YAMLDecoder* d) : d(d) { ++d->m_depth; }
     ~DepthGuard() { --d->m_depth; }
     bool ok() const { return d->m_depth <= MAX_DEPTH; }
   private:
-    YamlDecoder* d;
+    YAMLDecoder* d;
   };
 
   // -------------------------------------------------------------------------
@@ -861,15 +861,15 @@ struct YamlDecoder {
     return s.data() >= m_beg && s.data() + s.size() <= m_end;
   }
 
-  // Make a key term honoring label_atom / label_existing_atom. Mirrors
-  // Decoder::make_key_term in glazer_json.hpp: the key cache only retains
+  // Make a key term honoring hdr_atom / hdr_existing_atom. Mirrors
+  // JSONDecoder::make_key_term in glazer_json.hpp: the key cache only retains
   // keys backed by the original input (mirrors JSON's has_escape bypass) —
   // `s` may instead be a quoted-scalar or line-folded scratch buffer local
   // to the caller, which must never be cached by pointer.
   ERL_NIF_TERM make_key_term(std::string_view s) {
-    if (m_opts.label_atom)
+    if (m_opts.hdr_atom)
       return enif_make_atom_len(m_env, s.data(), s.size());
-    if (m_opts.label_existing_atom) {
+    if (m_opts.hdr_existing_atom) {
       ERL_NIF_TERM t;
       return enif_make_existing_atom_len(m_env, s.data(), s.size(), &t, ERL_NIF_LATIN1)
            ? t : make_span_term(m_env, m_input_bin, m_beg, m_end, s, m_opts.copy_strings);
@@ -1524,9 +1524,9 @@ struct YamlDecoder {
 // characters, and double-quoted (with full escaping) otherwise.
 //-----------------------------------------------------------------------------
 
-struct YamlEncoder {
+struct YAMLEncoder {
   ErlNifEnv*            m_env;
-  const YamlEncodeOpts& m_opts;
+  const YAMLEncodeOpts& m_opts;
   OutBuf&               m_out;
   char                  m_atom_buf[256];
   const char*           m_err;

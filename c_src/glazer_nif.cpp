@@ -50,11 +50,11 @@ static constexpr size_t DIRTY_THRESHOLD = 8192;
 
 static ERL_NIF_TERM do_json_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
-  DecodeOpts opts;
+  JSONDecodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  Decoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
+  JSONDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode(reinterpret_cast<const char*>(bin.data), bin.size));
   update_reduction_count(env, bin.size);
   return result;
@@ -106,11 +106,11 @@ static ERL_NIF_TERM nif_json_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
 
 static ERL_NIF_TERM do_yaml_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
-  YamlDecodeOpts opts;
+  YAMLDecodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  YamlDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
+  YAMLDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode());
   update_reduction_count(env, bin.size);
   return result;
@@ -161,11 +161,11 @@ static ERL_NIF_TERM nif_yaml_try_decode(ErlNifEnv* env, int argc, const ERL_NIF_
 
 static ERL_NIF_TERM do_csv_decode(ErlNifEnv* env, const ErlNifBinary& bin, int argc, const ERL_NIF_TERM argv[])
 {
-  CsvDecodeOpts opts;
+  CSVDecodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_decode_opts(env, argv[1], opts)))
     return enif_make_badarg(env);
-  CsvDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
+  CSVDecoder dec(env, opts, reinterpret_cast<const char*>(bin.data), bin.size, argv[0]);
   auto result = make_tuple(env, dec.decode());
   update_reduction_count(env, bin.size);
   return result;
@@ -257,13 +257,13 @@ static ERL_NIF_TERM nif_json_scan(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 
 static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  EncodeOpts opts;
+  JSONEncodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts))) [[unlikely]]
     return enif_make_badarg(env);
 
   OutBuf out;
-  JsonEncoder enc{env, opts, out};
+  JSONEncoder enc{env, opts, out};
   if (!enc.encode(argv[0])) [[unlikely]]
     return enif_raise_exception(env,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
@@ -306,13 +306,13 @@ static ERL_NIF_TERM nif_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 
 static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  YamlEncodeOpts opts;
+  YAMLEncodeOpts opts;
   opts.null_term = am_null;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_yaml_encode_opts(env, argv[1], opts))) [[unlikely]]
     return enif_make_badarg(env);
 
   OutBuf out;
-  YamlEncoder enc{env, opts, out};
+  YAMLEncoder enc{env, opts, out};
   if (!enc.encode(argv[0])) {
     if (enc.m_err)
       return enif_raise_exception(env,
@@ -351,12 +351,12 @@ static ERL_NIF_TERM nif_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 
 static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  CsvEncodeOpts opts;
+  CSVEncodeOpts opts;
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_csv_encode_opts(env, argv[1], opts))) [[unlikely]]
     return enif_make_badarg(env);
 
   OutBuf out;
-  CsvEncoder enc{env, opts, out};
+  CSVEncoder enc{env, opts, out};
   if (!enc.encode(argv[0])) [[unlikely]]
     return enif_raise_exception(env,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
@@ -474,7 +474,7 @@ static ERL_NIF_TERM do_json_query(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       !enif_inspect_iolist_as_binary(env, argv[1], &filter)) [[unlikely]]
     return enif_make_badarg(env);
 
-  DecodeOpts opts;
+  JSONDecodeOpts opts;
   opts.null_term = am_null;
   if (argc == 3 && (!enif_is_list(env, argv[2]) || !parse_decode_opts(env, argv[2], opts))) [[unlikely]]
     return enif_make_badarg(env);

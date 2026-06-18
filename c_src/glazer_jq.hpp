@@ -37,20 +37,20 @@ struct JqSmartPtr : std::unique_ptr<jq_state, void(*)(jq_state*)> {
 // RAII wrapper around jv's refcounted value type: calls jv_free on
 // destruction, and jv_copy when a copy is taken (jv's own copy semantics
 // are refcount-based, so this mirrors how raw jv values are normally used).
-class JvGuard {
+class JVGuard {
 public:
   // v is passed by value because jv itself is a small value type — it's a
   // struct wrapping a tagged pointer/refcounted handle (defined in jv.h),
   // not a heap-allocated object accessed through a pointer.
   // libjq's API passes and returns jv by value everywhere.
-  explicit JvGuard(jv v) noexcept : m_v(v) {}
-  JvGuard(const JvGuard& o) noexcept : m_v(jv_copy(o.m_v)) {}
-  JvGuard(JvGuard&& o) noexcept : m_v(o.m_v) { o.m_v = jv_invalid(); }
-  ~JvGuard() { jv_free(m_v); }
+  explicit JVGuard(jv v) noexcept : m_v(v) {}
+  JVGuard(const JVGuard& o) noexcept : m_v(jv_copy(o.m_v)) {}
+  JVGuard(JVGuard&& o) noexcept : m_v(o.m_v) { o.m_v = jv_invalid(); }
+  ~JVGuard() { jv_free(m_v); }
 
-  JvGuard& operator=(const JvGuard&) = delete;
+  JVGuard& operator=(const JVGuard&) = delete;
 
-  JvGuard& operator=(JvGuard&& o) noexcept {
+  JVGuard& operator=(JVGuard&& o) noexcept {
     if (this != &o) {
       jv_free(m_v);
       m_v   = o.m_v;
@@ -68,7 +68,7 @@ private:
 };
 
 inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
-                              const ErlNifBinary& filter, const DecodeOpts& opts)
+                              const ErlNifBinary& filter, const JSONDecodeOpts& opts)
 {
   JqSmartPtr jq;
   if (!jq) [[unlikely]]
@@ -91,7 +91,7 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
       enif_make_tuple2(env, AM_JQ_COMPILE_ERROR, make_binary(env, err_msg)));
 
   std::string input_str(reinterpret_cast<const char*>(input.data), input.size);
-  JvGuard input_val(jv_parse(input_str.c_str()));
+  JVGuard input_val(jv_parse(input_str.c_str()));
   if (!input_val.valid())
     return enif_make_tuple2(env, AM_ERROR, AM_INVALID_INPUT);
 
@@ -99,12 +99,12 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
 
   std::vector<ERL_NIF_TERM> results;
   for (;;) {
-    JvGuard result(jq_next(jq.get()));
+    JVGuard result(jq_next(jq.get()));
     if (!result.valid()) {
       if (jv_invalid_has_msg(jv_copy(result.get()))) {
-        JvGuard msg(jv_invalid_get_msg(result.release()));
+        JVGuard msg(jv_invalid_get_msg(result.release()));
         if (jv_get_kind(msg.get()) != JV_KIND_STRING)
-          msg = JvGuard(jv_dump_string(msg.release(), 0));
+          msg = JVGuard(jv_dump_string(msg.release(), 0));
         if (!err_msg.empty())
           err_msg += "; ";
         err_msg += jv_string_value(msg.get());
@@ -112,10 +112,10 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
       break;
     }
 
-    JvGuard text(jv_dump_string(result.release(), 0));
+    JVGuard text(jv_dump_string(result.release(), 0));
     std::string_view sv(jv_string_value(text.get()), jv_string_length_bytes(jv_copy(text.get())));
 
-    Decoder dec(env, opts, sv.data(), sv.size());
+    JSONDecoder dec(env, opts, sv.data(), sv.size());
     auto [success, decoded] = dec.decode(sv.data(), sv.size());
 
     // jq's own JSON output should always be valid JSON; if re-decoding
@@ -139,7 +139,7 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
 
 namespace glz {
 
-inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary&, const ErlNifBinary&, const DecodeOpts&)
+inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary&, const ErlNifBinary&, const JSONDecodeOpts&)
 {
   return enif_make_tuple2(env, AM_ERROR, AM_JQ_NOT_AVAILABLE);
 }
