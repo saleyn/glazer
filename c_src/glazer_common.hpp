@@ -545,7 +545,10 @@ inline const char* find_escape_pos(const char* p, const char* end) noexcept
       uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
       uint8x16_t biased = veorq_u8(v, vbias);
       uint8x16_t hit    = vorrq_u8(vorrq_u8(
-        vcltq_u8(biased, vcmp), vceqq_u8(v, vq)), vceqq_u8(v, vbs));
+        vreinterpretq_u8_s8(vcgtq_s8(vreinterpretq_s8_u8(vcmp),
+                                     vreinterpretq_s8_u8(biased))),
+        vceqq_u8(v, vq)),
+        vceqq_u8(v, vbs));
       uint64x2_t h64 = vreinterpretq_u64_u8(hit);
       uint64_t   lo  = vgetq_lane_u64(h64, 0);
       uint64_t   hi  = vgetq_lane_u64(h64, 1);
