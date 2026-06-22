@@ -362,6 +362,7 @@ overridden:
 | `{keys, binary}` | Decode object keys as binaries (default) |
 | `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
 | `copy_strings` | Always allocate a fresh binary for each decoded string, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
+| `return_trailer` | Allow trailing non-whitespace data after the decoded value instead of rejecting it; on a match, return `{has_trailer, Term, Rest}` with `Rest` as a zero-copy sub-binary of the unconsumed remainder |
 
 ```erlang
 1> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
@@ -384,6 +385,9 @@ undefined
 
 7> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple, dedupe_keys]).
 {[{<<"a">>, 2}]}
+
+8> glazer_json:decode(<<"1 2">>, [return_trailer]).
+{has_trailer, 1, <<"2">>}
 ```
 
 > [!NOTE]
@@ -1102,4 +1106,7 @@ of the gap over the slower contenders:
 
 ## [License](#table-of-contents)
 
-MIT License — see [LICENSE](LICENSE) for details.
+Glazer uses [MIT License](LICENSE). You can use the source code freely
+in any project, including commercial applications, as long as you give
+credit by publishing the contents of the LICENSE file somewhere in your
+documentation.

@@ -511,6 +511,45 @@ rfc8259_top_level_test_() ->
     ?_assertMatch({error, _}, glazer_json:try_decode(<<"1 2">>))
   ].
 
+%% return_trailer: scanning and parsing in a single pass. Trailing
+%% non-whitespace data after the decoded value is returned alongside it
+%% instead of being rejected as a parse error.
+return_trailer_test_() ->
+  [
+    %% no trailing data: plain {ok, Term} / Term, not wrapped in has_trailer
+    ?_assertEqual({ok, 1},  glazer_json:try_decode(<<"1">>,    [return_trailer])),
+    ?_assertEqual(1,        glazer_json:decode(<<"1">>,        [return_trailer])),
+    ?_assertEqual({ok, 1},  glazer_json:try_decode(<<"1   ">>, [return_trailer])),
+
+    %% trailing data after a scalar
+    ?_assertEqual({has_trailer, 1, <<"2">>},
+                  glazer_json:decode(<<"1 2">>, [return_trailer])),
+    ?_assertEqual({ok, {has_trailer, 1, <<"2">>}},
+                  glazer_json:try_decode(<<"1 2">>, [return_trailer])),
+    ?_assertEqual({has_trailer, true, <<";">>},
+                  glazer_json:decode(<<"true;">>, [return_trailer])),
+    ?_assertEqual({has_trailer, 123, <<"abc">>},
+                  glazer_json:decode(<<"123abc">>, [return_trailer])),
+
+    %% leading whitespace in the trailer is consumed before the rest is cut
+    ?_assertEqual({has_trailer, 1, <<"2 3">>},
+                  glazer_json:decode(<<"1 2 3">>, [return_trailer])),
+
+    %% trailing data after composite values
+    ?_assertEqual({has_trailer, [], <<"{}">>},
+                  glazer_json:decode(<<"[] {}">>, [return_trailer])),
+    ?_assertEqual({has_trailer, #{}, <<"[1]">>},
+                  glazer_json:decode(<<"{} [1]">>, [return_trailer])),
+
+    %% composes with other decode options
+    ?_assertEqual({has_trailer, #{a => 1}, <<"2">>},
+                  glazer_json:decode(<<"{\"a\":1} 2">>, [return_trailer, {keys, atom}])),
+
+    %% a malformed value still errors, even with return_trailer
+    ?_assertError({parse_error, _}, glazer_json:decode(<<"not json">>, [return_trailer])),
+    ?_assertMatch({error, _}, glazer_json:try_decode(<<"[1,">>, [return_trailer]))
+  ].
+
 %% ----------------------------------------------------------------------------
 %% RFC 8259 §5 - unterminated arrays and objects.
 %%

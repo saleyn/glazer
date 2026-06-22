@@ -6,24 +6,26 @@
 
 namespace glz {
 
-static ERL_NIF_TERM AM_OK;
-static ERL_NIF_TERM AM_ERROR;
-static ERL_NIF_TERM AM_TRUE;
-static ERL_NIF_TERM AM_FALSE;
-static ERL_NIF_TERM AM_NULL;
-static ERL_NIF_TERM AM_NIL;
 static ERL_NIF_TERM AM_ENOMEM;
+static ERL_NIF_TERM AM_ERROR;
+static ERL_NIF_TERM AM_FALSE;
+static ERL_NIF_TERM AM_NIL;
+static ERL_NIF_TERM AM_NULL;
+static ERL_NIF_TERM AM_OK;
+static ERL_NIF_TERM AM_TRUE;
 
 // Decode option atoms
-static ERL_NIF_TERM AM_OBJECT_AS_TUPLE;
-static ERL_NIF_TERM AM_USE_NIL;
-static ERL_NIF_TERM AM_NULL_TERM;
-static ERL_NIF_TERM AM_KEYS;
 static ERL_NIF_TERM AM_ATOM;
-static ERL_NIF_TERM AM_EXISTING_ATOM;
-static ERL_NIF_TERM AM_LABEL_BINARY;
-static ERL_NIF_TERM AM_DEDUPE_KEYS;
 static ERL_NIF_TERM AM_COPY_STRINGS;
+static ERL_NIF_TERM AM_DEDUPE_KEYS;
+static ERL_NIF_TERM AM_EXISTING_ATOM;
+static ERL_NIF_TERM AM_HAS_TRAILER;
+static ERL_NIF_TERM AM_KEYS;
+static ERL_NIF_TERM AM_LABEL_BINARY;
+static ERL_NIF_TERM AM_NULL_TERM;
+static ERL_NIF_TERM AM_OBJECT_AS_TUPLE;
+static ERL_NIF_TERM AM_RETURN_TRAILER;
+static ERL_NIF_TERM AM_USE_NIL;
 
 // Encode option atoms
 static ERL_NIF_TERM AM_PRETTY;
@@ -34,42 +36,40 @@ static ERL_NIF_TERM AM_FORCE_UTF8;
 static ERL_NIF_TERM AM_YAML_1_1_BOOLS;
 
 // CSV option atoms
-static ERL_NIF_TERM AM_DELIMITER;
-static ERL_NIF_TERM AM_HEADERS;
+static ERL_NIF_TERM AM_BINARY;
+static ERL_NIF_TERM AM_BOOLEAN;
+static ERL_NIF_TERM AM_CHARLIST;
+static ERL_NIF_TERM AM_CRLF;
 static ERL_NIF_TERM AM_DATA;
-static ERL_NIF_TERM AM_RETURN;
-static ERL_NIF_TERM AM_MAP;
-static ERL_NIF_TERM AM_LIST;
-static ERL_NIF_TERM AM_TUPLE;
-static ERL_NIF_TERM AM_STRING;
-static ERL_NIF_TERM AM_SKIP;
+static ERL_NIF_TERM AM_DATETIME;
+static ERL_NIF_TERM AM_DEFAULT;
+static ERL_NIF_TERM AM_DELIMITER;
+static ERL_NIF_TERM AM_FIELDS;
+static ERL_NIF_TERM AM_FLOAT;
+static ERL_NIF_TERM AM_HEADERS;
+static ERL_NIF_TERM AM_INTEGER;
+static ERL_NIF_TERM AM_LF;
 static ERL_NIF_TERM AM_LIMIT;
 static ERL_NIF_TERM AM_LINE_ENDING;
-static ERL_NIF_TERM AM_LF;
-static ERL_NIF_TERM AM_CRLF;
-static ERL_NIF_TERM AM_FIELDS;
-static ERL_NIF_TERM AM_INTEGER;
-static ERL_NIF_TERM AM_FLOAT;
-static ERL_NIF_TERM AM_BOOLEAN;
-static ERL_NIF_TERM AM_DATETIME;
-static ERL_NIF_TERM AM_BINARY;
-static ERL_NIF_TERM AM_CHARLIST;
-static ERL_NIF_TERM AM_EXISTING_ATOM;
-static ERL_NIF_TERM AM_ATOM;
-static ERL_NIF_TERM AM_TYPE;
-static ERL_NIF_TERM AM_DEFAULT;
+static ERL_NIF_TERM AM_LIST;
+static ERL_NIF_TERM AM_MAP;
 static ERL_NIF_TERM AM_ON_FAILURE;
 static ERL_NIF_TERM AM_RAISE;
+static ERL_NIF_TERM AM_RETURN;
+static ERL_NIF_TERM AM_SKIP;
+static ERL_NIF_TERM AM_STRING;
+static ERL_NIF_TERM AM_TUPLE;
+static ERL_NIF_TERM AM_TYPE;
 
 // YAML special-float atoms (Erlang floats can't represent inf/nan)
 static ERL_NIF_TERM AM_INFINITY;
-static ERL_NIF_TERM AM_NEG_INFINITY;
 static ERL_NIF_TERM AM_NAN;
+static ERL_NIF_TERM AM_NEG_INFINITY;
 
 // Error atoms
 static ERL_NIF_TERM AM_ENCODE_ERROR;
-static ERL_NIF_TERM AM_INVALID_NUMBER_FORMAT;
 static ERL_NIF_TERM AM_INVALID_INPUT;
+static ERL_NIF_TERM AM_INVALID_NUMBER_FORMAT;
 
 // scan/2 result atoms
 static ERL_NIF_TERM AM_COMPLETE;
@@ -77,25 +77,25 @@ static ERL_NIF_TERM AM_INCOMPLETE;
 
 // CSV error atoms
 static ERL_NIF_TERM AM_DUPLICATE_HEADER;
-static ERL_NIF_TERM AM_UNTERMINATED_QUOTED_FIELD;
 static ERL_NIF_TERM AM_INVALID_FIELD_VALUE;
+static ERL_NIF_TERM AM_UNTERMINATED_QUOTED_FIELD;
 
 // jq error atoms
-static ERL_NIF_TERM AM_JQ_NOT_AVAILABLE;
 static ERL_NIF_TERM AM_JQ_COMPILE_ERROR;
 static ERL_NIF_TERM AM_JQ_DECODE_ERROR;
+static ERL_NIF_TERM AM_JQ_NOT_AVAILABLE;
 
 // compile_path/1 path_step() atoms and error atoms
 static ERL_NIF_TERM AM_FIELD;
-static ERL_NIF_TERM AM_ITERATE;
 static ERL_NIF_TERM AM_INDEX;
 static ERL_NIF_TERM AM_INVALID_PATH;
+static ERL_NIF_TERM AM_ITERATE;
 
 // info/0 result atoms
-static ERL_NIF_TERM AM_VERSION;
 static ERL_NIF_TERM AM_APP_VERSION;
-static ERL_NIF_TERM AM_PGO;
 static ERL_NIF_TERM AM_OPTIMIZATION;
+static ERL_NIF_TERM AM_PGO;
+static ERL_NIF_TERM AM_VERSION;
 
 // The runtime null value (configurable via NIF load)
 static ERL_NIF_TERM am_null;
@@ -119,6 +119,8 @@ inline void init_atoms(ErlNifEnv* env)
   AM_LABEL_BINARY              = enif_make_atom(env, "binary");
   AM_DEDUPE_KEYS               = enif_make_atom(env, "dedupe_keys");
   AM_COPY_STRINGS              = enif_make_atom(env, "copy_strings");
+  AM_RETURN_TRAILER            = enif_make_atom(env, "return_trailer");
+  AM_HAS_TRAILER               = enif_make_atom(env, "has_trailer");
 
   AM_PRETTY                    = enif_make_atom(env, "pretty");
   AM_UESCAPE                   = enif_make_atom(env, "uescape");

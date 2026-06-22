@@ -37,7 +37,8 @@ application-wide, set the `null` env key in your config:
   | {null_term, atom()}
   | {keys, atom | existing_atom | binary}
   | dedupe_keys
-  | copy_strings.
+  | copy_strings
+  | return_trailer.
 
 -doc """
 Decode options:
@@ -62,6 +63,14 @@ Decode options:
   is reachable. Use `copy_strings` when decoded strings are long-lived and
   the input is large, to allow the GC to reclaim the input buffer
   independently.
+- `return_trailer`        - allow (instead of rejecting) trailing
+  non-whitespace data after the decoded value. On a match, the successful
+  result is `{has_trailer, Term, Rest}` where `Rest` is the unconsumed
+  remainder of the input as a zero-copy sub-binary. Without this option,
+  trailing non-whitespace data after a complete value is a parse error.
+  Useful for decoding one JSON value off the front of a buffer (e.g. a
+  newline-delimited stream) without a separate `scan/1,2` pass to find
+  where the value ends first.
 """.
 -type decode_opts() :: [decode_opt()].
 
@@ -151,6 +160,10 @@ Decode a JSON binary or iolist to an Erlang term with options
 %% Objects as jiffy-style proplist tuples
 3> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
 {[{<<"a">>, 1}]}
+
+%% Trailing data returned alongside the decoded value instead of erroring
+4> glazer_json:decode(<<"1 2">>, [return_trailer]).
+{has_trailer, 1, <<"2">>}
 ```
 """.
 -spec decode(binary() | iolist(), decode_opts()) -> term().
@@ -206,6 +219,10 @@ returning `{ok, Term}` or `{error, Reason}` instead of raising.
 
 2> glazer_json:try_decode(<<"not json">>, [{keys, atom}]).
 {error, <<"...">>}
+
+%% Trailing data returned alongside the decoded value instead of erroring
+3> glazer_json:try_decode(<<"1 2">>, [return_trailer]).
+{ok, {has_trailer, 1, <<"2">>}}
 ```
 """.
 -spec try_decode(binary() | iolist(), decode_opts()) -> {ok, term()} | {error, binary()}.

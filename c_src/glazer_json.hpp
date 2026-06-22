@@ -46,6 +46,10 @@ struct JSONDecodeOpts {
   // will outlive the input binary by a large margin: without it, one live
   // string keeps the entire input buffer from being collected.
   bool         copy_strings        = false;
+  // When true, trailing non-whitespace data after the decoded value is not
+  // an error: decode() returns {has_trailer, Value, Rest} instead, letting
+  // callers split a value off a buffer without a separate scan() pass.
+  bool         return_trailer      = false;
 };
 
 struct JSONEncodeOpts {
@@ -67,6 +71,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts&
     else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
     else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
     else if (enif_is_identical(head, AM_COPY_STRINGS))     opts.copy_strings    = true;
+    else if (enif_is_identical(head, AM_RETURN_TRAILER))   opts.return_trailer  = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -610,6 +615,12 @@ struct JSONDecoder {
     if (result) skip_ws();
     if (result && m_p == m_end) [[likely]]
       return std::make_tuple(true, result);
+
+    if (result && m_opts.return_trailer) {
+      ERL_NIF_TERM rest = make_span_term(m_env, m_input_bin, m_beg, m_end,
+                                          std::string_view(m_p, m_end - m_p), false);
+      return std::make_tuple(true, enif_make_tuple3(m_env, AM_HAS_TRAILER, result, rest));
+    }
 
     std::string msg = m_err.empty()
       ? "JSON parse error at offset " + std::to_string(m_p - m_beg)
