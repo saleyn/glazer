@@ -31,6 +31,7 @@ static ERL_NIF_TERM AM_USE_NIL;
 static ERL_NIF_TERM AM_PRETTY;
 static ERL_NIF_TERM AM_UESCAPE;
 static ERL_NIF_TERM AM_FORCE_UTF8;
+static ERL_NIF_TERM AM_ESCAPE_FWD_SLASH;
 
 // YAML option atoms
 static ERL_NIF_TERM AM_YAML_1_1_BOOLS;
@@ -125,6 +126,7 @@ inline void init_atoms(ErlNifEnv* env)
   AM_PRETTY                    = enif_make_atom(env, "pretty");
   AM_UESCAPE                   = enif_make_atom(env, "uescape");
   AM_FORCE_UTF8                = enif_make_atom(env, "force_utf8");
+  AM_ESCAPE_FWD_SLASH          = enif_make_atom(env, "escape_fwd_slash");
 
   AM_YAML_1_1_BOOLS            = enif_make_atom(env, "yaml_1_1_bools");
 

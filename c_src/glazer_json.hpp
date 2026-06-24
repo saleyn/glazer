@@ -53,10 +53,11 @@ struct JSONDecodeOpts {
 };
 
 struct JSONEncodeOpts {
-  bool         pretty     = false;
-  bool         uescape    = false;
-  bool         force_utf8 = false;
-  ERL_NIF_TERM null_term  = 0;
+  bool         pretty            = false;
+  bool         uescape           = false;
+  bool         force_utf8        = false;
+  bool         escape_fwd_slash  = false;
+  ERL_NIF_TERM null_term         = 0;
 };
 
 //-----------------------------------------------------------------------------
@@ -92,10 +93,11 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONEncodeOpts&
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_PRETTY))     opts.pretty     = true;
-    else if (enif_is_identical(head, AM_USE_NIL))    opts.null_term  = AM_NIL;
-    else if (enif_is_identical(head, AM_UESCAPE))    opts.uescape    = true;
-    else if (enif_is_identical(head, AM_FORCE_UTF8)) opts.force_utf8 = true;
+    if      (enif_is_identical(head, AM_PRETTY))          opts.pretty           = true;
+    else if (enif_is_identical(head, AM_USE_NIL))         opts.null_term        = AM_NIL;
+    else if (enif_is_identical(head, AM_UESCAPE))         opts.uescape          = true;
+    else if (enif_is_identical(head, AM_FORCE_UTF8))      opts.force_utf8       = true;
+    else if (enif_is_identical(head, AM_ESCAPE_FWD_SLASH)) opts.escape_fwd_slash = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2)
@@ -815,11 +817,55 @@ static void json_escape_string(std::string_view sv, OutBuf& out)
   out.m_len = static_cast<size_t>(dst - out.m_data);
 }
 
+// JSON-escape a UTF-8 byte sequence with optional forward slash escaping
+static void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool escape_fwd_slash)
+{
+  // Worst case: every byte escapes to 6 chars (\uXXXX), plus 2 quotes.
+  out.ensure(sv.size() * 6 + 2);
+
+  char* dst       = out.m_data + out.m_len;
+  *dst++          = '"';
+  const char* p   = sv.data();
+  const char* end = p + sv.size();
+
+  while (p < end) {
+    const char* run_start = p;
+
+    // Find the next character that needs special handling (either standard escape or forward slash)
+    while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p] && !(*p == '/' && escape_fwd_slash)) {
+      ++p;
+    }
+
+    // Copy the run of normal characters
+    size_t run = static_cast<size_t>(p - run_start);
+    if (run) {
+      memcpy(dst, run_start, run);
+      dst += run;
+    }
+
+    if (p >= end) break;
+
+    // Handle the special character
+    if (*p == '/' && escape_fwd_slash) {
+      *dst++ = '\\';
+      *dst++ = '/';
+      ++p;
+    } else {
+      const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+      memcpy(dst, e.seq, e.len);
+      dst += e.len;
+    }
+  }
+
+  *dst++ = '"';
+  out.m_len = static_cast<size_t>(dst - out.m_data);
+}
+
 // JSON-escape a UTF-8 byte sequence, additionally escaping every non-ASCII
 // code point as \uXXXX (uescape), and/or replacing invalid UTF-8 byte
 // sequences with U+FFFD before escaping (force_utf8).
 static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
-                                       bool uescape, bool force_utf8)
+                                       bool uescape, bool force_utf8, bool escape_fwd_slash = false)
 {
   out.push('"');
   const char* p   = sv.data();
@@ -830,7 +876,12 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
     auto c = (unsigned char)*p;
 
     if (c < 0x80) [[likely]] {
-      if (!NEEDS_ESCAPE_TAB[c]) [[likely]] {
+      if (c == '/' && escape_fwd_slash) {
+        if (p > run) out.push(run, p - run);
+        out.push("\\/", 2);
+        ++p;
+        run = p;
+      } else if (!NEEDS_ESCAPE_TAB[c]) [[likely]] {
         ++p;
       } else {
         if (p > run) out.push(run, p - run);
@@ -878,7 +929,9 @@ struct JSONEncoder {
   void escape_string(std::string_view sv)
   {
     if (m_opts.uescape || m_opts.force_utf8)
-      json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8);
+      json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8, m_opts.escape_fwd_slash);
+    else if (m_opts.escape_fwd_slash)
+      json_escape_string_fwd_slash(sv, m_out, true);
     else
       json_escape_string(sv, m_out);
   }

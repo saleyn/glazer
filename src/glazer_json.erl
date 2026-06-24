@@ -78,6 +78,7 @@ Decode options:
     pretty
   | uescape
   | force_utf8
+  | escape_fwd_slash
   | use_nil
   | {null_term, atom()}.
 
@@ -95,6 +96,8 @@ Encode options:
   `\\ufffd`. This is an *encode*-only option: `decode/1,2` does not validate
   that JSON strings in the input are valid UTF-8 and copies bytes through
   as-is regardless of options
+- `escape_fwd_slash`  - escape forward slashes (`/`) as `\\/` in JSON strings,
+  which is valid per RFC 8259 §7. By default, forward slashes are not escaped
 - `use_nil`           - encode the atom `nil` as JSON `null`
 - `{null_term, Atom}` - encode `Atom` as JSON `null`
 """.
@@ -290,6 +293,10 @@ cannot be represented as JSON.
 %% force_utf8 + uescape further escapes the replacement character
 6> glazer_json:encode(<<"a", 128, "b">>, [force_utf8, uescape]).
 <<"\"a\\ufffdb\"">>
+
+%% Escape forward slashes in JSON strings
+7> glazer_json:encode(<<"https://example.com/path">>, [escape_fwd_slash]).
+<<"\"https:\\/\\/example.com\\/path\"">>
 ```
 """.
 -spec encode(term(), encode_opts()) -> binary().

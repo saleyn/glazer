@@ -646,6 +646,44 @@ jsontestsuite_implementation_defined_test_() ->
   ].
 
 %% ----------------------------------------------------------------------------
+%% escape_fwd_slash encode option
+%% ----------------------------------------------------------------------------
+
+escape_fwd_slash_test_() ->
+  [
+    %% Forward slashes are escaped as \/
+    ?_assertEqual(<<"\"https:\\/\\/example.com\\/path\"">>,
+                  glazer_json:encode(<<"https://example.com/path">>, [escape_fwd_slash])),
+    %% Without escape_fwd_slash, forward slashes pass through unescaped
+    ?_assertEqual(<<"\"https://example.com/path\"">>,
+                  glazer_json:encode(<<"https://example.com/path">>)),
+    %% Empty string works
+    ?_assertEqual(<<"\"\"">>,
+                  glazer_json:encode(<<"">>, [escape_fwd_slash])),
+    %% String without forward slashes is unchanged
+    ?_assertEqual(<<"\"hello world\"">>,
+                  glazer_json:encode(<<"hello world">>, [escape_fwd_slash])),
+    %% Single forward slash
+    ?_assertEqual(<<"\"\\/\"">>,
+                  glazer_json:encode(<<"/">>, [escape_fwd_slash])),
+    %% Forward slash mixed with other escapable characters
+    ?_assertEqual(<<"\"hello\\/\\\"world\\\"\"">>,
+                  glazer_json:encode(<<"hello/\"world\"">>, [escape_fwd_slash])),
+    %% Forward slash in map keys (atom keys)
+    ?_assertEqual(<<"{\"test\\/path\":1}">>,
+                  glazer_json:encode(#{'test/path' => 1}, [escape_fwd_slash])),
+    %% Forward slash in map keys (binary keys)
+    ?_assertEqual(<<"{\"test\\/path\":1}">>,
+                  glazer_json:encode(#{<<"test/path">> => 1}, [escape_fwd_slash])),
+    %% Works with uescape option
+    ?_assertEqual(<<"\"h\\u00e9llo\\/world\"">>,
+                  glazer_json:encode(<<"héllo/world"/utf8>>, [escape_fwd_slash, uescape])),
+    %% Works with force_utf8 option
+    ?_assertEqual(<<"\"hello\\/", 239, 191, 189, "\\/world\"">>,
+                  glazer_json:encode(<<"hello/", 128, "/world">>, [escape_fwd_slash, force_utf8]))
+  ].
+
+%% ----------------------------------------------------------------------------
 %% uescape / force_utf8 encode options
 %% ----------------------------------------------------------------------------
 
