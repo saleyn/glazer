@@ -112,7 +112,7 @@ formats.
 ```elixir
 def deps do
   [
-    {:glazer, "~> 0.5"}
+    {:glazer, "~> 0.5", manager: :rebar3}
   ]
 end
 ```
