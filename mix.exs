@@ -1,19 +1,32 @@
 defmodule Glazer.MixProject do
   use Mix.Project
 
+  @version "0.5.14"
+
   def project do
     [
-      app:      :glazer,
-      version:  "0.1.0",
-      elixir:   "~> 1.15",
-      deps:     deps(),
-      aliases:  aliases(),
-      language: :erlang
+      app:         :glazer,
+      version:     @version,
+      elixir:      "~> 1.15",
+      compilers:   [:elixir_make] ++ Mix.compilers(),
+      make_env:    make_env(),
+      deps:        deps(),
+      aliases:     aliases(),
+      language:    :erlang,
+      description: "Erlang NIF JSON encoder/decoder using the glaze C++ library",
+      source_url:  "https://github.com/saleyn/glazer"
     ]
   end
 
   def application do
     [extra_applications: [:logger]]
+  end
+
+  defp make_env do
+    %{
+      "MIX_APP_PATH" => Mix.Project.app_path(),
+      "PRIV_DIR"     => Path.join(Mix.Project.app_path(), "priv")
+    }
   end
 
   # yaml_rustler pins {:rustler, "~> 0.34.0"} and {:rustler_precompiled, "~> 0.8.2"}
@@ -26,6 +39,9 @@ defmodule Glazer.MixProject do
   # their precompiled NIFs correctly under rustler 0.37.3 / rustler_precompiled 0.9.
   defp deps do
     [
+      {:elixir_make, "~> 0.8", runtime: false},
+
+      # Bench-only deps
       {:simdjsone,           "~> 0.5",    only: :bench},
       {:jason,               "~> 1.4",    only: :bench},
       {:jiffy,               "~> 2.0",    only: :bench},
@@ -41,11 +57,11 @@ defmodule Glazer.MixProject do
       {:yaml_rustler,        "~> 0.1.6",  only: :bench},
       {:rusty_csv,           "~> 0.3.11", only: :bench},
       {:rustler,             "~> 0.37.3", only: :bench, override: true, runtime: false},
-      {:rustler_precompiled, "~> 0.9",    only: :bench, override: true},
+      {:rustler_precompiled, "~> 0.9",    only: :bench, override: true}
     ]
   end
 
-  def aliases do
+  defp aliases do
     [
       bench:        ["bench-json", "bench-yaml", "bench-csv"],
       "bench-json": "bench_json --only bench",
