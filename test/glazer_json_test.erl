@@ -712,6 +712,29 @@ force_utf8_test_() ->
     ?_assertEqual(<<"\"", 16#C3, 16#A9, "\"">>, glazer_json:encode(<<16#C3, 16#A9>>, [force_utf8]))
   ].
 
+utf8_boundary_preserve_bytes_test_() ->
+  [
+    ?_test(begin
+      %% Regression: NEON ARM path in find_escape_pos() used an unsigned byte
+      %% comparison (vcltq_u8) for the bias trick instead of a signed one.
+      %% The bias trick converts control chars (c < 0x20) to a signed range:
+      %% (c ^ 0x80) < 0xA0, which when done with signed comparison correctly
+      %% identifies control chars. With unsigned comparison, non-ASCII bytes
+      %% (>= 0x80) get false-positives, corrupting the SIMD output when they
+      %% cross a 16-byte chunk boundary. These are minimal payloads to
+      %% reproduce: exactly 16 bytes (not 16 characters), either 8 ASCII bytes
+      %% + 4x 2-byte UTF-8, or 8x 2-byte UTF-8 sequences.
+      Bin = <<"12345678",
+              16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89>>,
+      Expected = <<"\"", Bin/binary, "\"">>,
+      ?assertEqual(Expected, glazer_json:encode(Bin)),
+      Bin2 = <<16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89,
+               16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89>>,
+      Expected2 = <<"\"", Bin2/binary, "\"">>,
+      ?assertEqual(Expected2, glazer_json:encode(Bin2))
+    end)
+  ].
+
 %% ----------------------------------------------------------------------------
 %% query/2,3 — jq filter evaluation
 %% ----------------------------------------------------------------------------
