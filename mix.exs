@@ -1,12 +1,10 @@
 defmodule Glazer.MixProject do
   use Mix.Project
 
-  @version "0.5.14"
-
   def project do
     [
       app:         :glazer,
-      version:     @version,
+      version:     "0.1.0",
       elixir:      "~> 1.15",
       compilers:   [:elixir_make] ++ Mix.compilers(),
       make_env:    make_env(),
