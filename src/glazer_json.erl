@@ -38,7 +38,9 @@ application-wide, set the `null` env key in your config:
   | {keys, atom | existing_atom | binary}
   | dedupe_keys
   | copy_strings
-  | return_trailer.
+  | return_trailer
+  | validate_utf8
+  | skip_utf8_validation.
 
 -doc """
 Decode options:
@@ -71,6 +73,14 @@ Decode options:
   Useful for decoding one JSON value off the front of a buffer (e.g. a
   newline-delimited stream) without a separate `scan/1,2` pass to find
   where the value ends first.
+- `validate_utf8`         - enable UTF-8 validation for JSON strings.
+  When enabled, invalid UTF-8 sequences in string values or object keys
+  cause a parse error instead of being silently accepted, matching the
+  behavior of OTP's json module and other JSON parsers. By default,
+  UTF-8 validation is disabled for backward compatibility and performance.
+- `skip_utf8_validation`  - explicitly disable UTF-8 validation for JSON
+  strings (this is the default behavior). This option is provided for
+  clarity when UTF-8 validation behavior might be changed in future versions.
 """.
 -type decode_opts() :: [decode_opt()].
 
@@ -93,9 +103,8 @@ Encode options:
   which can produce a result that is not valid UTF-8/JSON. A pre-existing
   literal U+FFFD in the input is left untouched (not double-replaced). When
   combined with `uescape`, the replacement character is further escaped to
-  `\\ufffd`. This is an *encode*-only option: `decode/1,2` does not validate
-  that JSON strings in the input are valid UTF-8 and copies bytes through
-  as-is regardless of options
+  `\\ufffd`. This is an *encode*-only option: for UTF-8 validation during
+  decoding, use `validate_utf8` in decode options (disabled by default)
 - `escape_fwd_slash`  - escape forward slashes (`/`) as `\\/` in JSON strings,
   which is valid per RFC 8259 §7. By default, forward slashes are not escaped
 - `use_nil`           - encode the atom `nil` as JSON `null`

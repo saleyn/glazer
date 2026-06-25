@@ -20,7 +20,11 @@
 #include <string_view>
 
 #include <erl_nif.h>
-#if defined(__ARM_NEON__)
+#if defined(__AVX2__)
+#  include <immintrin.h>
+#elif defined(__SSE2__)
+#  include <emmintrin.h>
+#elif defined(__ARM_NEON__)
 #  include <arm_neon.h>
 #endif
 
@@ -50,6 +54,9 @@ struct JSONDecodeOpts {
   // an error: decode() returns {has_trailer, Value, Rest} instead, letting
   // callers split a value off a buffer without a separate scan() pass.
   bool         return_trailer      = false;
+  // When true, validate that JSON strings contain valid UTF-8 sequences.
+  // Disabled by default for backward compatibility. Use validate_utf8 option to enable.
+  bool         validate_utf8       = false;
 };
 
 struct JSONEncodeOpts {
@@ -73,6 +80,8 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts&
     else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
     else if (enif_is_identical(head, AM_COPY_STRINGS))     opts.copy_strings    = true;
     else if (enif_is_identical(head, AM_RETURN_TRAILER))   opts.return_trailer  = true;
+    else if (enif_is_identical(head, AM_VALIDATE_UTF8))       opts.validate_utf8   = true;
+    else if (enif_is_identical(head, AM_SKIP_UTF8_VALIDATION)) opts.validate_utf8   = false;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
@@ -340,6 +349,94 @@ struct JSONDecoder {
     return buf;
   }
 
+  // Optimized UTF-8 validation using SWAR and lookup tables
+  static bool is_valid_utf8(const char* s, size_t len)
+  {
+    const char* end = s + len;
+    const char* p = s;
+
+    // Fast path: scan for ASCII using SWAR (SIMD-within-a-register)
+    // Process 8 bytes at a time, checking for any byte with high bit set
+    while (p + 8 <= end) {
+      uint64_t chunk;
+      std::memcpy(&chunk, p, 8);
+      // If any byte has high bit set, we found non-ASCII
+      if (chunk & 0x8080808080808080ULL) break;
+      p += 8;
+    }
+
+    // Skip remaining ASCII bytes in scalar fashion
+    while (p < end && static_cast<unsigned char>(*p) < 0x80) ++p;
+
+    // Now handle non-ASCII bytes (the uncommon case) with lookup table
+    while (p < end) {
+      unsigned char c = static_cast<unsigned char>(*p++);
+
+      if (c < 0x80) continue; // ASCII (shouldn't happen due to fast path above)
+
+      // Lookup table for UTF-8 sequence validation
+      // Value meanings: 0=ASCII, 1=2-byte, 2=3-byte, 3=4-byte, 9=invalid
+      static constexpr unsigned char utf8_lookup[256] = {
+        // 0x00-0x7F: ASCII
+        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+        // 0x80-0xBF: continuation bytes (invalid as start)
+        9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9,
+        9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9,
+        // 0xC0-0xC1: overlong 2-byte sequences (invalid)
+        9,9,
+        // 0xC2-0xDF: valid 2-byte sequences
+        1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,
+        // 0xE0-0xEF: 3-byte sequences
+        2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2,
+        // 0xF0-0xF4: valid 4-byte sequences
+        3,3,3,3,3,
+        // 0xF5-0xFF: invalid (would encode > U+10FFFF)
+        9,9,9,9,9,9,9,9, 9,9,9
+      };
+
+      unsigned char seq_len = utf8_lookup[c];
+      if (seq_len == 9) return false; // Invalid start byte
+
+      // Check we have enough remaining bytes
+      if (p + seq_len > end) return false;
+
+      // Validate continuation bytes and check special cases
+      switch (seq_len) {
+        case 1: { // 2-byte sequence: C2-DF 80-BF
+          unsigned char c1 = static_cast<unsigned char>(*p++);
+          if ((c1 & 0xC0) != 0x80) return false;
+          break;
+        }
+        case 2: { // 3-byte sequence: E0-EF 80-BF 80-BF
+          unsigned char c1 = static_cast<unsigned char>(*p++);
+          unsigned char c2 = static_cast<unsigned char>(*p++);
+          if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80)) return false;
+
+          // Special validation for 3-byte sequences
+          if (c == 0xE0 && c1 < 0xA0) return false; // overlong: E0 80-9F
+          if (c == 0xED && c1 >= 0xA0) return false; // surrogate: ED A0-BF
+          break;
+        }
+        case 3: { // 4-byte sequence: F0-F4 80-BF 80-BF 80-BF
+          unsigned char c1 = static_cast<unsigned char>(*p++);
+          unsigned char c2 = static_cast<unsigned char>(*p++);
+          unsigned char c3 = static_cast<unsigned char>(*p++);
+          if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80) || ((c3 & 0xC0) != 0x80))
+            return false;
+
+          // Special validation for 4-byte sequences
+          if (c == 0xF0 && c1 < 0x90) return false; // overlong: F0 80-8F
+          if (c == 0xF4 && c1 >= 0x90) return false; // > U+10FFFF: F4 90-BF
+          break;
+        }
+      }
+    }
+    return true;
+  }
+
   // Make an Erlang binary from a JSON string span (handles escapes).
   // Default (copy_strings == false): unescaped strings are returned as
   // sub-binaries of the original input — zero allocation, but the input
@@ -348,20 +445,45 @@ struct JSONDecoder {
   // GC to reclaim the input buffer independently of the decoded results.
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (!has_escape) [[likely]]
+    if (!has_escape) [[likely]] {
+      // Validate UTF-8 if enabled
+      if (m_opts.validate_utf8 && !is_valid_utf8(s, len)) {
+        m_err = "invalid UTF-8 in JSON string";
+        return 0;
+      }
       return make_span_term(m_env, m_input_bin, m_beg, m_end, std::string_view(s, len), m_opts.copy_strings);
-    return make_binary(m_env, unescape(s, len, buf));
+    }
+
+    // For escaped strings, unescape first then validate the result
+    std::string_view unescaped = unescape(s, len, buf);
+    if (m_opts.validate_utf8 && !is_valid_utf8(unescaped.data(), unescaped.size())) {
+      m_err = "invalid UTF-8 in JSON string";
+      return 0;
+    }
+    return make_binary(m_env, unescaped);
   }
 
   // Make a key term (binary / atom / existing_atom).
   ERL_NIF_TERM make_key_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
+    // Get the unescaped string view for validation
+    std::string_view sv;
+    if (has_escape) {
+      sv = unescape(s, len, buf);
+    } else {
+      sv = std::string_view(s, len);
+    }
+
+    // Validate UTF-8 if enabled
+    if (m_opts.validate_utf8 && !is_valid_utf8(sv.data(), sv.size())) {
+      m_err = "invalid UTF-8 in JSON string";
+      return 0;
+    }
+
     if (m_opts.hdr_atom) {
-      std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       return enif_make_atom_len(m_env, sv.data(), sv.size());
     }
     if (m_opts.hdr_existing_atom) {
-      std::string_view sv = has_escape ? unescape(s, len, buf) : std::string_view(s, len);
       ERL_NIF_TERM t;
       // enif_make_existing_atom_len avoids the std::string copy the old code paid
       return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
@@ -374,11 +496,11 @@ struct JSONDecoder {
       uint32_t h = KeyCache::hash_of(s, len);
       if (ERL_NIF_TERM cached = m_key_cache.lookup(s, len, h))
         return cached;
-      auto term = make_binary(m_env, std::string_view(s, len));
+      auto term = make_binary(m_env, sv);
       m_key_cache.insert(s, len, h, term);
       return term;
     }
-    return make_string_term(s, len, has_escape, buf);
+    return make_binary(m_env, sv);
   }
 
   // ---- number parsing ----
@@ -541,6 +663,7 @@ struct JSONDecoder {
         if (!read_string_raw(ks, kl, ke)) [[unlikely]] return 0;
 
         auto key = make_key_term(ks, kl, ke, scratch);
+        if (!key) [[unlikely]] return 0;
         skip_ws();
 
         if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
@@ -584,6 +707,7 @@ struct JSONDecoder {
         [[unlikely]] return 0;
 
       auto key = make_key_term(kstr, klen, kesc, scratch);
+      if (!key) [[unlikely]] return 0;
       skip_ws();
 
       if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;

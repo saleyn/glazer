@@ -27,6 +27,8 @@ static ERL_NIF_TERM AM_NULL_TERM;
 static ERL_NIF_TERM AM_OBJECT_AS_TUPLE;
 static ERL_NIF_TERM AM_RETURN_TRAILER;
 static ERL_NIF_TERM AM_USE_NIL;
+static ERL_NIF_TERM AM_VALIDATE_UTF8;
+static ERL_NIF_TERM AM_SKIP_UTF8_VALIDATION;
 
 // Encode option atoms
 static ERL_NIF_TERM AM_PRETTY;
@@ -122,6 +124,8 @@ inline void init_atoms(ErlNifEnv* env)
   AM_DEDUPE_KEYS               = enif_make_atom(env, "dedupe_keys");
   AM_COPY_STRINGS              = enif_make_atom(env, "copy_strings");
   AM_RETURN_TRAILER            = enif_make_atom(env, "return_trailer");
+  AM_VALIDATE_UTF8             = enif_make_atom(env, "validate_utf8");
+  AM_SKIP_UTF8_VALIDATION      = enif_make_atom(env, "skip_utf8_validation");
   AM_HAS_TRAILER               = enif_make_atom(env, "has_trailer");
 
   AM_PRETTY                    = enif_make_atom(env, "pretty");
