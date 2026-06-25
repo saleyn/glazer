@@ -24,7 +24,7 @@ ERL_EI_INCLUDE   := $(shell erl -noshell -noinput \
 ERL_EI_LIB       := $(shell erl -noshell -noinput \
   -eval "io:format(\"~ts\",[code:lib_dir(erl_interface,lib)]),halt(0).")
 
-CXXFLAGS := -std=c++23 -fPIC -Wall -finline-functions -fvisibility=hidden \
+CXXFLAGS := -std=c++2b -fPIC -Wall -finline-functions -fvisibility=hidden \
             -I$(ERL_ERTS_INCLUDE) -I$(ERL_EI_INCLUDE) -I.
 
 # Detect compiler family for LTO flags.

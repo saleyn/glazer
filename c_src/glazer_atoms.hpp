@@ -3,6 +3,7 @@
 
 #include <erl_nif.h>
 #include <tuple>
+#include <cstring>
 
 namespace glz {
 
