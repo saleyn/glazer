@@ -141,6 +141,26 @@ encode_improper_list_test_() ->
     ?_assertError({encode_error, _}, glazer_json:encode([[1|2]]))
   ].
 
+%% UTF-8 encoding correctness — issue #10.
+%% NEON implementation had a bug causing byte swapping in certain UTF-8 strings
+%% when they cross SIMD chunk boundaries (e.g., 8 ASCII + 4x 2-byte UTF-8).
+encode_utf8_neon_issue_test_() ->
+  [
+    %% The specific case from issue #10: 8 ASCII chars + 4x 2-byte UTF-8 (Ɖ)
+    %% This triggers the SIMD boundary condition that caused byte swapping
+    ?_test(begin
+      %% Input: "12345678ƉƉƉƉ" (quoted)
+      Input = <<"\"12345678", 16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89, 16#C6, 16#89, "\"">>,
+      GlazerResult = glazer_json:encode(Input),
+      OTPResult = iolist_to_binary(json:encode(Input)),
+      %% Results should be identical - no byte swapping
+      ?assertEqual(OTPResult, GlazerResult),
+      %% Verify the UTF-8 bytes are in correct order (198,137 not 137,198)
+      %% Output format: "\"12345678ƉƉƉ\\ƉƉƉ"
+      ?assertMatch(<<34, 92, 34, 49, 50, 51, 52, 53, 54, 55, 56, 198, 137, 198, 137, 198, 137, 198, 137, 92, 34, 34>>, GlazerResult)
+    end)
+  ].
+
 pretty_test_() ->
   Compact = <<"[1,2,3]">>,
   Pretty = glazer_json:prettify(Compact),
