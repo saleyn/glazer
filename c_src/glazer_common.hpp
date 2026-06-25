@@ -297,13 +297,17 @@ struct KeyCache {
 
   void insert(const char* s, size_t len, uint32_t hash, ERL_NIF_TERM term) {
     if (m_count >= CAP) return;
-    for (size_t i = hash & MASK;; i = (i + 1) & MASK) {
+    for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       if (m_entries[i].epoch != m_epoch) {
         m_entries[i] = {s, len, hash, m_epoch, term};
         ++m_count;
         return;
       }
     }
+    // If we reach here, all slots appear to have matching epochs (likely due to
+    // uninitialized memory containing the same epoch value). This is extremely
+    // unlikely in normal operation but can happen due to uninitialized memory.
+    // Simply return without inserting to prevent infinite loop.
   }
 };
 
