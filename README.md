@@ -558,17 +558,34 @@ $ PARALLEL=2 make bench-json
 JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
             decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------------------------------------------
-glazer      2369.8   1053.4     2563.1   1807.0        5.2      3.7        3.8      2.1        0.9      0.7
-torque      3249.5   1191.1     2795.4   1865.7        5.9      4.6        3.5      3.4        1.2      1.0
-simdjsone   3158.1   2658.1     5070.6   5300.0        9.8     12.9        6.5      8.5        1.1      1.7
-jiffy       5648.8   1877.9     7186.2   3660.6       10.9      9.9        7.4      5.5        1.8      1.5
-jason       7821.5   7818.7    15858.5  14425.2       22.1     20.4       13.8     14.7        3.0      2.3
-json        8351.3   5291.7    11191.1   9945.7       17.9     13.5       10.3      7.8        2.1      1.9
-thoas       8997.9   7852.7    15110.9  15454.8       22.8     20.9       14.8     17.0        2.7      2.1
-euneus      8395.7   6192.9    11569.4  11719.4       21.2     15.8       10.9     11.2        2.6      2.1
+glazer      1645.4    700.1     1973.5   1304.0        2.9      2.2        2.3      1.5        0.5      0.6
+torque      2401.2    986.9     2288.8   1374.2        3.1      3.0        3.5      2.1        0.7      0.8
+simdjsone   2547.3   2023.3     3742.8   3494.8        6.5      9.2        4.7      5.3        1.0      1.5
+jiffy       3457.6   1300.3     4836.9   2010.8        8.0      7.6        4.6      3.7        1.9      1.4
+jason       5093.0   5043.0    10882.8   9718.9       22.2     14.6        7.4      9.8        2.0      1.7
+json        5544.3   4302.0     7138.3   7830.0       13.4     12.2        7.3      4.6        2.0      1.4
+thoas       6353.9   5433.7    10343.0  12817.7       22.9     13.2        9.8      9.7        1.9      1.6
+euneus      5697.4   4006.8     7430.4   7093.5       17.0     11.6        7.0      5.9        2.2      1.6
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
+
+To further illustrate performance of `glazer`, here's a benchmark comparison to
+some leading Golang libraries (the lower numbers the better):
+
+```sh
+$ test/bench-go/run.sh
+
+numbers in µs)
+GO-JSON           twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
+                  decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
+-------------------------------------------------------------------------------------------------------------------
+sonic             2301.0   1184.0     3812.0   1986.0       12.0      7.0        5.0      3.0        1.0      0.0
+goccy/go-json     3594.0   3103.0     5963.0   5490.0       19.0     13.0       11.0      7.0        2.0      1.0
+jsoniter          4029.0   1832.0     6655.0   3012.0       16.0     11.0        8.0      6.0        1.0      1.0
+jsony                n/a   3866.0        n/a   6913.0        n/a     15.0        n/a      9.0        n/a      1.0
+stdlib/json       6751.0   4048.0     8328.0   7894.0       19.0     16.0       12.0      8.0        2.0      2.0
+```
 
 ## [YAML](#table-of-contents)
 

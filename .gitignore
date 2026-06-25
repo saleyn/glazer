@@ -3,6 +3,7 @@
 /doc/
 /priv/
 /obj/
+/test/bench-go/bench
 erl_crash.dump
 rebar3.crashdump
 .perf.txt
