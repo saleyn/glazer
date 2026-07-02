@@ -1,4 +1,4 @@
-![Banner](https://github.com/saleyn/glazer/blob/main/assets/glazer.png?raw=true)
+![Banner](https://github.com/saleyn/glazer/blob/main/assets/glazer-banner.png?raw=true)
 
 [![build](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml/badge.svg)](https://github.com/saleyn/glazer/actions/workflows/erlang.yaml)
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
