@@ -115,8 +115,11 @@ inline ERL_NIF_TERM jq_query(ErlNifEnv* env, const ErlNifBinary& input,
     JVGuard text(jv_dump_string(result.release(), 0));
     std::string_view sv(jv_string_value(text.get()), jv_string_length_bytes(jv_copy(text.get())));
 
-    JSONDecoder dec(env, opts, sv.data(), sv.size());
-    auto [success, decoded] = dec.decode(sv.data(), sv.size());
+    auto [input_bin, p] = make_binary(env, sv.size());
+    memcpy(p, sv.data(), sv.size());
+
+    JSONDecoder dec(env, opts, reinterpret_cast<const char*>(p), sv.size(), input_bin);
+    auto [success, decoded] = dec.decode(reinterpret_cast<const char*>(p), sv.size());
 
     // jq's own JSON output should always be valid JSON; if re-decoding
     // ever fails, surface it rather than silently dropping the value.

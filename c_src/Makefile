@@ -46,13 +46,16 @@ endif
 # Optional jq support (glazer:json_query/2) — detected via a compile+link
 # probe since most distros don't ship a jq.pc pkg-config file. Falls back
 # to pkg-config first in case a future libjq release adds one.
+# Note: the hash must be kept in a variable so Make doesn't treat it as a
+# comment character when it expands the $(shell ...) line.
+HASH     := \#
 HAVE_JQ := $(shell pkg-config --exists jq 2>/dev/null && echo 1 || \
-  (printf '\#include <jq.h>\nint main(){jq_init();return 0;}\n' | \
+  (printf '$(HASH)include <jq.h>\nint main(){jq_init();return 0;}\n' | \
    $(CXX) -xc++ - -ljq -o /dev/null >/dev/null 2>&1 && echo 1 || echo 0))
 ifeq ($(HAVE_JQ),1)
   CXXFLAGS += -DGLAZER_HAVE_JQ
   LDFLAGS  += -ljq
-  $(info "==> Building glazer with jq support")
+  $(info ===> Building glazer with jq support)
 endif
 
 # Profile-Guided Optimisation (PGO) — lets the compiler use real branch
