@@ -396,14 +396,6 @@ def extract_bench_blocks(text):
 
 
 def replace_bench_table(readme_text, fmt, new_table):
-    """
-    Replace the (numbers in µs) table inside the fenced block that follows
-    '### Benchmarking {fmt}' in readme_text.  Everything before the table
-    marker (the shell-command preamble) is preserved.
-
-    Returns (new_text, replaced) where `replaced` is False (and `new_text`
-    is unchanged) if the heading or table couldn't be located.
-    """
     heading = f"### Benchmarking {fmt}"
     hi = find_heading(readme_text, heading)
     if hi == -1:
@@ -421,10 +413,12 @@ def replace_bench_table(readme_text, fmt, new_table):
               file=sys.stderr)
         return readme_text, False
 
-    new_block = block[:table_idx] + new_table
+    # ⭐ NEW: strip trailing whitespace from every line
+    cleaned_table = "\n".join(line.rstrip() for line in new_table.splitlines())
+
+    new_block = block[:table_idx] + cleaned_table
     new_text = readme_text[:fence_open] + new_block + readme_text[fence_close:]
     return new_text, True
-
 
 def main():
     args = list(sys.argv[1:])

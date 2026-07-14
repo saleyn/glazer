@@ -28,7 +28,7 @@ defmodule Glazer.MixProject do
     [
       {:simdjsone,           "~> 0.5",    only: :bench},
       {:jason,               "~> 1.4",    only: :bench},
-      {:jiffy,               "~> 2.0",    only: :bench},
+      {:jiffy,               "~> 2.0.2",  only: :bench},
       {:thoas,               "~> 1.2",    only: :bench},
       {:euneus,              "~> 2.0",    only: :bench},
       {:torque,              "~> 0.2.1",  only: :bench},
