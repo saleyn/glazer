@@ -889,3 +889,40 @@ iolist_subbinary_safety_test_() ->
       ?assertEqual(#{<<"a">> => <<"esc\"aped">>, <<"b">> => <<"plain">>}, Result)
     end)
   ].
+
+%% ============================================================================
+%% NDJSON encoding tests
+%% ============================================================================
+
+json_encode_ndjson_test_() ->
+  [
+    %% Empty list
+    ?_assertEqual(<<>>, glazer_json:encode_ndjson([])),
+
+    %% Single item
+    ?_assertEqual(<<"1\n">>, glazer_json:encode_ndjson([1])),
+
+    %% Multiple items
+    ?_assertEqual(<<"1\n2\n3\n">>, glazer_json:encode_ndjson([1, 2, 3])),
+
+    %% Objects
+    ?_assertEqual(<<"{\"id\":1}\n{\"id\":2}\n">>,
+                  glazer_json:encode_ndjson([#{<<"id">> => 1}, #{<<"id">> => 2}])),
+
+    %% Mixed types
+    ?_assertEqual(<<"1\n\"hello\"\ntrue\nnull\n3.14\n">>,
+                  glazer_json:encode_ndjson([1, <<"hello">>, true, null, 3.14])),
+
+    %% With uescape option
+    ?_assertEqual(<<"\"caf\\u00e9\"\n">>,
+                  glazer_json:encode_ndjson([<<"café"/utf8>>], [uescape])),
+
+    %% Large list
+    ?_test(begin
+      Items = lists:seq(1, 100),
+      Result = glazer_json:encode_ndjson(Items),
+      Lines = binary:split(Result, <<"\n">>, [global]),
+      % Should have 100 numbers + 1 empty string at end = 101
+      ?assertEqual(101, length(Lines))
+    end)
+  ].

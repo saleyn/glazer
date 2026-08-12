@@ -28,7 +28,8 @@ config :glazer, null: nil
 -export([json_try_decode/1, json_try_decode/2,
          yaml_try_decode/1, yaml_try_decode/2, yaml_encode/1, yaml_encode/2,
          csv_try_decode/1, csv_try_decode/2, csv_encode/1, csv_encode/2,
-         json_encode/1, json_encode/2, json_minify/1, json_prettify/1,
+         json_encode/1, json_encode/2, json_encode_ndjson/1, json_encode_ndjson/2,
+         json_minify/1, json_prettify/1,
          json_query/2, json_query/3, json_scan/1, json_scan/2,
          format_error/2]).
 
@@ -103,6 +104,14 @@ json_encode(_Data) ->
 
 -doc false.
 json_encode(_Data, _Opts) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+json_encode_ndjson(_List) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+json_encode_ndjson(_List, _Opts) ->
   ?NOT_LOADED_ERROR.
 
 -doc false.

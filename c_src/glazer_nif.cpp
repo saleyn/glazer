@@ -301,6 +301,79 @@ static ERL_NIF_TERM nif_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 }
 
 //-----------------------------------------------------------------------------
+// NIF: json_encode_ndjson — encode a list of terms as newline-delimited JSON
+//-----------------------------------------------------------------------------
+
+static ERL_NIF_TERM do_json_encode_ndjson(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (!enif_is_list(env, argv[0])) [[unlikely]]
+    return enif_make_badarg(env);
+
+  JSONEncodeOpts opts;
+  opts.null_term = am_null;
+  if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts))) [[unlikely]]
+    return enif_make_badarg(env);
+
+  OutBuf out;
+  ERL_NIF_TERM head;
+  ERL_NIF_TERM list = argv[0];
+
+  // Iterate through the list and encode each element, appending \n after each
+  while (enif_get_list_cell(env, list, &head, &list)) {
+    JSONEncoder enc{env, opts, out};
+    if (!enc.encode(head)) [[unlikely]]
+      return enif_raise_exception(env,
+        enif_make_tuple2(env, AM_ENCODE_ERROR,
+          enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+    out.push('\n');
+  }
+
+  // Check for proper list termination (should end with empty list)
+  if (!enif_is_empty_list(env, list)) [[unlikely]]
+    return enif_make_badarg(env);
+
+  // Note: pretty printing is not applied to NDJSON since each line is
+  // an independent JSON value. The 'pretty' option affects how each
+  // individual value is encoded, not the line formatting.
+  update_reduction_count(env, out.view().size());
+  return make_binary(env, out.view());
+}
+
+static ERL_NIF_TERM nif_json_encode_ndjson_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  return do_json_encode_ndjson(env, argc, argv);
+}
+
+static ERL_NIF_TERM nif_json_encode_ndjson(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  if (argc < 1 || argc > 2) [[unlikely]]
+    return enif_make_badarg(env);
+
+  // Estimate the output size by scanning the list to decide whether to use
+  // the dirty scheduler. We traverse the list and count items; if we estimate
+  // the output will exceed DIRTY_THRESHOLD, schedule on a dirty CPU scheduler.
+  ERL_NIF_TERM list = argv[0];
+  ERL_NIF_TERM head;
+  size_t item_count = 0;
+  const size_t MAX_INLINE_ITEMS = DIRTY_THRESHOLD / 10; // Conservative estimate: ~10 bytes per JSON value
+
+  // Quick scan: count items up to a threshold.
+  // If list has more items than our limit, there's significant work to do.
+  while (enif_get_list_cell(env, list, &head, &list) && item_count < MAX_INLINE_ITEMS)
+    item_count++;
+
+  // If we hit the item limit and there are still more items to process,
+  // schedule on dirty scheduler to avoid blocking the normal scheduler threads.
+  if (item_count >= MAX_INLINE_ITEMS && !enif_is_empty_list(env, list)) [[unlikely]] {
+    ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
+    return enif_schedule_nif(env, "glazer_json_encode_ndjson", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                             nif_json_encode_ndjson_dirty, 2, sched_argv);
+  }
+
+  return do_json_encode_ndjson(env, argc, argv);
+}
+
+//-----------------------------------------------------------------------------
 // NIF: yaml_encode
 //-----------------------------------------------------------------------------
 
@@ -718,6 +791,8 @@ static ErlNifFunc nif_funcs[] = {
   {"json_scan",          2, nif_json_scan,          0},
   {"json_encode",        1, nif_json_encode,        0},
   {"json_encode",        2, nif_json_encode,        0},
+  {"json_encode_ndjson", 1, nif_json_encode_ndjson, 0},
+  {"json_encode_ndjson", 2, nif_json_encode_ndjson, 0},
   {"yaml_encode",        1, nif_yaml_encode,        0},
   {"yaml_encode",        2, nif_yaml_encode,        0},
   {"csv_encode",         1, nif_csv_encode,         0},

@@ -24,7 +24,7 @@ application-wide, set the `null` env key in your config:
   with `libjq` available)
 """.
 -export([decode/1, decode/2, try_decode/1, try_decode/2,
-         encode/1, encode/2, minify/1, prettify/1,
+         encode/1, encode/2, encode_ndjson/1, encode_ndjson/2, minify/1, prettify/1,
          query/2, query/3,
          scan/1, scan/2,
          read_file/1, read_file/2, write_file/2, write_file/3,
@@ -311,6 +311,54 @@ cannot be represented as JSON.
 -spec encode(term(), encode_opts()) -> binary().
 encode(Data, Opts) ->
   glazer:json_encode(Data, Opts).
+
+-doc """
+Encode a list of Erlang terms to newline-delimited JSON (NDJSON), with one
+JSON value per line. Each value is encoded separately and followed by a newline.
+
+NDJSON is a common interchange format where every line is an independent,
+complete JSON value, allowing readers to consume the stream one line at a time.
+
+Raises `{encode_error, {Msg, Term}}` if any value in the list contains a value
+that cannot be represented as JSON (e.g. an improper list, a pid, or an
+unsupported tuple).
+
+## Examples
+
+```erlang
+1> glazer_json:encode_ndjson([#{<<"id">> => 1}, #{<<"id">> => 2}]).
+<<"{\"id\":1}\n{\"id\":2}\n">>
+
+2> glazer_json:encode_ndjson([]).
+<<>>
+
+3> glazer_json:encode_ndjson([1, <<"hello">>, true], [uescape]).
+<<"1\n\"hello\"\ntrue\n">>
+```
+""".
+-spec encode_ndjson([term()]) -> binary().
+encode_ndjson(List) ->
+  glazer:json_encode_ndjson(List).
+
+-doc """
+Encode a list of Erlang terms to newline-delimited JSON (NDJSON) with options
+(see `t:encode_opts/0`).
+
+## Examples
+
+```erlang
+%% With force_utf8 option
+1> glazer_json:encode_ndjson([<<"héllo"/utf8>>], [force_utf8]).
+<<"\"héllo\"\n"/utf8>>
+
+%% With uescape option
+2> glazer_json:encode_ndjson([<<"café"/utf8>>], [uescape]).
+<<"\"caf\\u00e9\"\n">>
+```
+""".
+-spec encode_ndjson([term()], encode_opts()) -> binary().
+encode_ndjson(List, Opts) ->
+  glazer:json_encode_ndjson(List, Opts).
 
 -doc """
 Encode an Erlang term to a JSON binary. Equivalent to `encode/1`, provided
