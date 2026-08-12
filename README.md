@@ -69,6 +69,7 @@ formats.
 - Decoding straight to Erlang terms: maps, lists, binaries, integers
   (including bignums), floats, booleans, and `null`
 - Encoding Erlang terms straight to JSON, including big integers
+- Encoding a list of Erlang terms to newline-delimited JSON
 - Incremental/streaming decoding of partial input (e.g. NDJSON over a
   socket) via `stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1`
 - Configurable representation of JSON `null` and JSON object keys
@@ -103,7 +104,7 @@ formats.
 
 ```erlang
 {deps, [
-  {glazer, "~> 0.5"}
+  {glazer, "~> 1.0"}
 ]}.
 ```
 
@@ -112,7 +113,7 @@ formats.
 ```elixir
 def deps do
   [
-    {:glazer, "~> 0.5", manager: :rebar3}
+    {:glazer, "~> 1.0", manager: :rebar3}
   ]
 end
 ```
