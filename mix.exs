@@ -70,7 +70,7 @@ defmodule Glazer.MixProject do
       {:ymlr,                "~> 5.1",    only: :bench},
       {:csv,                 "~> 3.2",    only: :bench},
       {:nimble_csv,          "~> 1.3",    only: :bench},
-      {:erl_csv,             "~> 0.5.0",  only: :bench},
+      {:erl_csv,             "~> 0.6.0",  only: :bench},
       {:yaml_rustler,        "~> 0.1.6",  only: :bench},
       {:rusty_csv,           "~> 0.4.6",  only: :bench},
       {:rustler,             "~> 0.38",   only: :bench, override: true, runtime: false},
