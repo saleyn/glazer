@@ -55,7 +55,7 @@ custom Elixir protocol on top of Glazer's Erlang encoding functions.
 -type decode_opt() ::
     object_as_tuple
   | use_nil
-  | {null_term, atom()}
+  | {null_term | null, atom()}
   | {keys, atom | existing_atom | binary}
   | dedupe_keys
   | copy_strings
@@ -68,7 +68,8 @@ Decode options:
 
 - `object_as_tuple`       - decode JSON objects as `{[{K, V}]}` proplists rather than maps
 - `use_nil`               - use the atom `nil` for JSON null
-- `{null_term, Atom}`     - use `Atom` for JSON null
+- `{null, atom()}`        - use `Atom` for JSON null
+- `{null_term, atom()}`   - same as `{null, atom()}`, (**DEPRECATED**)
 - `{keys, atom}`          - decode object keys as atoms
 - `{keys, existing_atom}` - decode keys as existing atoms, fall back to binary
 - `{keys, binary}`        - decode keys as binaries (default)
@@ -111,14 +112,14 @@ Decode options:
   | force_utf8
   | escape_fwd_slash
   | use_nil
-  | {null_term, atom()}.
+  | {null_term | null, atom()}.
 
 -doc """
 Encode options:
 
-- `pretty`            - pretty-print the JSON output
-- `uescape`           - escape non-ASCII characters as \\uXXXX sequences
-- `force_utf8`        - replace invalid UTF-8 byte sequences with the
+- `pretty`              - pretty-print the JSON output
+- `uescape`             - escape non-ASCII characters as \\uXXXX sequences
+- `force_utf8`          - replace invalid UTF-8 byte sequences with the
   Unicode replacement character (U+FFFD) before encoding. Without this
   option, invalid bytes in binaries are copied into the output verbatim,
   which can produce a result that is not valid UTF-8/JSON. A pre-existing
@@ -126,10 +127,11 @@ Encode options:
   combined with `uescape`, the replacement character is further escaped to
   `\\ufffd`. This is an *encode*-only option: for UTF-8 validation during
   decoding, use `validate_utf8` in decode options (disabled by default)
-- `escape_fwd_slash`  - escape forward slashes (`/`) as `\\/` in JSON strings,
+- `escape_fwd_slash`    - escape forward slashes (`/`) as `\\/` in JSON strings,
   which is valid per RFC 8259 §7. By default, forward slashes are not escaped
-- `use_nil`           - encode the atom `nil` as JSON `null`
-- `{null_term, Atom}` - encode `Atom` as JSON `null`
+- `use_nil`             - encode the atom `nil` as JSON `null`
+- `{null, atom()}`      - encode `Atom` as JSON null
+- `{null_term, atom()}` - same as `{null, atom()}`, (**DEPRECATED**)
 """.
 -type encode_opts() :: [encode_opt()].
 
@@ -912,7 +914,8 @@ The `Decoders` parameter is accepted for API compatibility with `json` module, h
 it's primarily used for passing decoder options — custom decoder callbacks are silently
 ignored and results always follow glazer's standard decoding. Pass an empty map `#{}`
 or empty list `[]` for compatibility with `json:decode_start/3`. If passed a map, the
-implementation is expecting the `opts` key to contain decoder options list value.
+implementation converts it to a list, and only `{null: atom()}` value is
+meaningful.
 
 The `Acc` parameter is a user-provided accumulator that is returned unchanged
 in the result, useful for passing context through the streaming parse.
@@ -1085,10 +1088,7 @@ decode_continue(_Input, _State) ->
 normalize_decoders(List) when is_list(List) ->
   List;
 normalize_decoders(Map) when is_map(Map) ->
-  case maps:get(opts, Map, undefined) of
-    undefined               -> maps:to_list(Map);
-    Opts when is_list(Opts) -> Opts
-  end.
+  maps:to_list(Map).
 
 %% Core implementation: Parse exactly one JSON value from buffer
 %% Returns either a complete value or a continuation state

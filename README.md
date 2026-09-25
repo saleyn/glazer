@@ -166,7 +166,7 @@ iex> :glazer_json.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
-Use the `use_nil`/`{null_term, nil}` option (see
+Use the `use_nil`/`{null, nil}` option (see
 [Null term configuration](#null-term-configuration) below) to get idiomatic
 Elixir `nil` instead of the atom `:null`.
 
@@ -351,7 +351,7 @@ overridden:
   config :glazer, null: nil
   ```
 
-- Per call, with the `use_nil` shorthand or the `{null_term, Atom}`
+- Per call, with the `use_nil` shorthand or the `{null, Atom}`
   option (see [Decode options](#decode-options-glazer_jsondecode2) below).
   Per-call options always take precedence over the application-wide
   default.
@@ -362,7 +362,7 @@ overridden:
 |---|---|
 | `object_as_tuple` | Decode JSON objects as `{[{Key, Value}]}` proplist tuples (jiffy-style) instead of maps (default) |
 | `use_nil` | Use the atom `nil` for JSON `null` |
-| `{null_term, Atom}` | Use `Atom` for JSON `null` |
+| `{null, Atom}` | Use `Atom` for JSON `null` |
 | `{keys, atom}` | Decode object keys as atoms (via `binary_to_atom/2`-equivalent) |
 | `{keys, existing_atom}` | Decode object keys as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | Decode object keys as binaries (default) |
@@ -380,7 +380,7 @@ overridden:
 3> glazer_json:decode(<<"null">>, [use_nil]).
 nil
 
-4> glazer_json:decode(<<"null">>, [{null_term, undefined}]).
+4> glazer_json:decode(<<"null">>, [{null, undefined}]).
 undefined
 
 5> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>).
@@ -411,7 +411,7 @@ undefined
 | `uescape` | Escape non-ASCII characters as `\uXXXX` sequences |
 | `force_utf8` | Replace invalid UTF-8 byte sequences with U+FFFD before encoding |
 | `use_nil` | Encode the atom `nil` as JSON `null` |
-| `{null_term, Atom}` | Encode `Atom` as JSON `null` |
+| `{null, Atom}` | Encode `Atom` as JSON `null` |
 
 ```erlang
 1> glazer_json:encode(#{a => 1}, [pretty]).
@@ -706,7 +706,7 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 | Option | Description |
 |---|---|
 | `use_nil` | Use the atom `nil` for YAML `null`/`~`/empty values |
-| `{null_term, Atom}` | Use `Atom` for YAML `null`/`~`/empty values |
+| `{null, Atom}` | Use `Atom` for YAML `null`/`~`/empty values |
 | `{keys, atom}` | Decode mapping keys as atoms |
 | `{keys, existing_atom}` | Decode mapping keys as existing atoms, falling back to binaries for unknown atoms |
 | `{keys, binary}` | Decode mapping keys as binaries (default) |
@@ -729,7 +729,7 @@ JSON's bracket-balanced syntax. Decode full YAML documents with
 | Option | Description |
 |---|---|
 | `use_nil` | Treat the atom `nil` as YAML `null` |
-| `{null_term, Atom}` | Treat `Atom` as YAML `null` |
+| `{null, Atom}` | Treat `Atom` as YAML `null` |
 
 ```erlang
 1> glazer_yaml:encode(#{<<"a">> => nil}, [use_nil]).
@@ -866,7 +866,7 @@ skipped, matching `decode/2`.
 | `{skip, N}` | Skip the first `N` data rows (after any header row) |
 | `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
 | `{limit, N}` | Process at most `N` data rows (after skipping) |
-| `{null_term, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
+| `{null, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
 | `copy_strings` | Always allocate a fresh binary for each decoded field, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
 
 ### [Field type conversion](#table-of-contents)
@@ -919,7 +919,7 @@ Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
   | `binary` | Leave the field as the original binary (default) |
   | `raise` | Raise `{invalid_field_value, Row, Column}` (1-based), or return `{error, Reason}` from `try_decode/2` |
   | `default` | Use the spec's `default` value (falls back to `binary` if no `default` is given) |
-  | `null` | Use the configured null term: `{null_term, Atom}` if given, otherwise the library-wide null term (see [Null term configuration](#null-term-configuration) and `{null_term, Atom}` below) |
+  | `null` | Use the configured null term: `{null, Atom}` if given, otherwise the library-wide null term (see [Null term configuration](#null-term-configuration) and `{null, Atom}` below) |
 
 ```erlang
 1> glazer_csv:decode(<<"1\nbad\n">>,
@@ -931,12 +931,12 @@ Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
 [[1],[0]]
 
 3> glazer_csv:decode(<<"1\nbad\n">>,
-..                    [{null_term, nil},
+..                    [{null, nil},
 ..                     {fields, [#{type => integer, on_failure => null}]}]).
 [[1],[nil]]
 ```
 
-`{null_term, Atom}` only affects `on_failure => null` for that call. Without
+`{null, Atom}` only affects `on_failure => null` for that call. Without
 it, `on_failure => null` falls back to the library-wide null term — `null`
 by default, or whatever atom is configured via the
 [Null term configuration](#null-term-configuration)

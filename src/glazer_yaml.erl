@@ -36,7 +36,7 @@ See also [https://github.com/stephenberry/glaze]
 
 -type decode_opt() ::
     use_nil
-  | {null_term, atom()}
+  | {null | null_term, atom()}
   | {keys, atom | existing_atom | binary}
   | yaml_1_1_bools
   | copy_strings.
@@ -44,15 +44,16 @@ See also [https://github.com/stephenberry/glaze]
 -doc """
 YAML decode options:
 
-- `use_nil`             - use the atom `nil` for YAML `null`/`~`/empty values
-- `{null_term, Atom}`   - use `Atom` for YAML `null`/`~`/empty values
-- `{keys, atom}`        - decode mapping keys as atoms
+- `use_nil`               - use the atom `nil` for YAML `null`/`~`/empty values
+- `{null, Atom}`          - use `Atom` for YAML `null`/`~`/empty values
+- `{null_term, Atom}`     - same as `{null, Atom}` (**DEPRECATED**)
+- `{keys, atom}`          - decode mapping keys as atoms
 - `{keys, existing_atom}` - decode mapping keys as existing atoms, fall back to binary
-- `{keys, binary}`      - decode mapping keys as binaries (default)
-- `yaml_1_1_bools`      - additionally treat `yes`/`no`/`on`/`off` (and case
+- `{keys, binary}`        - decode mapping keys as binaries (default)
+- `yaml_1_1_bools`        - additionally treat `yes`/`no`/`on`/`off` (and case
   variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2
   core schema) only `true`/`false` are recognized as booleans.
-- `copy_strings`        - always allocate a fresh binary for each decoded
+- `copy_strings`          - always allocate a fresh binary for each decoded
   scalar, rather than returning a sub-binary that references the original
   input. By default (without this option) single-line plain scalars are
   zero-copy sub-binaries of the input, which is faster but keeps the entire
@@ -65,13 +66,14 @@ YAML decode options:
 
 -type encode_opt() ::
     use_nil
-  | {null_term, atom()}.
+  | {null | null_term, atom()}.
 
 -doc """
 YAML encode options:
 
 - `use_nil`           - treat the atom `nil` as YAML `null`
-- `{null_term, Atom}` - treat `Atom` as YAML `null`
+- `{null, Atom}`      - treat `Atom` as YAML `null`
+- `{null_term, Atom}` - same as `{null, Atom}` (**DEPRECATED**)
 """.
 -type encode_opts() :: [encode_opt()].
 

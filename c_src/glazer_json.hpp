@@ -75,22 +75,24 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts&
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_OBJECT_AS_TUPLE))  opts.object_as_tuple = true;
-    else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term       = AM_NIL;
-    else if (enif_is_identical(head, AM_DEDUPE_KEYS))      opts.dedupe_keys     = true;
-    else if (enif_is_identical(head, AM_COPY_STRINGS))     opts.copy_strings    = true;
-    else if (enif_is_identical(head, AM_RETURN_TRAILER))   opts.return_trailer  = true;
-    else if (enif_is_identical(head, AM_VALIDATE_UTF8))       opts.validate_utf8   = true;
+    if      (enif_is_identical(head, AM_OBJECT_AS_TUPLE))      opts.object_as_tuple = true;
+    else if (enif_is_identical(head, AM_USE_NIL))              opts.null_term       = AM_NIL;
+    else if (enif_is_identical(head, AM_DEDUPE_KEYS))          opts.dedupe_keys     = true;
+    else if (enif_is_identical(head, AM_COPY_STRINGS))         opts.copy_strings    = true;
+    else if (enif_is_identical(head, AM_RETURN_TRAILER))       opts.return_trailer  = true;
+    else if (enif_is_identical(head, AM_VALIDATE_UTF8))        opts.validate_utf8   = true;
     else if (enif_is_identical(head, AM_SKIP_UTF8_VALIDATION)) opts.validate_utf8   = false;
     else {
       int arity; const ERL_NIF_TERM* tp;
       if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
-        if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
-          opts.null_term = tp[1];
-        else if (enif_is_identical(tp[0], AM_KEYS) || enif_is_identical(tp[0], AM_ATOM)) {
-          if      (enif_is_identical(tp[1], AM_ATOM))          opts.hdr_atom = true;
-          else if (enif_is_identical(tp[1], AM_EXISTING_ATOM)) opts.hdr_existing_atom = true;
-          else if (enif_is_identical(tp[1], AM_LABEL_BINARY))        { opts.hdr_atom = false; opts.hdr_existing_atom = false; }
+        const ERL_NIF_TERM opt = tp[0], val = tp[1];
+        if ((enif_is_identical(opt, AM_NULL_TERM) ||
+             enif_is_identical(opt, AM_NULL)) && enif_is_atom(env, val))
+          opts.null_term = val;
+        else if (enif_is_identical(opt, AM_KEYS) || enif_is_identical(opt, AM_ATOM)) {
+          if      (enif_is_identical(val, AM_ATOM))           opts.hdr_atom = true;
+          else if (enif_is_identical(val, AM_EXISTING_ATOM))  opts.hdr_existing_atom = true;
+          else if (enif_is_identical(val, AM_LABEL_BINARY)) { opts.hdr_atom = false; opts.hdr_existing_atom = false; }
         }
       }
     }
@@ -102,16 +104,19 @@ static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONEncodeOpts&
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
-    if      (enif_is_identical(head, AM_PRETTY))          opts.pretty           = true;
-    else if (enif_is_identical(head, AM_USE_NIL))         opts.null_term        = AM_NIL;
-    else if (enif_is_identical(head, AM_UESCAPE))         opts.uescape          = true;
-    else if (enif_is_identical(head, AM_FORCE_UTF8))      opts.force_utf8       = true;
+    if      (enif_is_identical(head, AM_PRETTY))           opts.pretty           = true;
+    else if (enif_is_identical(head, AM_USE_NIL))          opts.null_term        = AM_NIL;
+    else if (enif_is_identical(head, AM_UESCAPE))          opts.uescape          = true;
+    else if (enif_is_identical(head, AM_FORCE_UTF8))       opts.force_utf8       = true;
     else if (enif_is_identical(head, AM_ESCAPE_FWD_SLASH)) opts.escape_fwd_slash = true;
     else {
       int arity; const ERL_NIF_TERM* tp;
-      if (enif_get_tuple(env, head, &arity, &tp) && arity == 2)
-        if (enif_is_identical(tp[0], AM_NULL_TERM) && enif_is_atom(env, tp[1]))
-          opts.null_term = tp[1];
+      if (enif_get_tuple(env, head, &arity, &tp) && arity == 2) {
+        const ERL_NIF_TERM opt = tp[0], val = tp[1];
+        if ((enif_is_identical(opt, AM_NULL_TERM) ||
+             enif_is_identical(opt, AM_NULL)) && enif_is_atom(env, val))
+          opts.null_term = val;
+      }
     }
   }
   return true;

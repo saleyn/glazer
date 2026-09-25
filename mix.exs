@@ -124,7 +124,7 @@ defmodule Glazer.MixProject do
         "LICENSE":    %{title: "License"},
         "RELEASE.md": %{title: "Release"}
       ],
-      main:          "README.md",
+      main:          "readme",
       source_url:    "https://github.com/saleyn/glazer",
       #assets:        %{assets: "assets/"},
       groups_for_extras: [
