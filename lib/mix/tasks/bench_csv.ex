@@ -95,7 +95,7 @@ defmodule Mix.Tasks.BenchCsv do
 
       {"erl_csv",
        fn b ->
-         case :erl_csv.decode(b) do
+         case :erl_csv.decode(b, %{delimiter: "\r\n"}) do
            {:ok, rows}              -> rows
            {:has_trailer, rows, _t} -> rows
          end
