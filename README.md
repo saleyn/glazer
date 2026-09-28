@@ -35,6 +35,9 @@ formats.
   - [JSON encode options](#json-encode-options)
   - [jq filter support](#jq-filter-support)
   - [Elixir Protocol Support](#elixir-protocol-support)
+    - [Using with `Jason.Encoder`](#using-with-jasonencoder)
+    - [Why this works](#why-this-works)
+    - [API functions for protocol implementations](#api-functions-for-protocol-implementations)
   - [Elixir's Phoenix `json_library()` compliance](#elixirs-phoenix-json_library-compliance)
   - [API](#api)
   - [Benchmarking JSON](#benchmarking-json)
@@ -72,7 +75,7 @@ formats.
 - Encoding Erlang terms straight to JSON, including big integers
 - Encoding a list of Erlang terms to newline-delimited JSON
 - Incremental/streaming decoding of partial input (e.g. NDJSON over a
-  socket) via `stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1`
+  socket) via `decode_start/3`, `decode_continue/2`
 - Configurable representation of JSON `null` and JSON object keys
 - `minify/1` and `prettify/1` helpers
 - Standalone big-integer encode/decode helpers
@@ -96,8 +99,8 @@ formats.
 
 - RFC 4180 CSV encoding/decoding via `decode/1,2` and `encode/1,2`,
   with optional header-row support
-- Incremental/streaming CSV decoding via `stream_decoder/0,1`,
-  `stream_feed/2`, `stream_eof/1`
+- Incremental/streaming CSV decoding via `decode_start/3`,
+  `decode_continue/2`
 
 ## [Installation](#table-of-contents)
 
@@ -235,64 +238,55 @@ Benchmarking data tables:
 
 For input that arrives in chunks — e.g. reading a large document
 incrementally, or consuming newline-delimited JSON (NDJSON) from a
-socket or file — `stream_decoder/0,1` provides a small stateful
+socket or file — `decode_start/3` provides a small stateful
 wrapper that buffers partial input and decodes each JSON value as soon
-as it's complete, without re-parsing bytes you've already seen:
-
-```erlang
-1> D0 = glazer_json:stream_decoder(),
-2> {Vals1, D1} = glazer_json:stream_feed(D0, <<"{\"a\":1} {\"b\":">>),
-3> Vals1.
-[#{<<"a">> => 1}]
-
-4> {Vals2, D2} = glazer_json:stream_feed(D1, <<"2}">>),
-5> Vals2.
-[#{<<"b">> => 2}]
-
-6> glazer_json:stream_eof(D2).
-{ok, []}
-```
-
-`stream_feed/2` returns the list of values completed by the chunk just
-fed (possibly empty, possibly more than one if the chunk completes
-several values) along with the updated decoder state to pass to the
-next call. Once the input is exhausted, call `stream_eof/1` to flush
+as it's complete, without re-parsing bytes you've already seen.
+`decode_continue/2` returns `{Value, Acc, Rest::binary()}` if a `Value` is
+complete and parsed, or `{continue, State}` if the value cannot be parsed given
+the available data. Once the input is exhausted, call `stream_eof/1` to flush
 any trailing bare scalar (numbers, strings, etc. have no closing
 delimiter of their own) and surface an error if the buffer holds an
 incomplete value:
 
+
+
 ```erlang
-1> D0 = glazer_json:stream_decoder(),
-2> {[], D1} = glazer_json:stream_feed(D0, <<"   42">>),
-3> glazer_json:stream_eof(D1).
-{ok, [42]}
+1> {continue, State} = glazer_json:decode_start(~"{\"a\":", ok, []).
+2> {#{~"a" := 1}, ok, NextBin = ~"[2]"} = glazer_json:decode_continue(<<"1}[2]">>, State).
+3> {[2], ok, ~""} = glazer_json:decode_start(NextBin, ok, []).
 ```
 
-`stream_decoder/1` accepts the same options as `decode/2` (e.g.
+`glazer_json:decode_start/3` accepts the same options as `decode/2` (e.g.
 `{keys, atom}`, `use_nil`) and applies them to every decoded value.
 
-A typical read loop calls `stream_feed/2` for each chunk while more data
-may still arrive, and `stream_eof/1` once the socket closes to flush any
+A typical read loop calls `decode_start/3` for each chunk while more data
+may still arrive, and `decode_continue/2` once the socket closes to flush any
 trailing value:
 
 ```erlang
-loop(Socket, D0) ->
-  case gen_tcp:recv(Socket, 0) of
+-spec recv_json(inet:socket(), list()) -> {ok, term(), binary()} | {error, term()}.
+recv_json(Socket, Opts) ->
+  loop(Socket, undefined, Opts).
+
+loop(Socket, State, Opts) ->
+  case gen_tcp:recv(Socket, 0) ->
     {ok, Chunk} ->
-      {Vals, D1} = glazer_json:stream_feed(D0, Chunk),
-      handle_values(Vals),
-      loop(Socket, D1);
-    {error, closed} ->
-      case glazer_json:stream_eof(D0) of
-        {ok, Trailing}  -> handle_values(Trailing);
-        {error, Reason} -> handle_truncated_stream(Reason)
-      end
+      case next_json(Chunk, State, Opts) of
+        {Value, nil, Rest}   -> {ok, Value, Rest};
+        {continue, NewState} -> loop(Socket, NewState, Opts)
+      end;
+    {error, Reason} ->
+        {error, Reason}
   end.
+
+next_json(Chunk, undefined, Opts) -> glazer_json:decode_start(Chunk, nil, Opts);
+next_json(Chunk, State,    _Opts) -> glazer_json:decode_continue(Chunk, State).
+
 ```
 
 #### [Efficiency](#table-of-contents)
 
-`stream_feed/2` only scans for value *boundaries* incrementally —
+`decode_start/3` only scans for value *boundaries* incrementally —
 the scanner carries a small resumable cursor (`scan_state()`) that
 remembers how far it has already looked (nesting depth, whether it's
 inside a string, escape state, …), so each call to `scan/2` resumes
@@ -304,13 +298,13 @@ representation, and no byte is ever scanned or decoded twice. The only
 buffering cost is concatenating newly-arrived chunks onto the
 not-yet-complete tail of the input.
 
-This makes `stream_feed/2` well suited to byte-at-a-time or
+This makes `decode_start/3` well suited to byte-at-a-time or
 small-chunk feeding (e.g. consuming a `gen_tcp`/`gen_statem` socket
 buffer as it fills) without the quadratic-rescan cost a naive
 "concatenate and retry full decode" loop would incur on large or
 slow-arriving documents.
 
-Under the hood, `stream_feed/2` is built on `scan/1,2` — a low-level
+Under the hood, `decode_start/3` is built on `scan/1,2` — a low-level
 primitive that scans a buffer for the byte offset where the next JSON
 value ends (or reports that more input is needed) without doing a full
 decode. It's exposed directly for callers that want to implement their

@@ -64,24 +64,47 @@ defmodule Glazer.CSVTest do
     end
   end
 
-  describe "streaming" do
-    test "stream_decoder/0,1, stream_feed/2, and stream_eof/1 round-trip" do
-      decoder = Glazer.CSV.stream_decoder()
-      {rows, decoder} = Glazer.CSV.stream_feed(decoder, "a,b\n1,")
-      assert rows == [["a", "b"]]
+  describe "streaming with decode_start/decode_continue" do
+    test "decode_start/2,3 and decode_continue/2 parse one row at a time" do
+      # First row: complete
+      assert {["a", "b"], nil, rest} =
+        Glazer.CSV.decode_start("a,b\n1,2\n", [])
+      assert rest == "1,2\n"
 
-      {rows, decoder} = Glazer.CSV.stream_feed(decoder, "2\n")
-      assert rows == [["1", "2"]]
-
-      assert Glazer.CSV.stream_eof(decoder) == {:ok, []}
+      # Second row: complete
+      assert {["1", "2"], nil, <<>>} =
+        Glazer.CSV.decode_start(rest, [])
     end
 
-    test "stream_decoder/1 passes decode options through to every row" do
-      decoder = Glazer.CSV.stream_decoder([:headers])
-      {rows, decoder} = Glazer.CSV.stream_feed(decoder, "name,age\nAlice,30\n")
-      assert rows == [["Alice", "30"]]
+    test "decode_start/3 with accumulator passes context through" do
+      assert {:continue, state} =
+        Glazer.CSV.decode_start("a,b", :counter, [])
 
-      assert Glazer.CSV.stream_eof(decoder) == {:ok, []}
+      assert {["a", "b"], :counter, <<>>} =
+        Glazer.CSV.decode_continue("\n", state)
+    end
+
+    test "decode_continue with end_of_input flushes incomplete rows" do
+      assert {:continue, state} =
+        Glazer.CSV.decode_start("1,2", [])
+
+      assert {["1", "2"], nil, <<>>} =
+        Glazer.CSV.decode_continue(:end_of_input, state)
+    end
+
+    test "decode_start and decode_continue across multiple chunks" do
+      assert {:continue, state1} =
+        Glazer.CSV.decode_start("a,b", [])
+
+      assert {["a", "b"], nil, rest} =
+        Glazer.CSV.decode_continue("\n1,", state1)
+      assert rest == "1,"
+
+      assert {:continue, state2} =
+        Glazer.CSV.decode_start(rest, [])
+
+      assert {["1", "2"], nil, <<>>} =
+        Glazer.CSV.decode_continue("2\n", state2)
     end
   end
 end

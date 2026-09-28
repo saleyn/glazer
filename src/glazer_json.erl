@@ -39,7 +39,7 @@ custom Elixir protocol on top of Glazer's Erlang encoding functions.
          scan/1, scan/2,
          read_file/1, read_file/2, write_file/2, write_file/3,
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
-         decode_start/3, decode_continue/2,
+         decode_start/2, decode_start/3, decode_continue/2,
          'decode!'/1, 'encode!'/1, 'encode_to_iodata!'/1,
          encode_to_iodata/1, encode_to_iodata/2]).
 
@@ -940,35 +940,40 @@ A complete value in one call:
 Parsing multiple values from a single input:
 
 ```erlang
-{[1], ok, Rest1} = glazer_json:decode_start(<<"[1][2][3]">>, ok, []),
+{[1], ok, Rest1} = glazer_json:decode_start(<<"[1][2][3]">>, []),
 % Rest1 = <<"[2][3]">>
-{[2], ok, Rest2} = glazer_json:decode_start(Rest1, ok, []),
+{[2], ok, Rest2} = glazer_json:decode_start(Rest1, []),
 % Rest2 = <<"[3]">>
-{[3], ok, <<>>} = glazer_json:decode_start(Rest2, ok, []).
+{[3], ok, <<>>} = glazer_json:decode_start(Rest2, []).
 ```
 
 Socket streaming with `decode_continue`:
 
 ```erlang
-recv_json(Socket, State0) ->
-  case gen_tcp:recv(Socket, 1024) of
+-spec recv_json(inet:socket(), list()) -> {ok, term(), binary()} | {error, term()}.
+recv_json(Socket, Opts) ->
+  loop(Socket, undefined, Opts).
+
+loop(Socket, State, Opts) ->
+  case gen_tcp:recv(Socket, 0) ->
     {ok, Chunk} ->
-      case glazer_json:decode_continue(Chunk, State0) of
-        {Value, Acc, _Rest} ->
-          handle_value(Value),
-          recv_json(Socket, State0);
-        {continue, State1} ->
-          recv_json(Socket, State1)
+      case next_json(Chunk, State, Opts) of
+        {Value, nil, Rest}   -> {ok, Value, Rest};
+        {continue, NewState} -> loop(Socket, NewState, Opts)
       end;
-    {error, closed} ->
-      case glazer_json:decode_continue(end_of_input, State0) of
-        {Value, _Acc, _Rest} -> handle_value(Value);
-        {nil, _Acc, _Rest}   -> ok;
-        {continue, _}        -> handle_error("incomplete value")
-      end
-  end.
+    {error, Reason} ->
+        {error, Reason}
+   end.
+
+next_json(Chunk, undefined, Opts) -> glazer_json:decode_start(Chunk, nil, Opts);
+next_json(Chunk, State,    _Opts) -> glazer_json:decode_continue(Chunk, State).
 ```
 """.
+-spec decode_start(binary() | iolist(), decoders()) ->
+  {Result :: term(), nil, Rest :: binary()} | {continue, continuation_state()}.
+decode_start(Input, Decoders) ->
+  decode_start(Input, nil, Decoders).
+
 -spec decode_start(binary() | iolist(), Acc :: term(), decoders()) ->
   {Result :: term(), Acc :: term(), Rest :: binary()} | {continue, continuation_state()}.
 decode_start(Input, Acc, Decoders) when is_binary(Input) ->
@@ -1036,10 +1041,7 @@ process_chunk(Chunk, #json_state{cont_state = S0} = State) ->
       handle_json(Value, State#json_state{acc = Acc});
     {continue, S1} ->
       % Need more data
-      State#json_state{cont_state = S1};
-    {nil, Acc, _Rest} ->
-      % Empty data at EOF
-      State#json_state{acc = Acc}
+      State#json_state{cont_state = S1}
   end.
 
 on_socket_close(#json_state{cont_state = S0} = State) ->

@@ -783,6 +783,19 @@ static ERL_NIF_TERM nif_compile_path(ErlNifEnv* env, int argc, const ERL_NIF_TER
 #define GLAZER_PGO 0
 #endif
 
+namespace {
+  #if (GLAZER_PGO == 1)
+  extern "C" __attribute__((visibility("default")))
+  const char g_pgo_signature[] = "GLAZER_PGO_OPTIMIZED=1";
+  #endif
+  extern "C" __attribute__((visibility("default")))
+  const char g_opt_level[]     = "GLAZER_OPT_LEVEL="   GLAZER_OPT_LEVEL;
+  extern "C" __attribute__((visibility("default")))
+  const char g_version[]       = "GLAZER_VERSION="     GLAZER_VERSION;
+  extern "C" __attribute__((visibility("default")))
+  const char g_app_version[]   = "GLAZER_APP_VERSION=" GLAZER_APP_VERSION;
+}
+
 static ERL_NIF_TERM nif_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
   if (argc != 0) [[unlikely]]

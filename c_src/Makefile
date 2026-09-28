@@ -4,6 +4,7 @@ CXX      ?= g++
 PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR),$(BASEDIR))/priv
 OBJ_DIR  ?= $(BASEDIR)/obj
 DEBUG    ?= 0
+REBAR    := rebar3
 
 SRC      := glazer_nif.cpp
 OBJ      := $(OBJ_DIR)/glazer_nif.o
@@ -27,15 +28,38 @@ ERL_EI_LIB       := $(shell erl -noshell -noinput \
 CXXFLAGS := -std=c++2b -fPIC -Wall -finline-functions -fvisibility=hidden \
             -I$(ERL_ERTS_INCLUDE) -I$(ERL_EI_INCLUDE) -I.
 
-# Detect compiler family for LTO flags.
+HAS_PGO := $(if $(wildcard $(TARGET)),$(if $(shell strings $(TARGET) | grep -E "GLAZER_PGO_OPTIMIZED"),yes))
+
+# Detect compiler family for LTO flags and PGO format.
 # AppleClang uses ld64 which handles thin-LTO natively — no -fuse-ld=lld.
 # Upstream Clang on Linux emits LLVM bitcode that requires lld.
 # GCC uses -flto=auto with GNU ld/gold.
 CXX_ID := $(shell $(CXX) --version 2>&1 | head -1)
-ifneq ($(findstring Apple,$(CXX_ID)),)
+IS_CLANG := $(findstring clang,$(CXX_ID))
+IS_APPLE := $(findstring Apple,$(CXX_ID))
+LLVM_VERSION := $(shell $(CXX) --version 2>&1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1 | cut -d. -f1)
+# For clang, determine llvm-profdata tool name
+ifdef IS_CLANG
+  ifdef IS_APPLE
+    LLVM_PROFDATA := xcrun llvm-profdata
+  else
+    # On Linux, try versioned name first (e.g., llvm-profdata-19), then unversioned
+    LLVM_PROFDATA := $(shell \
+      if [ -n "$(LLVM_VERSION)" ] && command -v llvm-profdata-$(LLVM_VERSION) >/dev/null 2>&1; then \
+        echo "llvm-profdata-$(LLVM_VERSION)"; \
+      elif command -v llvm-profdata >/dev/null 2>&1; then \
+        echo "llvm-profdata"; \
+      else \
+        echo "llvm-profdata"; \
+      fi \
+    )
+  endif
+endif
+
+ifneq ($(IS_APPLE),)
   LTO_FLAGS  := -flto=thin
   LINK_FLAGS :=
-else ifneq ($(findstring clang,$(CXX_ID)),)
+else ifneq ($(IS_CLANG),)
   LTO_FLAGS  := -flto=thin
   LINK_FLAGS := -fuse-ld=lld
 else
@@ -55,7 +79,6 @@ HAVE_JQ := $(shell pkg-config --exists jq 2>/dev/null && echo 1 || \
 ifeq ($(HAVE_JQ),1)
   CXXFLAGS += -DGLAZER_HAVE_JQ
   LDFLAGS  += -ljq
-  $(info ===> Building glazer with jq support)
 endif
 
 # Profile-Guided Optimisation (PGO) — lets the compiler use real branch
@@ -101,8 +124,12 @@ else
     CXXFLAGS += -fprofile-generate=$(PGO_DIR)
     LDFLAGS  += -fprofile-generate=$(PGO_DIR)
   else ifeq ($(PGO),use)
-    CXXFLAGS += -fprofile-use=$(PGO_DIR) -fprofile-correction -Wno-missing-profile -DGLAZER_PGO=1
+    CXXFLAGS += -fprofile-use=$(PGO_DIR) -DGLAZER_PGO=1
     LDFLAGS  += -fprofile-use=$(PGO_DIR)
+    # GCC supports these flags; clang does not
+    ifeq ($(IS_CLANG),)
+      CXXFLAGS += -fprofile-correction -Wno-missing-profile
+    endif
   endif
 endif
 
@@ -111,11 +138,97 @@ ifeq ($(shell uname -s),Darwin)
   LDFLAGS += -undefined dynamic_lookup
 endif
 
-.PHONY: all clean force
+.PHONY: all clean force yes
 
-all: $(TARGET)
+all: compile
+
+ifeq ($(OPTIMIZE),1)
+compile: optimize
+else
+compile: $(TARGET)
+endif
+
+optimize: DEBUG=$(DEBUG) ASAN=$(ASAN)
+optimize: $(TARGET) $(HAS_PGO)
+ifeq ($(HAS_PGO),yes)
+	@echo "===> $(TARGET) is already PGO-optimized. Skipping PGO rebuild."
+else
+	@echo "===> Building PGO optimized NIF library"
+	@echo "===> PGO step 1/3: build instrumented binary"
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all
+	@cd $(BASEDIR) && env -u OPTIMIZE $(REBAR) compile
+	@echo "===> PGO step 2/3: collect profile data"
+	@cd $(BASEDIR) && ./bin/pgo-profile.es
+ifdef IS_CLANG
+	@echo "===> PGO step 2b/3: merge clang profile data ($(LLVM_PROFDATA))"
+	@if [ -f "$(PGO_DIR)/default.profdata" ]; then \
+	  echo "Profile already merged"; \
+	elif ls $(PGO_DIR)/*.profraw >/dev/null 2>&1; then \
+	  TOOL="$(LLVM_PROFDATA)"; \
+	  if ! command -v $$TOOL >/dev/null 2>&1; then \
+	    echo "Error: $$TOOL not found in PATH."; \
+	    echo "Available llvm tools:"; \
+	    ls -la /usr/bin/llvm-* 2>/dev/null || echo "  (none found)"; \
+	    exit 1; \
+	  fi; \
+	  $$TOOL merge -o $(PGO_DIR)/default.profdata $(PGO_DIR)/*.profraw && \
+	  echo "Merged profile data successfully" || \
+	  (echo "Error: Failed to merge profile data"; exit 1); \
+	else \
+	  echo "No .profraw files found in $(PGO_DIR)"; \
+	fi
+endif
+	@echo "===> PGO step 3/3: rebuild with profile data"
+	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all
+	@cd $(BASEDIR) && env -u OPTIMIZE $(REBAR) compile
+	@echo "===> PGO build complete"
+endif
+
+# Locate the ASan runtime for LD_PRELOAD on Linux.
+# macOS memcheck is not supported (DYLD_INSERT_LIBRARIES is dropped by the
+# rebar3 shell wrapper before reaching erl), so this block is Linux-only.
+# Try Clang's resource-dir path first; fall back to GCC's -print-file-name.
+_CXX_RESOURCE_DIR := $(shell $(CXX) -print-resource-dir 2>/dev/null)
+_HOST_ARCH        := $(shell uname -m)
+_ASAN_CLANG       := $(_CXX_RESOURCE_DIR)/lib/linux/libclang_rt.asan-$(_HOST_ARCH).so
+_ASAN_GCC         := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
+ASAN_RT           := $(strip $(if $(wildcard $(_ASAN_CLANG)),$(_ASAN_CLANG),\
+                       $(if $(filter-out $(notdir $(_ASAN_GCC)),$(_ASAN_GCC)),$(_ASAN_GCC))))
+ASAN_PRELOAD       = LD_PRELOAD="$(ASAN_RT)"
+LSAN_SUPPRESSIONS := $(abspath lsan_suppressions.txt)
+
+leak ?= 0
+ifeq ($(leak),0)
+  DETECT_LEAKS := 0
+else
+  DETECT_LEAKS := 1
+endif
+
+memcheck:
+	@echo "===> Building NIF with AddressSanitizer"
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
+	  $(if $(VERBOSE),VERBOSE=1) clean compile
+	@echo "===> Running eunit under ASan$(if $(filter 1,$(DETECT_LEAKS)), + LeakSanitizer,) ($(ASAN_PRELOAD))"
+	@cd .. && ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=$(DETECT_LEAKS)" \
+	  LSAN_OPTIONS="suppressions=$(LSAN_SUPPRESSIONS)" \
+	  $(ASAN_PRELOAD) \
+	  $(REBAR) eunit 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^===> \(Verifying\|Analyzing\|Compile (apps)\|Not adding provider\|Evaluating config\)"
+	@echo "===> Rebuilding normal NIF (removing ASan instrumentation)"
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) $(if $(VERBOSE),VERBOSE=1) clean all
+	@cd .. && $(REBAR) compile
+
+info:
+	@echo -ne "TARGET: "
+	@if [ -f $(TARGET) ]; then \
+    echo "$(TARGET) exists"; \
+    strings $(TARGET) | grep -E "GLAZER_" | sed 's/=/: /'; \
+  else \
+    echo "not found"; \
+  fi
 
 $(TARGET): $(OBJ) | $(PRIV_DIR)
+	@[ -n $(HAVE_JQ) ] && echo "===> Building glazer with jq support" || true
 	$(CXX) $(OBJ) $(LDFLAGS) -o $@
 
 # When PGO=use the .o is stale by timestamp (same source, same flags string)

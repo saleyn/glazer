@@ -2,18 +2,20 @@ ifndef VERBOSE
 MAKEFLAGS += --no-print-directory
 endif
 
-PRIV_DIR := $(abspath priv)
-OBJ_DIR  := $(abspath obj)
+PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR)/priv,$(abspath priv))
 DEBUG    ?= 0
 REBAR    ?= rebar3
 APP      := $(shell sed -nE 's/^\{application, ([a-zA-Z0-9_]+),.*/\1/p' src/*.app.src | head -n1)
-
 OPTIMIZE ?= 0
+ASAN     ?= 0
+
 ifneq ($(filter $(OPTIMIZE),1 true),)
-override OPTIMIZE := 1
+OPTIMIZE := 1
 else
-override OPTIMIZE := 0
+OPTIMIZE := 0
 endif
+
+export ASAN
 
 all: compile
 
@@ -50,77 +52,45 @@ help:
 	@echo "  VERBOSE=1    Show full compiler command lines"
 	@echo "  OPTIMIZE=1   Make all/compile run the PGO 'optimize' build (same as 'make optimize')"
 
-nif: $(PRIV_DIR)/glazer.so
+compile: deps
+	@$(REBAR) $@
 
-$(PRIV_DIR)/glazer.so: $(wildcard c_src/*.cpp c_src/*.hpp)
-	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) \
-	  $(if $(VERBOSE),VERBOSE=1,) --no-print-directory
+info:
+	@$(MAKE) -C c_src $@
 
-ifeq ($(OPTIMIZE),1)
-compile: optimize
-else
-compile: $(PRIV_DIR)/glazer.so
-	$(REBAR) compile
-endif
+nif:
+	@$(MAKE) -C c_src DEBUG=$(DEBUG) OPTIMIZE=$(OPTIMIZE) PRIV_DIR=$(PRIV_DIR) $(if $(VERBOSE),VERBOSE=1) compile
 
 clean:
-	$(REBAR) clean
-	@$(MAKE) --no-print-directory -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) DEBUG=$(DEBUG) clean 2>/dev/null || true
+	@$(REBAR) clean
+	@$(MAKE) -C c_src clean 2>/dev/null || true
 
 distclean: clean
-	@rm -rf obj priv/glazer.so _build .perf.txt
+	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) clean 2>/dev/null || true
+	@rm -rf obj _build .perf.txt
 
 test:
-	$(REBAR) eunit
-	mix test
-
-# Locate the ASan runtime for LD_PRELOAD on Linux.
-# macOS memcheck is not supported (DYLD_INSERT_LIBRARIES is dropped by the
-# rebar3 shell wrapper before reaching erl), so this block is Linux-only.
-# Try Clang's resource-dir path first; fall back to GCC's -print-file-name.
-_CXX_RESOURCE_DIR := $(shell $(CXX) -print-resource-dir 2>/dev/null)
-_HOST_ARCH        := $(shell uname -m)
-_ASAN_CLANG       := $(_CXX_RESOURCE_DIR)/lib/linux/libclang_rt.asan-$(_HOST_ARCH).so
-_ASAN_GCC         := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
-ASAN_RT           := $(strip $(if $(wildcard $(_ASAN_CLANG)),$(_ASAN_CLANG),\
-                       $(if $(filter-out $(notdir $(_ASAN_GCC)),$(_ASAN_GCC)),$(_ASAN_GCC))))
-ASAN_PRELOAD       = LD_PRELOAD="$(ASAN_RT)"
-LSAN_SUPPRESSIONS := $(abspath c_src/lsan_suppressions.txt)
-
-leak ?= 0
-ifeq ($(leak),0)
-  DETECT_LEAKS := 0
-else
-  DETECT_LEAKS := 1
-endif
+	@rm -rf _build/test obj priv/glazer.so
+	@$(REBAR) eunit
+	@mix test
 
 check:
-	$(REBAR) xref
-	$(REBAR) dialyzer
+	@$(REBAR) xref
+	@$(REBAR) dialyzer
 
 memcheck:
-	@echo "==> Building NIF with AddressSanitizer"
-	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
-	  $(if $(VERBOSE),VERBOSE=1,) clean all
-	@$(REBAR) compile
-	@echo "==> Running eunit under ASan$(if $(filter 1,$(DETECT_LEAKS)), + LeakSanitizer,) ($(ASAN_PRELOAD))"
-	ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=$(DETECT_LEAKS)" \
-	  LSAN_OPTIONS="suppressions=$(LSAN_SUPPRESSIONS)" \
-	  $(ASAN_PRELOAD) \
-	  $(REBAR) eunit
-	@echo "==> Rebuilding normal NIF (removing ASan instrumentation)"
-	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) \
-	  $(if $(VERBOSE),VERBOSE=1,) clean all
-	@$(REBAR) compile
+	@$(MAKE) -C c_src ASAN=1 $(if $(VERBOSE),VERBOSE=1 )$@
 
 doc docs:
-	mix docs 2>&1 | grep -v "using single-quoted strings" | grep -v "indeed want a charlist)"
+	@mix docs 2>&1 | grep -v "using single-quoted strings" \
+	              #| grep -v "indeed want a charlist" \
+	              #| grep -v "change all single-quoted" \
 
 benchmark bench: do-bench
 
 do-bench: deps
 	@rm -f .perf.txt
-	@$(MAKE) --no-print-directory optimize
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) optimize
 	PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix bench | tee .perf.txt;
 
 # ELIXIR_ERL_OPTIONS quiets rustler_precompiled's [debug] "Copying NIF from
@@ -130,21 +100,12 @@ do-bench: deps
 
 bench-json bench-yaml bench-csv: export ELIXIR_ERL_OPTIONS = -logger level warning
 bench-json bench-yaml bench-csv: deps
-	PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix $@
+	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix $@
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
 optimize:
-	@echo "==> PGO step 1/3: build instrumented binary"
-	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=generate clean all
-	@$(REBAR) compile
-	@echo "==> PGO step 2/3: collect profile data"
-	@./bin/pgo-profile.es
-	@echo "==> PGO step 3/3: rebuild with profile data"
-	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
-	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) PGO=use all
-	@$(REBAR) compile
-	@echo "==> PGO build complete"
+	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) $@
 
 deps:
 	@mix deps.get

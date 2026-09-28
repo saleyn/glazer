@@ -79,22 +79,37 @@ defmodule Glazer.JSONTest do
     assert Glazer.JSON.scan!(~s({"a":1}), state) == {:complete, 7}
   end
 
-  describe "streaming" do
-    test "stream_decoder/0,1, stream_feed!/2, and stream_eof!/1 round-trip" do
-      decoder = Glazer.JSON.stream_decoder()
-      {values, decoder} = Glazer.JSON.stream_feed!(decoder, ~s({"a":1} {"b":))
-      assert values == [%{"a" => 1}]
+  describe "streaming with decode_start/decode_continue" do
+    test "decode_start/2,3 and decode_continue/2 parse one value at a time" do
+      # First value: complete
+      assert {%{"a" => 1}, nil, rest} =
+        Glazer.JSON.decode_start(~s({"a":1} {"b":2}), [])
+      assert rest == ~s( {"b":2})
 
-      {values, decoder} = Glazer.JSON.stream_feed!(decoder, ~s(2}))
-      assert values == [%{"b" => 2}]
-
-      assert Glazer.JSON.stream_eof!(decoder) == {:ok, []}
+      # Second value: also complete (with leading space)
+      assert {%{"b" => 2}, nil, <<>>} =
+        Glazer.JSON.decode_start(rest, [])
     end
 
-    test "stream_decoder/1 passes decode options through to every value" do
-      decoder = Glazer.JSON.stream_decoder([{:keys, :atom}])
-      {values, _decoder} = Glazer.JSON.stream_feed!(decoder, ~s({"a":1}))
-      assert values == [%{a: 1}]
+    test "decode_start/3 with accumulator passes context through" do
+      assert {:continue, state} =
+        Glazer.JSON.decode_start(~s({"a":), :my_data, [])
+
+      assert {%{"a" => 1}, :my_data, <<>>} =
+        Glazer.JSON.decode_continue(~s(1}), state)
+    end
+
+    test "decode_start with atom keys option" do
+      assert {%{a: 1}, nil, <<>>} =
+        Glazer.JSON.decode_start(~s({"a":1}), [{:keys, :atom}])
+    end
+
+    test "decode_continue with end_of_input flushes incomplete values" do
+      assert {:continue, state} =
+        Glazer.JSON.decode_start(~s({"a":), [])
+
+      assert {%{"a" => 1}, nil, <<>>} =
+        Glazer.JSON.decode_continue(~s(1}), state)
     end
   end
 

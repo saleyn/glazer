@@ -94,33 +94,38 @@ defmodule Glazer.CSV do
   defdelegate write_file!(filename, data, opts), to: :glazer_csv, as: :write_file
 
   @doc """
-  Create a new incremental decoder for feeding CSV in chunks.
+  Start incremental (streaming) CSV decoding with a convenience form.
 
-  See `:glazer_csv.stream_decoder/0`.
+  Equivalent to `decode_start(input, nil, opts)`. Returns either `{:ok, row, rest}`
+  when a complete CSV row is decoded, or `{:continue, state}` when more data
+  is needed (resume with `decode_continue/2`).
+
+  See `:glazer_csv.decode_start/2`.
   """
-  defdelegate stream_decoder(), to: :glazer_csv
+  defdelegate decode_start(input, opts), to: :glazer_csv
 
   @doc """
-  Like `stream_decoder/0`, but passing `opts` through to every internal
-  decode call (see `t::glazer_csv.decode_opts/0`).
+  Start incremental (streaming) CSV decoding with an explicit accumulator.
 
-  See `:glazer_csv.stream_decoder/1`.
+  Parses exactly one CSV row per call, returning the unparsed remainder.
+  The accumulator is threaded through for context passing. Use with
+  `decode_continue/2` to parse streaming CSV data.
+
+  See `:glazer_csv.decode_start/3`.
   """
-  defdelegate stream_decoder(opts), to: :glazer_csv
+  defdelegate decode_start(input, acc, opts), to: :glazer_csv
 
   @doc """
-  Feed a chunk of bytes into `decoder`, returning any complete CSV rows
-  found so far (in order) along with the updated decoder.
+  Resume incremental CSV decoding with new data or signal end of stream.
 
-  See `:glazer_csv.stream_feed/2`.
+  Takes either:
+  - A binary or iolist to feed more data
+  - The atom `:end_of_input` to signal no more data is coming
+
+  Returns either `{:ok, row, rest}` on success or `{:continue, state}` if
+  more data is needed.
+
+  See `:glazer_csv.decode_continue/2`.
   """
-  defdelegate stream_feed(decoder, chunk), to: :glazer_csv
-
-  @doc """
-  Signal end-of-stream: decode any remaining buffered bytes in `decoder` as
-  a final row.
-
-  See `:glazer_csv.stream_eof/1`.
-  """
-  defdelegate stream_eof(decoder), to: :glazer_csv
+  defdelegate decode_continue(input, state), to: :glazer_csv
 end

@@ -15,8 +15,9 @@ in your config:
   optional header-row support
 - Per-column field type conversion (`{fields, Specs}`), including
   integers, floats, booleans, datetimes, atoms, and strings (binaries)
-- Incremental/streaming CSV decoding via `stream_decoder/0,1`,
-  `stream_feed/2`, `stream_eof/1`
+- Incremental/streaming CSV decoding via `decode_start/2,3` and `decode_continue/2`:
+  parse one CSV row per call with unparsed remainder preserved (recommended);
+  legacy `stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1` also supported
 - Configurable representation of CSV `null` values
 - `read_file/1,2` and `write_file/2,3` helpers for decoding/encoding
   directly to/from a file
@@ -26,7 +27,13 @@ See also [https://github.com/stephenberry/glaze]
 -export([decode/1, decode/2, try_decode/1, try_decode/2,
          encode/1, encode/2,
          read_file/1, read_file/2, write_file/2, write_file/3,
-         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1]).
+         stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
+         decode_start/2, decode_start/3, decode_continue/2]).
+
+-deprecated({stream_decoder,      0, "use decode_start/2,3"}).
+-deprecated({stream_decoder,      1, "use decode_start/2,3"}).
+-deprecated({stream_feed,         2, "use decode_continue/2"}).
+-deprecated({stream_eof,          1, "use decode_continue/2"}).
 
 -doc """
 A single column's target type for the `{fields, Specs}` CSV decode option:
@@ -197,7 +204,7 @@ CSV encode options:
 
 -export_type([decode_opt/0, decode_opts/0, encode_opt/0, encode_opts/0, decode_error/0,
                csv_result/0, headers_type/0, field_type/0, field_spec/0, field_on_failure/0,
-               scan_state/0, stream_decoder/0]).
+               scan_state/0, stream_decoder/0, continuation_state/0]).
 
 -doc """
 Resumable state of the incremental row-boundary scanner used inside a
@@ -215,6 +222,14 @@ not require direct access to this type.
   state   = {0, false} :: scan_state()
 }).
 
+-record(decode_continuation, {
+  buffer     :: binary(),             % Unparsed remaining data
+  scan_state :: scan_state(),         % Scan state for resuming
+  opts       :: decode_opts(),        % Decode options
+  acc        :: term(),               % User accumulator
+  header     :: binary() | undefined  % Captured header (if any)
+}).
+
 -doc """
 Opaque handle for incremental CSV decoding.  Created by
 `stream_decoder/0,1` and threaded through successive `stream_feed/2`
@@ -222,6 +237,13 @@ calls; call `stream_eof/1` to flush any remaining buffered bytes at the
 end of the input.
 """.
 -opaque stream_decoder() :: #stream_decoder{}.
+
+-doc """
+Opaque state for incremental CSV decoding with `decode_start/2,3` and
+`decode_continue/2`. Carries the buffer, scan state, options, accumulator,
+and captured header (if applicable).
+""".
+-opaque continuation_state() :: #decode_continuation{}.
 
 -doc """
 Decode a CSV binary or iolist.
@@ -726,6 +748,193 @@ stream_eof(#stream_decoder{buffer = Buf} = D) ->
         error:Reason -> {error, Reason}
       end
   end.
+
+%%%----------------------------------------------------------------------------
+%%% Incremental decode with custom decoders (OTP json.erl compatibility)
+%%%----------------------------------------------------------------------------
+
+-doc """
+Start incremental (streaming) CSV decoding with a convenience form (accumulator defaults to `nil`).
+
+Equivalent to `decode_start(Input, nil, Opts)`.
+""".
+-spec decode_start(binary() | iolist(), decode_opts()) ->
+  {Result :: term(), nil, Rest :: binary()} | {continue, continuation_state()}.
+decode_start(Input, Opts) ->
+  decode_start(Input, nil, Opts).
+
+-doc """
+Start incremental (streaming) CSV decoding.
+
+This is the **recommended** function for streaming CSV. It parses exactly one
+CSV row per call and returns the unparsed remainder in the `Rest` buffer.
+
+Returns either:
+
+- `{Row, Acc, Rest}` - a complete CSV row was decoded; `Rest` contains any
+  unparsed data (next rows, etc.)
+- `{continue, State}` - more data needed; feed via [`decode_continue/2`](`decode_continue/2`)
+  or provide more data
+
+The `Acc` parameter is a user-provided accumulator that is returned unchanged
+in the result, useful for passing context through the streaming parse.
+
+## Examples
+
+Parsing rows incrementally across chunks:
+
+```erlang
+1> {continue, State} = glazer_csv:decode_start(<<"a,b\n1,2">>),
+2> glazer_csv:decode_continue(<<",3">>), State).
+{[<<"1">>,<<"2">>], nil, <<", 3">>}
+```
+
+A complete row in one call:
+
+```erlang
+1> glazer_csv:decode_start(<<"1,2,3\n">>, my_acc, []).
+{[<<"1">>,<<"2">>,<<"3">>], my_acc, <<>>}
+```
+
+Socket streaming with `decode_continue`:
+
+```erlang
+-spec recv_csv(inet:socket(), list()) -> {ok, term(), binary()} | {error, term()}.
+recv_csv(Socket, Opts) ->
+  loop(Socket, undefined, Opts).
+
+loop(Socket, State, Opts) ->
+  case gen_tcp:recv(Socket, 0) ->
+    {ok, Chunk} ->
+      case next_csv(Chunk, State, Opts) of
+        {Value, nil, Rest}   -> {ok, Value, Rest};
+        {continue, NewState} -> loop(Socket, NewState, Opts)
+      end;
+    {error, Reason} ->
+        {error, Reason}
+   end.
+
+next_csv(Chunk, undefined, Opts) -> glazer_json:decode_start(Chunk, nil, Opts);
+next_csv(Chunk, State,    _Opts) -> glazer_json:decode_continue(Chunk, State).
+```
+""".
+-spec decode_start(binary() | iolist(), Acc :: term(), decode_opts()) ->
+  {Result :: term(), Acc :: term(), Rest :: binary()} | {continue, continuation_state()}.
+decode_start(Input, Acc, Opts) when is_binary(Input) ->
+  decode_one_row(Input, Opts, Acc, {0, false}, undefined);
+decode_start(Input, Acc, Opts) when is_list(Input) ->
+  decode_one_row(iolist_to_binary(Input), Opts, Acc, {0, false}, undefined);
+decode_start(_Input, _Acc, _Opts) ->
+  error(badarg).
+
+-doc """
+Resume incremental CSV decoding with new data or signal end of stream.
+
+This is the companion to [`decode_start/2,3`](`decode_start/3`) for streaming scenarios
+where CSV data arrives in chunks. Call with:
+
+- A `binary()` or `iolist()` to feed more data and attempt to parse one row
+- The atom `end_of_input` to signal no more data is coming (flushes buffered
+  partial rows, returns `{nil, Acc, <<>>}` if buffer is empty)
+
+## Examples
+
+```erlang
+1> State = {continue, S} = glazer_csv:decode_start(<<"a,b,c">>),
+2> glazer_csv:decode_continue(<<"\\n">>, S).
+{[<<"a">>,<<"b">>,<<"c">>], nil, <<>>}
+```
+
+End of stream (incomplete row):
+
+```erlang
+1> {continue, State} = glazer_csv:decode_start(<<"a,b">>),
+2> glazer_csv:decode_continue(end_of_input, State).
+{[<<"a">>,<<"b">>], nil, <<>>}
+```
+
+End of stream (empty buffer):
+
+```erlang
+1> {Row, State} = glazer_csv:decode_start(<<"a\\nb\\n">>, []),
+2> glazer_csv:decode_continue(end_of_input, State).
+{nil, [], <<>>}
+```
+""".
+-spec decode_continue(binary() | iolist() | end_of_input, State :: continuation_state()) ->
+  {Result :: term() | nil, Acc :: term(), Rest :: binary()} | {continue, continuation_state()}.
+decode_continue(end_of_input, #decode_continuation{buffer = Buf, opts = Opts, acc = Acc, header = Header}) ->
+  case is_blank(Buf) of
+    true ->
+      {nil, Acc, <<>>};
+    false ->
+      D = #stream_decoder{buffer = Buf, opts = Opts, header = Header, state = {0, false}},
+      try stream_decode_row(D, Buf) of
+        {skip, _D1} -> {nil, Acc, <<>>};
+        {Row,  _D1} -> {Row, Acc, <<>>}
+      catch
+        error:{parse_error, Reason} ->
+          error({parse_error, "incomplete row at end of stream: " ++ atom_to_list(Reason)})
+      end
+  end;
+decode_continue(Input, #decode_continuation{buffer = Buf, scan_state = ScanState, opts = Opts, acc = Acc, header = Header})
+  when is_binary(Input) ->
+  NewBuf = iolist_to_binary([Buf, Input]),
+  decode_one_row(NewBuf, Opts, Acc, ScanState, Header);
+decode_continue(Input, #decode_continuation{buffer = Buf, scan_state = ScanState, opts = Opts, acc = Acc, header = Header})
+  when is_list(Input) ->
+  NewBuf = iolist_to_binary([Buf, iolist_to_binary(Input)]),
+  decode_one_row(NewBuf, Opts, Acc, ScanState, Header);
+decode_continue(_Input, _State) ->
+  error(badarg).
+
+%% Core engine: parse exactly one row (or return {continue, ...} if more data needed).
+%% If Row is 'skip' (blank line or header), keep scanning for the next row until we
+%% get a non-skip row.
+decode_one_row(Buf, Opts, Acc, ScanState, Header) ->
+  case scan_row(Buf, ScanState) of
+    {complete, End, RestStart} ->
+      <<RowBin:End/binary, _:(RestStart-End)/binary, Rest/binary>> = Buf,
+      case is_blank(RowBin) of
+        true ->
+          %% Blank row: skip and keep scanning
+          decode_one_row(Rest, Opts, Acc, {0, false}, Header);
+        false ->
+          %% Non-blank row
+          case Header of
+            undefined ->
+              %% No header captured yet; check if we should capture one
+              case has_headers(Opts) of
+                true ->
+                  %% This row is the header; skip it and keep scanning
+                  decode_one_row(Rest, Opts, Acc, {0, false}, RowBin);
+                false ->
+                  %% Normal row with no headers
+                  SafeOpts = stream_safe_opts(strip_headers_opt(Opts)),
+                  Row = decode_row_to_term(RowBin, SafeOpts),
+                  {Row, Acc, Rest}
+              end;
+            _ ->
+              %% Header already captured; decode this row with the header
+              SafeOpts = stream_safe_opts(Opts),
+              Row = decode_row_to_term(<<Header/binary, "\n", RowBin/binary>>, SafeOpts),
+              {Row, Acc, Rest}
+          end
+      end;
+    {incomplete, NewScanState} ->
+      {continue, #decode_continuation{
+        buffer = Buf,
+        scan_state = NewScanState,
+        opts = Opts,
+        acc = Acc,
+        header = Header
+      }}
+  end.
+
+%% Decode a single row binary to a term (list, tuple, or map depending on options).
+decode_row_to_term(RowBin, Opts) ->
+  #{data := [Row]} = decode(RowBin, Opts),
+  Row.
 
 %% Resumable scan for the next CSV row terminator (`\n` or `\r\n`) outside of
 %% quoted fields, starting from `State = {Pos, InQuotes}`.

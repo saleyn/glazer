@@ -4,16 +4,11 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 env:
   OTP_LATEST: "29"
-  MIN_AGE_HOURS: 1
-  # Number of most-recent Hex.pm releases to keep active (not retire).
-  KEEP_RELEASES: 5
 
 jobs:
   linux:
@@ -70,9 +65,13 @@ jobs:
           fi
           sudo apt-get install -y --no-install-recommends ${{ matrix.compiler.CC }} ${{ matrix.compiler.CXX }}
           # Clang emits LLVM-bitcode objects under LTO; lld is required to link them.
+          # Also install clang runtime libraries and llvm-tools for PGO profiling support.
           if echo "${{ matrix.compiler.compiler }}" | grep -q '^LLVM-'; then
             LLVM_VER=$(echo "${{ matrix.compiler.compiler }}" | sed -E 's/^LLVM-//')
             sudo apt-get install -y --no-install-recommends "lld-$LLVM_VER" || sudo apt-get install -y --no-install-recommends lld
+            sudo apt-get install -y --no-install-recommends "libclang-rt-$LLVM_VER-dev" || sudo apt-get install -y --no-install-recommends "libclang1-$LLVM_VER"
+            # Install llvm tools (may be in llvm package or separate llvm-tools-$VER package)
+            sudo apt-get install -y --no-install-recommends "llvm-$LLVM_VER" || sudo apt-get install -y --no-install-recommends "llvm-tools-$LLVM_VER" || sudo apt-get install -y --no-install-recommends llvm-tools || true
           fi
       - name: Build
         run:  make compile
@@ -81,7 +80,7 @@ jobs:
         with:
           path: _build/default/*_plt
           key: dialyzer-plt-${{ matrix.os }}-otp${{ matrix.otp }}-${{ hashFiles('rebar.config', 'rebar.lock') }}
-      - name: Check
+      - name: Check Xref and Dialyzer
         run:  make check
       - name: Sanitize Memory
         run:  make memcheck
@@ -178,142 +177,3 @@ jobs:
       - name: Test
         shell: msys2 {0}
         run:  make test
-
-  detect-release:
-    name: Detect Release
-    runs-on: ubuntu-latest
-    needs: [linux, macOS, windows]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    outputs:
-      should_release: ${{ steps.resolve.outputs.should_release }}
-      version:        ${{ steps.resolve.outputs.version }}
-      publish:        ${{ steps.resolve.outputs.publish }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Resolve release version
-        id: resolve
-        run: |
-          get_version() { sed -nE 's/.*\{vsn,\s*"([^"]+)".*/\1/p' | head -1; }
-
-          APP="glazer"
-          VERSION=$(cat src/glazer.app.src | get_version)
-          PARENT_VERSION=$(git show "HEAD^:src/glazer.app.src" 2>/dev/null | get_version || true)
-
-          echo "version=$VERSION"      >> $GITHUB_OUTPUT
-
-          if [ "$VERSION" != "$PARENT_VERSION" ]; then
-            echo "Version changed: $PARENT_VERSION -> $VERSION"
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_release=false" >> $GITHUB_OUTPUT
-          fi
-
-          # Check whether $VERSION is already published to Hex.pm — this can
-          # happen even when the version just changed, if a prior run of this
-          # workflow (for the same commit) already published it and only
-          # failed in a later step (e.g. tagging/release creation).
-          INSERTED_AT=$(curl -fsS "https://hex.pm/api/packages/$APP" | \
-                        jq -r --arg v "$VERSION" '.releases[] | select(.version == $v) | .inserted_at')
-
-          MIN_AGE=$((MIN_AGE_HOURS * 3600))
-
-          if [ -z "$INSERTED_AT" ]; then
-            echo "Version $VERSION not yet published to Hex.pm"
-            echo "publish=true"        >> $GITHUB_OUTPUT
-          else
-            PUBLISHED_TS=$(date -u -d "$INSERTED_AT" +%s)
-            NOW_TS=$(date +%s)
-            AGE=$((NOW_TS - PUBLISHED_TS))
-
-            if [ "$AGE" -lt "$MIN_AGE" ]; then
-              echo "Republishing release ($VERSION), published $((AGE / 60)) minutes ago"
-              echo "publish=replace"    >> $GITHUB_OUTPUT
-            else
-              echo "Skipping version $VERSION - published $((AGE / 60)) minutes ago, too old to replace"
-              echo "publish=false"      >> $GITHUB_OUTPUT
-            fi
-          fi
-
-  publish-to-hex:
-    name: Publish to Hex.pm
-    runs-on: ubuntu-latest
-    needs: [detect-release]
-    if: needs.detect-release.outputs.publish != 'false'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Rebar3
-        uses: erlef/setup-beam@v1
-        with:
-          # Latest that excludes pre-releases
-          otp-version:    "> 0"
-          elixir-version: "> 0"
-          rebar3-version: latest
-          hexpm-mirrors: |
-            https://builds.hex.pm
-            https://cdn.jsdelivr.net/hex
-
-      - name: Publish to Hex.pm
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-        run: |
-          VERSION="${{ needs.detect-release.outputs.version }}"
-          APP="glazer"
-          if [ "${{ needs.detect-release.outputs.publish }}" = "replace" ]; then
-            echo "Replacing $APP $VERSION (published within the last hour)"
-            rebar3 hex publish --repo hexpm --yes --replace
-          else
-            echo "Publishing $APP $VERSION"
-            rebar3 hex publish --repo hexpm --yes
-          fi
-
-      - name: Retire prior version
-        run: |
-          set +e
-          APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)
-
-          # Releases are returned newest-first.
-          VSNS=$(curl -fsS "https://hex.pm/api/packages/$APP" | jq -r '.releases[].version')
-
-          if [ -z "$VSNS" ]; then
-            echo "$APP: no releases were found on Hex"
-            exit 0
-          fi
-
-          echo "Releases (newest first):"
-          printf '%s\n' "$VSNS"
-
-          # Keep the KEEP_RELEASES most recent versions untouched; only
-          # consider retiring anything older than that.
-          KEEP=$(printf '%s\n' "$VSNS" | head -n "$KEEP_RELEASES")
-          CANDIDATES=$(printf '%s\n' "$VSNS" | tail -n +"$((KEEP_RELEASES + 1))")
-
-          if [ -z "$CANDIDATES" ]; then
-            echo "$APP: $KEEP_RELEASES or fewer releases, nothing to retire"
-            exit 0
-          fi
-
-          echo "Keeping latest versions:"
-          printf '%s\n' "$KEEP"
-
-          for VSN in $CANDIDATES; do
-            RETIREMENT=$(curl -fsS "https://hex.pm/api/packages/$APP/releases/$VSN" | jq -r '.retirement')
-            if [ "$RETIREMENT" = "null" ]; then
-              echo "Retiring version $VSN of $APP on Hex..."
-              mix hex.retire $APP $VSN deprecated --message "Deprecated"
-            else
-              echo "$APP $VSN is already retired, skipping"
-            fi
-          done
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}

@@ -168,33 +168,38 @@ defmodule Glazer.JSON do
   defdelegate scan!(bin, scan_state), to: :glazer_json, as: :scan
 
   @doc """
-  Create a new incremental decoder for feeding JSON in chunks.
+  Start incremental (streaming) JSON decoding with a convenience form.
 
-  See `:glazer_json.stream_decoder/0`.
+  Equivalent to `decode_start(input, nil, opts)`. Returns either `{value, acc, rest}`
+  when a complete JSON value is decoded, or `{:continue, state}` when more data
+  is needed (resume with `decode_continue/2`).
+
+  See `:glazer_json.decode_start/2`.
   """
-  defdelegate stream_decoder(), to: :glazer_json
+  defdelegate decode_start(input, opts), to: :glazer_json
 
   @doc """
-  Like `stream_decoder/0`, but passing `opts` through to every internal
-  decode call (see `t::glazer_json.decode_opts/0`).
+  Start incremental (streaming) JSON decoding with an explicit accumulator.
 
-  See `:glazer_json.stream_decoder/1`.
+  Parses exactly one JSON value per call, returning the unparsed remainder.
+  The accumulator is threaded through for context passing. Use with
+  `decode_continue/2` to parse streaming JSON data.
+
+  See `:glazer_json.decode_start/3`.
   """
-  defdelegate stream_decoder(opts), to: :glazer_json
+  defdelegate decode_start(input, acc, opts), to: :glazer_json
 
   @doc """
-  Feed a chunk of bytes into `decoder`, returning any complete JSON values
-  found so far (in order) along with the updated decoder.
+  Resume incremental JSON decoding with new data or signal end of stream.
 
-  See `:glazer_json.stream_feed/2`.
+  Takes either:
+  - A binary or iolist to feed more data
+  - The atom `:end_of_input` to signal no more data is coming
+
+  Returns either `{value, acc, rest}` on success or `{:continue, state}` if
+  more data is needed.
+
+  See `:glazer_json.decode_continue/2`.
   """
-  defdelegate stream_feed!(decoder, chunk), to: :glazer_json, as: :stream_feed
-
-  @doc """
-  Signal end-of-stream: decode any remaining buffered bytes in `decoder` as
-  a final value.
-
-  See `:glazer_json.stream_eof/1`.
-  """
-  defdelegate stream_eof!(decoder), to: :glazer_json, as: :stream_eof
+  defdelegate decode_continue(input, state), to: :glazer_json
 end

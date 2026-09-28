@@ -9,9 +9,10 @@ defmodule Glazer.MixProject do
       deps:                  deps(),
       aliases:               aliases(),
       language:              :erlang,
-      compilers:             [:erlang, :elixir, :app],
+      compilers:             [:make] ++ Mix.compilers(),
       consolidate_protocols: consolidate_protocols(),
       elixirc_paths:         elixirc_paths(Mix.env()),
+      # Exclude bench_*.ex files from compilation outside of :bench env
       docs:                  docs(),
       test_coverage:         test_coverage()
     ]
@@ -20,6 +21,10 @@ defmodule Glazer.MixProject do
   def application do
     [extra_applications: [:logger]]
   end
+
+  # Compile benchmark tasks only in :bench environment
+  defp elixirc_paths(:bench), do: ["lib"]
+  defp elixirc_paths(_), do: ["lib/glazer"]
 
   # Disable protocol consolidation in dev/test so @derive works properly for
   # structs defined outside lib/ (e.g. in `mix run script.exs`, `mix run -e`,
@@ -42,10 +47,6 @@ defmodule Glazer.MixProject do
     |> List.to_string()
   end
 
-  # Compile benchmark tasks only in :bench environment
-  defp elixirc_paths(:bench), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib/glazer"]
-
   # yaml_rustler pins {:rustler, "~> 0.34.0"} and {:rustler_precompiled, "~> 0.8.2"}
   # while rusty_csv pins {:rustler, "~> 0.37.3"} and {:rustler_precompiled, "~> 0.9"} —
   # left alone, Hex can't resolve one :rustler/:rustler_precompiled version that
@@ -57,24 +58,24 @@ defmodule Glazer.MixProject do
   defp deps do
     [
       # mix docs
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:ex_doc,              "~> 0.34",  only: :dev, runtime: false},
       # Benchmarking dependencies
-      {:simdjsone,           "~> 0.5",    only: :bench},
-      {:jason,               "~> 1.4",    only: :bench},
-      {:jiffy,               "~> 2.0.2",  only: :bench},
-      {:thoas,               "~> 1.2",    only: :bench},
-      {:euneus,              "~> 2.0",    only: :bench},
-      {:torque,              "~> 0.4.1",  only: :bench},
-      {:yamerl,              "~> 0.10",   only: :bench},
-      {:fast_yaml,           "~> 1.0",    only: :bench},
-      {:ymlr,                "~> 5.1",    only: :bench},
-      {:csv,                 "~> 3.2",    only: :bench},
-      {:nimble_csv,          "~> 1.3",    only: :bench},
-      {:erl_csv,             "~> 0.5.0",  only: :bench},
-      {:yaml_rustler,        "~> 0.1.6",  only: :bench},
-      {:rusty_csv,           "~> 0.4.6",  only: :bench},
-      {:rustler,             "~> 0.38",   only: :bench, override: true, runtime: false},
-      {:rustler_precompiled, "~> 0.9",    only: :bench, override: true},
+      {:simdjsone,           "~> 0.5",   only: :bench},
+      {:jason,               "~> 1.4",   only: :bench},
+      {:jiffy,               "~> 2.0.2", only: :bench},
+      {:thoas,               "~> 1.2",   only: :bench},
+      {:euneus,              "~> 2.0",   only: :bench},
+      {:torque,              "~> 0.4.1", only: :bench},
+      {:yamerl,              "~> 0.10",  only: :bench},
+      {:fast_yaml,           "~> 1.0",   only: :bench},
+      {:ymlr,                "~> 5.1",   only: :bench},
+      {:csv,                 "~> 3.2",   only: :bench},
+      {:nimble_csv,          "~> 1.3",   only: :bench},
+      {:erl_csv,             "~> 0.5.0", only: :bench},
+      {:yaml_rustler,        "~> 0.1.6", only: :bench},
+      {:rusty_csv,           "~> 0.4.6", only: :bench},
+      {:rustler,             "~> 0.38",  only: :bench, override: true, runtime: false},
+      {:rustler_precompiled, "~> 0.9",   only: :bench, override: true},
     ]
   end
 
@@ -143,5 +144,21 @@ defmodule Glazer.MixProject do
         "README.md"
       ]
     ]
+  end
+end
+
+defmodule Mix.Tasks.Compile.Make do
+  use Mix.Task
+  @moduledoc false
+
+  @shortdoc "Compiles Erlang and NIF sources via Makefile"
+
+  def run(_args) do
+    app_path = Mix.Project.app_path()
+
+    case System.cmd("make", ["optimize"], env: [{"MIX_APP_PATH", app_path}], into: IO.stream(:stdio, :line)) do
+      {_, 0} -> :ok
+      {_, exit_code} -> {:error, ["Make failed with exit code #{exit_code}"]}
+    end
   end
 end
