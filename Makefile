@@ -104,6 +104,8 @@ bench-json bench-yaml bench-csv: deps
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
+# Skip PGO when building as a dependency (pgo-profile.es won't be available in Hex distributions)
+# Profile-guided optimisation: let c_src/Makefile handle the decision
 optimize:
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) $@
 

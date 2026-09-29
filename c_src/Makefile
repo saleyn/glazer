@@ -150,15 +150,23 @@ endif
 
 optimize: DEBUG=$(DEBUG) ASAN=$(ASAN)
 optimize: $(TARGET) $(HAS_PGO)
+ifeq ($(OPTIMIZE),0)
+	@echo "===> OPTIMIZE=0: skipping PGO build for dependency"
+else
 ifeq ($(HAS_PGO),yes)
 	@echo "===> $(TARGET) is already PGO-optimized. Skipping PGO rebuild."
 else
 	@echo "===> Building PGO optimized NIF library"
 	@echo "===> PGO step 1/3: build instrumented binary"
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all
-	@cd $(BASEDIR) && env -u OPTIMIZE $(REBAR) compile
+	@cd $(BASEDIR) && env -u OPTIMIZE REBAR_BARE_COMPILER_OUTPUT_DIR="$(REBAR_BARE_COMPILER_OUTPUT_DIR)" $(REBAR) compile
 	@echo "===> PGO step 2/3: collect profile data"
-	@cd $(BASEDIR) && ./bin/pgo-profile.es
+	@if [ -x "$(BASEDIR)/bin/pgo-profile.es" ]; then \
+	  cd $(BASEDIR) && ./bin/pgo-profile.es; \
+	else \
+	  echo "Warning: pgo-profile.es not found or not executable. Skipping PGO profiling."; \
+	  echo "This is expected when building Glazer as a dependency from Hex."; \
+	fi
 ifdef IS_CLANG
 	@echo "===> PGO step 2b/3: merge clang profile data ($(LLVM_PROFDATA))"
 	@if [ -f "$(PGO_DIR)/default.profdata" ]; then \
@@ -181,8 +189,9 @@ endif
 	@echo "===> PGO step 3/3: rebuild with profile data"
 	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all
-	@cd $(BASEDIR) && env -u OPTIMIZE $(REBAR) compile
+	@cd $(BASEDIR) && env -u OPTIMIZE REBAR_BARE_COMPILER_OUTPUT_DIR="$(REBAR_BARE_COMPILER_OUTPUT_DIR)" $(REBAR) compile
 	@echo "===> PGO build complete"
+endif
 endif
 
 # Locate the ASan runtime for LD_PRELOAD on Linux.

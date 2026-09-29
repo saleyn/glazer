@@ -11,7 +11,9 @@
   {licenses, ["MIT"]},
   {links,    [{"GitHub", "https://github.com/saleyn/glazer"}]},
   {files,    [
-    "src", "c_src", "lib", "Makefile", "rebar.config", "mix.exs", "mix.lock", "rebar.lock",
+    "src", "bin", "c_src", "lib", "Makefile",
+    "rebar.config", "rebar.lock",
+    "mix.exs", "mix.lock",
     "README.md", "LICENSE", "assets"
   ]}
  ]}.

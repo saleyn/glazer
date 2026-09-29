@@ -156,8 +156,53 @@ defmodule Mix.Tasks.Compile.Make do
   def run(_args) do
     app_path = Mix.Project.app_path()
 
-    case System.cmd("make", ["optimize"], env: [{"MIX_APP_PATH", app_path}], into: IO.stream(:stdio, :line)) do
-      {_, 0} -> :ok
+    # Detect dependency build: Check if the app_path is pointing to a _build directory
+    # that's NOT in the current project's _build.
+    # In main project: app_path starts with _build/dev/lib/glazer from cwd=/path/to/glazer
+    # In dependency: app_path starts with /path/to/integration/_build/dev/lib/glazer
+    # Key difference: in dependency, app_path is absolute and outside our project directory
+
+    #is_dependency_build = String.starts_with?(app_path, "/") and
+    #                      not String.contains?(app_path, File.cwd!() <> "/_build")
+
+    #optimize_env = System.get_env("OPTIMIZE", "0")
+
+    # When building as a dependency, use compile target (not optimize) to skip PGO entirely
+    # since pgo-profile.es isn't included in Hex/GitHub distributions
+    # For the main project with OPTIMIZE=1, use the optimize target
+    #target = if is_dependency_build or optimize_env != "1" do
+    target = System.get_env("OPTIMIZE", "0") == "1" && "optimize" || "compile"
+
+    # Set REBAR_BARE_COMPILER_OUTPUT_DIR so the Makefile puts priv files in the correct location
+    # For dependency builds, force OPTIMIZE=0 to skip PGO
+    # For the main project, inherit the OPTIMIZE environment variable
+    env = [{"REBAR_BARE_COMPILER_OUTPUT_DIR", app_path}]
+
+    # Build a full environment:
+    # - Always remove OPTIMIZE from the inherited environment to prevent shell override
+    # - Add back our version of OPTIMIZE (which is 0 for deps, or from shell for main project)
+    #full_env = System.get_env() |> Map.to_list() |> Enum.reject(fn {k, _} -> k == "OPTIMIZE" end)
+
+    # Add our controlled OPTIMIZE value
+    #full_env = full_env ++ [{"OPTIMIZE", if(is_dependency_build, do: "0", else: optimize_env)}] ++
+    #                        Enum.reject(env, fn {k, _} -> k == "OPTIMIZE" end)
+
+    # Get the source directory from app_path (e.g., _build/dev/lib/glazer -> deps/glazer or integrate root)
+    # We need to find the actual source directory containing the Makefile
+    source_dir = if File.exists?("Makefile") do
+      # We're in the main Glazer project
+      "."
+    else
+      # We're in a dependent project - find Glazer's source
+      # Mix stores dependencies in deps/<app_name> for path/git deps
+      case File.ls("deps") do
+        {:ok, deps} -> if "glazer" in deps, do: "deps/glazer", else: "."
+        {:error, _} -> "."
+      end
+    end
+
+    case System.cmd("make", [target], cd: source_dir, env: env, into: IO.stream(:stdio, :line)) do
+      {_,         0} -> :ok
       {_, exit_code} -> {:error, ["Make failed with exit code #{exit_code}"]}
     end
   end
