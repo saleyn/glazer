@@ -8,9 +8,16 @@
 %%-----------------------------------------------------------------------------
 
 main(_Args) ->
-  Root  = filename:dirname(filename:dirname(escript:script_name())),
-  EbinGlob = filename:join([Root, "_build", "default", "lib", "*", "ebin"]),
-  [code:add_pathz(P) || P <- filelib:wildcard(EbinGlob)],
+  Root   = filename:dirname(filename:dirname(escript:script_name())),
+  DefEnv = os:getenv("MIX_ENV", "default"),
+  case os:getenv("REBAR_BARE_COMPILER_OUTPUT_DIR") of
+    undefined ->
+      EbinGlob = filename:join([Root, "_build", DefEnv, "lib", "*", "ebin"]),
+      [code:add_pathz(P) || P <- filelib:wildcard(EbinGlob)];
+    EnvPath ->
+      Dir = filename:join(EnvPath, "ebin"),
+      code:add_patha(Dir)
+  end,
 
   DataDir = filename:join(Root, "test/data"),
   Files = ["small.json", "openrtb.json", "esad.json", "twitter.json", "twitter2.json"],
@@ -32,10 +39,7 @@ main(_Args) ->
 run(Name, Bin) ->
   Iterations = iterations(byte_size(Bin)),
   io:format("==> ~s (~p bytes) x ~p~n", [Name, byte_size(Bin), Iterations]),
-  repeat(Iterations, fun() ->
-    Term = glazer_json:decode(Bin),
-    _    = glazer_json:encode(Term)
-  end).
+  repeat(Iterations, fun() -> glazer_json:encode(glazer_json:decode(Bin)) end).
 
 %% Smaller files get more iterations so each input contributes a comparable
 %% amount of total work to the profile.

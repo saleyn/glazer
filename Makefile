@@ -3,11 +3,11 @@ MAKEFLAGS += --no-print-directory
 endif
 
 PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR)/priv,$(abspath priv))
-DEBUG    ?= 0
 REBAR    ?= rebar3
 APP      := $(shell sed -nE 's/^\{application, ([a-zA-Z0-9_]+),.*/\1/p' src/*.app.src | head -n1)
 OPTIMIZE ?= 0
 ASAN     ?= 0
+MIX_ENV  ?= default
 
 ifneq ($(filter $(OPTIMIZE),1 true),)
 OPTIMIZE := 1
@@ -46,20 +46,19 @@ help:
 	@echo "  deprecate    Deprecate a hex.pm release  (pass vsn=X.Y.Z)"
 	@echo ""
 	@echo "Variables:"
-	@echo "  DEBUG=1      Build NIF without optimisations (-O0 -g)"
 	@echo "  ASAN=1       Build with AddressSanitizer (implied by memcheck)"
 	@echo "  leak=1       Enable LeakSanitizer during memcheck (off by default)"
 	@echo "  VERBOSE=1    Show full compiler command lines"
 	@echo "  OPTIMIZE=1   Make all/compile run the PGO 'optimize' build (same as 'make optimize')"
 
 compile: deps
-	@$(REBAR) $@
+	@$(REBAR) as $(MIX_ENV) $@
 
 info:
 	@$(MAKE) -C c_src $@
 
 nif:
-	@$(MAKE) -C c_src DEBUG=$(DEBUG) OPTIMIZE=$(OPTIMIZE) PRIV_DIR=$(PRIV_DIR) $(if $(VERBOSE),VERBOSE=1) compile
+	@[ -n "$(SKIP_NIF_RECOMPILE)" ] && echo "===> Skipping NIF compile" || $(MAKE) -C c_src OPTIMIZE=$(OPTIMIZE) PRIV_DIR=$(PRIV_DIR) compile
 
 clean:
 	@$(REBAR) clean

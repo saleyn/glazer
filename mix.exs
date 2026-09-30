@@ -176,7 +176,10 @@ defmodule Mix.Tasks.Compile.Make do
     # Set REBAR_BARE_COMPILER_OUTPUT_DIR so the Makefile puts priv files in the correct location
     # For dependency builds, force OPTIMIZE=0 to skip PGO
     # For the main project, inherit the OPTIMIZE environment variable
-    env = [{"REBAR_BARE_COMPILER_OUTPUT_DIR", app_path}]
+    env = [
+      {"REBAR_BARE_COMPILER_OUTPUT_DIR", app_path},
+      {"MIX_ENV", Mix.env() |> to_string()}
+    ]
 
     # Build a full environment:
     # - Always remove OPTIMIZE from the inherited environment to prevent shell override

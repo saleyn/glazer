@@ -1,10 +1,11 @@
 CURDIR   := $(shell pwd)
 BASEDIR	 := $(abspath $(dir $(CURDIR)))
 CXX      ?= g++
-PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR),$(BASEDIR))/priv
-OBJ_DIR  ?= $(BASEDIR)/obj
-DEBUG    ?= 0
+APP_DIR  := $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR),$(BASEDIR))
+PRIV_DIR ?= $(APP_DIR)/priv
+OBJ_DIR  ?= $(APP_DIR)/obj
 REBAR    := rebar3
+COMPILE  := $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),bare compile --paths $(patsubst %/_build/%,%/_build,$(REBAR_BARE_COMPILER_OUTPUT_DIR))/default/plugins/*/ebin,compile)
 
 SRC      := glazer_nif.cpp
 OBJ      := $(OBJ_DIR)/glazer_nif.o
@@ -28,15 +29,13 @@ ERL_EI_LIB       := $(shell erl -noshell -noinput \
 CXXFLAGS := -std=c++2b -fPIC -Wall -finline-functions -fvisibility=hidden \
             -I$(ERL_ERTS_INCLUDE) -I$(ERL_EI_INCLUDE) -I.
 
-HAS_PGO := $(if $(wildcard $(TARGET)),$(if $(shell strings $(TARGET) | grep -E "GLAZER_PGO_OPTIMIZED"),yes))
-
 # Detect compiler family for LTO flags and PGO format.
 # AppleClang uses ld64 which handles thin-LTO natively — no -fuse-ld=lld.
 # Upstream Clang on Linux emits LLVM bitcode that requires lld.
 # GCC uses -flto=auto with GNU ld/gold.
-CXX_ID := $(shell $(CXX) --version 2>&1 | head -1)
-IS_CLANG := $(findstring clang,$(CXX_ID))
-IS_APPLE := $(findstring Apple,$(CXX_ID))
+CXX_ID       := $(shell $(CXX) --version 2>&1 | head -1)
+IS_CLANG     := $(findstring clang,$(CXX_ID))
+IS_APPLE     := $(findstring Apple,$(CXX_ID))
 LLVM_VERSION := $(shell $(CXX) --version 2>&1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1 | cut -d. -f1)
 # For clang, determine llvm-profdata tool name
 ifdef IS_CLANG
@@ -72,7 +71,7 @@ endif
 # to pkg-config first in case a future libjq release adds one.
 # Note: the hash must be kept in a variable so Make doesn't treat it as a
 # comment character when it expands the $(shell ...) line.
-HASH     := \#
+HASH    := \#
 HAVE_JQ := $(shell pkg-config --exists jq 2>/dev/null && echo 1 || \
   (printf '$(HASH)include <jq.h>\nint main(){jq_init();return 0;}\n' | \
    $(CXX) -xc++ - -ljq -o /dev/null >/dev/null 2>&1 && echo 1 || echo 0))
@@ -104,13 +103,11 @@ ASAN     ?= 0
 # glazer_nif.cpp. GLAZER_VERSION is the git describe of the checkout used to
 # build this .so; GLAZER_APP_VERSION is the `vsn` from glazer.app.src;
 # GLAZER_OPT_LEVEL/GLAZER_PGO reflect the flags chosen below.
-GLAZER_VERSION     := $(shell git -C $(BASEDIR) describe --tags --dirty --always --abbrev=6 2>/dev/null | sed 's/g//; s/-dirty/*/')
+GLAZER_VERSION     := $(shell git -C $(APP_DIR) describe --tags --dirty --always --abbrev=6 2>/dev/null | sed 's/g//; s/-dirty/*/')
 GLAZER_APP_VERSION := $(shell sed -nE 's/.*\{vsn, *"([^"]+)".*/\1/p' $(BASEDIR)/src/*.app.src | head -n1)
 CXXFLAGS += -DGLAZER_VERSION='"$(GLAZER_VERSION)"' -DGLAZER_APP_VERSION='"$(GLAZER_APP_VERSION)"'
 
-ifeq ($(DEBUG),1)
-  CXXFLAGS += -O0 -g -DGLAZER_OPT_LEVEL='"none"'
-else ifeq ($(ASAN),1)
+ifeq ($(ASAN),1)
   # Compile with ASan instrumentation but do NOT link -fsanitize=address.
   # Linking it would embed or reference the runtime inside the NIF .so; when
   # the Erlang VM dlopen's that .so the runtime loads too late and ASan aborts.
@@ -142,31 +139,26 @@ endif
 
 all: compile
 
-ifeq ($(OPTIMIZE),1)
+SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(if $(filter 0,$(OPTIMIZE)),no,yes)))
+
+ifeq ($(SHOULD_OPTIMIZE),yes)
 compile: optimize
 else
 compile: $(TARGET)
 endif
 
-optimize: DEBUG=$(DEBUG) ASAN=$(ASAN)
-optimize: $(TARGET) $(HAS_PGO)
-ifeq ($(OPTIMIZE),0)
-	@echo "===> OPTIMIZE=0: skipping PGO build for dependency"
-else
+optimize: HAS_PGO=$(if $(shell strings $(TARGET) 2>/dev/null | grep "GLAZER_PGO_OPTIMIZED"),yes)
+optimize:
 ifeq ($(HAS_PGO),yes)
-	@echo "===> $(TARGET) is already PGO-optimized. Skipping PGO rebuild."
+	@echo "===> Skipping PGO rebuild: $(TARGET) is already PGO-optimized."
 else
-	@echo "===> Building PGO optimized NIF library"
+	@echo "===> TARGET: $(TARGET)"
+	@echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"
 	@echo "===> PGO step 1/3: build instrumented binary"
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all
-	@cd $(BASEDIR) && env -u OPTIMIZE REBAR_BARE_COMPILER_OUTPUT_DIR="$(REBAR_BARE_COMPILER_OUTPUT_DIR)" $(REBAR) compile
+	@cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
 	@echo "===> PGO step 2/3: collect profile data"
-	@if [ -x "$(BASEDIR)/bin/pgo-profile.es" ]; then \
-	  cd $(BASEDIR) && ./bin/pgo-profile.es; \
-	else \
-	  echo "Warning: pgo-profile.es not found or not executable. Skipping PGO profiling."; \
-	  echo "This is expected when building Glazer as a dependency from Hex."; \
-	fi
+	@ERL_LIBS= REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(BASEDIR)/bin/pgo-profile.es
 ifdef IS_CLANG
 	@echo "===> PGO step 2b/3: merge clang profile data ($(LLVM_PROFDATA))"
 	@if [ -f "$(PGO_DIR)/default.profdata" ]; then \
@@ -187,11 +179,10 @@ ifdef IS_CLANG
 	fi
 endif
 	@echo "===> PGO step 3/3: rebuild with profile data"
-	@rm -f $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
+	@rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all
-	@cd $(BASEDIR) && env -u OPTIMIZE REBAR_BARE_COMPILER_OUTPUT_DIR="$(REBAR_BARE_COMPILER_OUTPUT_DIR)" $(REBAR) compile
-	@echo "===> PGO build complete"
-endif
+	@cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
+	@echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"
 endif
 
 # Locate the ASan runtime for LD_PRELOAD on Linux.
@@ -204,7 +195,7 @@ _ASAN_CLANG       := $(_CXX_RESOURCE_DIR)/lib/linux/libclang_rt.asan-$(_HOST_ARC
 _ASAN_GCC         := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
 ASAN_RT           := $(strip $(if $(wildcard $(_ASAN_CLANG)),$(_ASAN_CLANG),\
                        $(if $(filter-out $(notdir $(_ASAN_GCC)),$(_ASAN_GCC)),$(_ASAN_GCC))))
-ASAN_PRELOAD       = LD_PRELOAD="$(ASAN_RT)"
+ASAN_PRELOAD      := LD_PRELOAD="$(ASAN_RT)"
 LSAN_SUPPRESSIONS := $(abspath lsan_suppressions.txt)
 
 leak ?= 0
@@ -222,10 +213,10 @@ memcheck:
 	@cd .. && ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=$(DETECT_LEAKS)" \
 	  LSAN_OPTIONS="suppressions=$(LSAN_SUPPRESSIONS)" \
 	  $(ASAN_PRELOAD) \
-	  $(REBAR) eunit 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^===> \(Verifying\|Analyzing\|Compile (apps)\|Not adding provider\|Evaluating config\)"
+	  $(REBAR) as test eunit 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^===> \(Verifying\|Analyzing\|Compile (apps)\|Not adding provider\|Evaluating config\)"
 	@echo "===> Rebuilding normal NIF (removing ASan instrumentation)"
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) $(if $(VERBOSE),VERBOSE=1) clean all
-	@cd .. && $(REBAR) compile
+	cd .. && REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
 
 info:
 	@echo -ne "TARGET: "
@@ -246,12 +237,12 @@ $(TARGET): $(OBJ) | $(PRIV_DIR)
 # absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
 # GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
 $(OBJ): $(SRC) $(wildcard *.hpp) $(if $(filter use,$(PGO)),force) \
-        | $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
+        $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(PRIV_DIR) $(OBJ_DIR) $(PGO_DIR):
 	@mkdir -p $@
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -vf $(OBJ) $(TARGET)
 	rm -rf $(PGO_DIR)
