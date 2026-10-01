@@ -8,6 +8,7 @@ defmodule Mix.Tasks.BenchJson do
 
   Libraries benchmarked (when available):
     - glazer      (this library - C++ NIF)
+    - glazer+utf8 (glazer with `validate_utf8`, which torque always does)
     - torque      (Rust sonic-rs NIF)
     - simdjsone   (simdjson NIF)
     - jiffy       (jiffy NIF)
@@ -20,7 +21,7 @@ defmodule Mix.Tasks.BenchJson do
   """
   use Mix.Task
 
-  @lib_w 9
+  @lib_w 12
   @col_w 7
   @sep   2
 
@@ -64,13 +65,16 @@ defmodule Mix.Tasks.BenchJson do
     base = [
       {"glazer",
        &:glazer_json.decode/1,
+       fn t -> :glazer_json.encode(t) end},
+      {"glazer+utf8",
+       fn b -> :glazer_json.decode(b, [:validate_utf8]) end,
        fn t -> :glazer_json.encode(t) end}
     ]
 
     optional_candidates = [
       {"torque",
        fn b -> {:ok, r} = apply(Torque, :decode, [b]); r end,
-       fn t -> {:ok, r} = apply(Torque, :encode, [t]); r end,
+       fn t -> apply(Torque, :encode_to_iodata, [t]) end,
        Torque},
 
       {"simdjsone",
@@ -166,8 +170,9 @@ defmodule Mix.Tasks.BenchJson do
         pid = spawn(fn ->
           result =
             try do
-              dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
               decoded = decode.(bin)
+              Mix.Tasks.Bench.Common.repeat(div(n, 10), fn -> encode.(decode.(bin)) end)
+              dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
               et = Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
               {:ok, dt, et}
             rescue
