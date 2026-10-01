@@ -19,8 +19,8 @@ defmodule GlazerIntegration.MixProject do
 
   defp deps do
     [
-      {:glazer, github: "saleyn/glazer", branch: "test", manager: :mix},
-      #{:glazer, "~> 1.1"},
+      #{:glazer, github: "saleyn/glazer", branch: "test", manager: :mix},
+      {:glazer, "~> 1.1"},
       {:jason, "~> 1.4", only: :test}
     ]
   end
