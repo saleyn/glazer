@@ -47,8 +47,9 @@ inline T power(T a, size_t b) {
 // accounting reflects the real work done before returning to Erlang.
 //-----------------------------------------------------------------------------
 
-static constexpr size_t BYTES_PER_REDUCTION = 20;
-static constexpr size_t REDUCTION_COUNT     = 4000;
+static constexpr size_t BYTES_PER_REDUCTION       = 20;
+static constexpr size_t REDUCTION_COUNT           = 4000;
+static constexpr size_t REDUCTION_CHECK_THRESHOLD = 512;
 
 // Report the percentage of a timeslice consumed while processing `bytes`
 // bytes, so the scheduler updates the process's reduction count instead of
@@ -59,9 +60,10 @@ static constexpr size_t REDUCTION_COUNT     = 4000;
 // ignored: work that's long enough to need preemption is offloaded to a
 // dirty scheduler instead, so this function is only reached for inline
 // (small, sub-DIRTY_THRESHOLD) calls, where it serves purely to keep the
-// reduction count accurate.
+// reduction count accurate. Tiny payloads are skipped entirely.
 inline void update_reduction_count([[maybe_unused]] ErlNifEnv* env, [[maybe_unused]] size_t bytes) {
 #if ERL_NIF_MAJOR_VERSION > 2 || (ERL_NIF_MAJOR_VERSION == 2 && ERL_NIF_MINOR_VERSION >= 4)
+  if (bytes < REDUCTION_CHECK_THRESHOLD) return;
   size_t reds = bytes / BYTES_PER_REDUCTION;
   int percent = static_cast<int>(reds * 100 / REDUCTION_COUNT);
   if (percent < 1)   percent = 1;
@@ -106,6 +108,7 @@ struct SmallTermVec {
 
   ERL_NIF_TERM*       data()        const { return m_data; }
   size_t              size()        const { return m_len;  }
+  bool                empty()       const { return m_len == 0; }
   void                set_size(size_t n)  { m_len = n; }
 
   ERL_NIF_TERM  to_erl_list(ErlNifEnv* env) const {
@@ -121,18 +124,32 @@ struct SmallTermVec {
   template <bool Dedupe = false, typename T = SmallTermVec<16>>
   ERL_NIF_TERM to_erl_map(ErlNifEnv* env, const T& keys) const {
     auto n = std::min(keys.size(), m_len);
-    ERL_NIF_TERM map;
-    if (!enif_make_map_from_arrays(env, keys.data(), m_data, unsigned(n), &map)) [[unlikely]]
-      map = 0;
+    ERL_NIF_TERM map = 0;
 
-    if (Dedupe && !map) {
-      // Dedupe, keeping last value for duplicate keys.
+    if (!enif_make_map_from_arrays(env, keys.data(), m_data, unsigned(n), &map)) [[unlikely]] {
+      // ERTS rejects maps with duplicate keys. Fall back to the intended
+      // JSON semantics: last occurrence wins. This is also used for the
+      // object_as_tuple dedupe mode, so Dedupe controls the same behavior.
       map = enif_make_new_map(env);
-      for (auto p = m_data, q = keys.data(), e = p+n; p != e; ++p, ++q) {
+      for (size_t i = 0; i < n; ++i) {
         ERL_NIF_TERM next;
-        enif_make_map_put(env, map, *q, *p, &next);
+        enif_make_map_put(env, map, keys.data()[i], m_data[i], &next);
         map = next;
       }
+    }
+
+    if (Dedupe && map) {
+      // Explicit dedupe mode keeps the last value as well, but the fast-path
+      // map constructor already returns a valid map when it succeeds, so we
+      // only need a second pass when duplicate removal is required for an
+      // already-constructed map that still contains repeated keys.
+      ERL_NIF_TERM deduped = enif_make_new_map(env);
+      for (size_t i = 0; i < n; ++i) {
+        ERL_NIF_TERM next;
+        enif_make_map_put(env, deduped, keys.data()[i], m_data[i], &next);
+        deduped = next;
+      }
+      return deduped;
     }
 
     return map;
@@ -209,18 +226,36 @@ struct OutBuf {
   OutBuf() : m_data(m_inline), m_len(0), m_cap(INLINE) {}
   ~OutBuf() { if (m_data != m_inline) free(m_data); }
 
-  void ensure(size_t need) {
-    if (m_len + need <= m_cap) [[likely]] return;
-    size_t nc = m_cap * 2;
-    while (nc < m_len + need) nc *= 2;
+  void clear() noexcept { m_len = 0; }
+
+  void reserve(size_t need) {
+    if (need <= m_cap) [[likely]] return;
+    size_t nc = m_cap;
+    if (nc < 256) nc = 256;
+    while (nc < need) nc *= 2;
     if (m_data == m_inline) [[unlikely]] {
-      // Can't realloc a stack array — first spill to the heap requires a copy.
       auto nb = static_cast<char*>(malloc(nc));
       if (!nb) [[unlikely]] throw OutOfMemory();
       memcpy(nb, m_data, m_len);
       m_data = nb;
     } else {
-      // May resize in place (no copy) when the allocator can extend the block.
+      auto resized = static_cast<char*>(realloc(m_data, nc));
+      if (!resized) [[unlikely]] throw OutOfMemory();
+      m_data = resized;
+    }
+    m_cap = nc;
+  }
+
+  void ensure(size_t need) {
+    if (m_len + need <= m_cap) [[likely]] return;
+    size_t nc = m_cap * 2;
+    while (nc < m_len + need) nc *= 2;
+    if (m_data == m_inline) [[unlikely]] {
+      auto nb = static_cast<char*>(malloc(nc));
+      if (!nb) [[unlikely]] throw OutOfMemory();
+      memcpy(nb, m_data, m_len);
+      m_data = nb;
+    } else {
       auto resized = static_cast<char*>(realloc(m_data, nc));
       if (!resized) [[unlikely]] throw OutOfMemory();
       m_data = resized;
@@ -231,6 +266,25 @@ struct OutBuf {
   void push(char c)                  { ensure(1); m_data[m_len++] = c; }
   void push(const char* s, size_t n) { ensure(n); memcpy(m_data + m_len, s, n); m_len += n; }
   void push(std::string_view sv)     { push(sv.data(), sv.size()); }
+
+  void push_quoted(std::string_view sv) {
+    const size_t n = sv.size();
+    ensure(n + 2);
+    char* dst = m_data + m_len;
+    *dst++ = '"';
+    if (n != 0) [[likely]]
+      memcpy(dst, sv.data(), n);
+    dst += n;
+    *dst++ = '"';
+    m_len = static_cast<size_t>(dst - m_data);
+  }
+
+  // Use functions below with caution: they do not check capacity and may
+  // overwrite memory if used incorrectly. Call `ensure()` to make sure there is
+  // enough space before calling these functions.
+  void unsafe_push(char c)                  { m_data[m_len++] = c; }
+  void unsafe_push(const char* s, size_t n) { memcpy(m_data + m_len, s, n); m_len += n; }
+  void unsafe_push(std::string_view sv)     { unsafe_push(sv.data(), sv.size()); }
 
   std::string_view view() const      { return {m_data, m_len}; }
 

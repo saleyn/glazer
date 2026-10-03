@@ -115,8 +115,8 @@ ifeq ($(ASAN),1)
   # from the runtime preloaded via LD_PRELOAD (Linux only — see Makefile).
   CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer -DGLAZER_OPT_LEVEL='"O1"'
 else
-  CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
-  LDFLAGS  += $(LINK_FLAGS)
+  CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native -fdata-sections -ffunction-sections $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
+  LDFLAGS  += $(LINK_FLAGS) -Wl,--gc-sections
   ifeq ($(PGO),generate)
     CXXFLAGS += -fprofile-generate=$(PGO_DIR)
     LDFLAGS  += -fprofile-generate=$(PGO_DIR)
@@ -147,43 +147,43 @@ else
 compile: $(TARGET)
 endif
 
-optimize: HAS_PGO=$(if $(shell strings $(TARGET) 2>/dev/null | grep "GLAZER_PGO_OPTIMIZED"),yes)
 optimize:
-ifeq ($(HAS_PGO),yes)
-	@echo "===> Skipping PGO rebuild: $(TARGET) is already PGO-optimized."
-else
-	@echo "===> TARGET: $(TARGET)"
-	@echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"
-	@echo "===> PGO step 1/3: build instrumented binary"
-	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all
-	@cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
-	@echo "===> PGO step 2/3: collect profile data"
-	@ERL_LIBS= REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(BASEDIR)/bin/pgo-profile.es
-ifdef IS_CLANG
-	@echo "===> PGO step 2b/3: merge clang profile data ($(LLVM_PROFDATA))"
-	@if [ -f "$(PGO_DIR)/default.profdata" ]; then \
-	  echo "Profile already merged"; \
-	elif ls $(PGO_DIR)/*.profraw >/dev/null 2>&1; then \
-	  TOOL="$(LLVM_PROFDATA)"; \
-	  if ! command -v $$TOOL >/dev/null 2>&1; then \
-	    echo "Error: $$TOOL not found in PATH."; \
-	    echo "Available llvm tools:"; \
-	    ls -la /usr/bin/llvm-* 2>/dev/null || echo "  (none found)"; \
-	    exit 1; \
-	  fi; \
-	  $$TOOL merge -o $(PGO_DIR)/default.profdata $(PGO_DIR)/*.profraw && \
-	  echo "Merged profile data successfully" || \
-	  (echo "Error: Failed to merge profile data"; exit 1); \
+	@if [ -f "$(TARGET)" -a -z "$(REBUILD)" ] && strings "$(TARGET)" 2>/dev/null | grep -q "GLAZER_PGO_OPTIMIZED"; then \
+	  echo "===> Skipping PGO rebuild: $(notdir $(TARGET)) is already PGO-optimized"; \
+	  exit 0; \
 	else \
-	  echo "No .profraw files found in $(PGO_DIR)"; \
+	  echo "===> TARGET: $(TARGET)"; \
+	  echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"; \
+	  echo "===> PGO step 1/3: build instrumented binary"; \
+	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all; \
+	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); \
+	  echo "===> PGO step 2/3: collect profile data"; \
+	  ERL_LIBS= REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(BASEDIR)/bin/pgo-profile.es; \
+	  if [ -n "$(IS_CLANG)" ]; then \
+	    echo "===> PGO step 2b/3: merge clang profile data ($(LLVM_PROFDATA))"; \
+	    if [ -f "$(PGO_DIR)/default.profdata" ]; then \
+	      echo "Profile already merged"; \
+	    elif ls $(PGO_DIR)/*.profraw >/dev/null 2>&1; then \
+	      TOOL="$(LLVM_PROFDATA)"; \
+	      if ! command -v $$TOOL >/dev/null 2>&1; then \
+	        echo "Error: $$TOOL not found in PATH."; \
+	        echo "Available llvm tools:"; \
+	        ls -la /usr/bin/llvm-* 2>/dev/null || echo "  (none found)"; \
+	        exit 1; \
+	      fi; \
+	      $$TOOL merge -o $(PGO_DIR)/default.profdata $(PGO_DIR)/*.profraw && \
+	      echo "Merged profile data successfully" || \
+	      (echo "Error: Failed to merge profile data"; exit 1); \
+	    else \
+	      echo "No .profraw files found in $(PGO_DIR)"; \
+	    fi; \
+	  fi; \
+	  echo "===> PGO step 3/3: rebuild with profile data"; \
+	  rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so; \
+	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all; \
+	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); \
+	  echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"; \
 	fi
-endif
-	@echo "===> PGO step 3/3: rebuild with profile data"
-	@rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so
-	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all
-	@cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
-	@echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"
-endif
 
 # Locate the ASan runtime for LD_PRELOAD on Linux.
 # macOS memcheck is not supported (DYLD_INSERT_LIBRARIES is dropped by the

@@ -22,9 +22,11 @@ defmodule Glazer.MixProject do
     [extra_applications: [:logger]]
   end
 
-  # Compile benchmark tasks only in :bench environment
+  # Benchmark task files live under lib/mix/tasks and must be compiled for
+  # both :bench and :test so the task-level regression tests can load them.
   defp elixirc_paths(:bench), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib/glazer"]
+  defp elixirc_paths(:test),  do: ["lib", "lib/glazer"]
+  defp elixirc_paths(_),      do: ["lib/glazer"]
 
   # Disable protocol consolidation in dev/test so @derive works properly for
   # structs defined outside lib/ (e.g. in `mix run script.exs`, `mix run -e`,

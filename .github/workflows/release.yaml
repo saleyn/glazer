@@ -1,6 +1,8 @@
 name: Tag and Release
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [closed]
     branches: [main]
@@ -14,7 +16,7 @@ jobs:
   detect:
     name: Detect latest hex.pm release
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
     outputs:
       should_tag: ${{ steps.resolve.outputs.should_tag }}
       version:    ${{ steps.resolve.outputs.version }}

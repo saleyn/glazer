@@ -69,9 +69,9 @@ distclean: clean
 	@rm -rf obj _build .perf.txt
 
 test:
-	@rm -rf _build/test obj priv/glazer.so
-	@$(REBAR) eunit
-	@mix test
+	@#rm -rf _build/test obj priv/glazer.so
+	@OPTIMIZE=1 mix test
+	@OPTIMIZE=1 $(REBAR) as test eunit
 
 check:
 	@$(REBAR) xref
@@ -90,7 +90,7 @@ benchmark bench: do-bench
 do-bench: deps
 	@rm -f .perf.txt
 	@$(MAKE) PRIV_DIR=$(PRIV_DIR) optimize
-	PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix bench | tee .perf.txt;
+	$(if $(PARALLEL),PARALLEL=$(PARALLEL) )MIX_ENV=bench mix bench | tee .perf.txt;
 
 # ELIXIR_ERL_OPTIONS quiets rustler_precompiled's [debug] "Copying NIF from
 # cache and extracting..." noise (torque/yaml_rustler/rusty_csv all use it)
@@ -99,7 +99,7 @@ do-bench: deps
 
 bench-json bench-yaml bench-csv: export ELIXIR_ERL_OPTIONS = -logger level warning
 bench-json bench-yaml bench-csv: deps
-	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) MIX_ENV=bench mix $@
+	@PARALLEL=$(if $(PARALLEL),$(PARALLEL),1) TOP=$(if $(TOP),$(TOP),) MIX_ENV=bench mix $@ $(if $(TOP),--top=$(TOP))
 
 # Profile-guided optimisation: instrument → run tests as workload → rebuild.
 # Usage: make optimize
@@ -108,7 +108,10 @@ bench-json bench-yaml bench-csv: deps
 optimize:
 	@$(MAKE) -C c_src PRIV_DIR=$(PRIV_DIR) $@
 
-deps:
+deps: mix.lock
+
+mix.lock: mix.exs
+	@rm -f mix.lock
 	@mix deps.get
 
 publish: docs
@@ -144,5 +147,5 @@ bump-version:
 	fi
 
 .PHONY: all help doc compile clean distclean test cover check dialyzer memcheck nif \
-        optimize benchmark bench publish deprecate bump-version deps \
+        optimize benchmark bench publish deprecate bump-version \
         bench-yaml bench-json bench-csv do-bench

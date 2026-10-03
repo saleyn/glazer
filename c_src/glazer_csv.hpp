@@ -434,6 +434,144 @@ static const char* find_csv_special(const char* p, const char* end, char delim) 
 //-----------------------------------------------------------------------------
 
 struct CSVDecoder {
+  CSVDecoder(ErlNifEnv* e, const CSVDecodeOpts& o, const char* data, size_t size,
+             ERL_NIF_TERM input_bin)
+    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size), m_input_bin(input_bin) {}
+
+  // Decodes the entire input.
+  // Returns:
+  //   - success: {true, #{headers => nil|[binary()|atom()], data => [[term()]]|[map()]}}
+  //   - failure: {false, atom | binary}
+  //
+  // When `headers` is set the first row is extracted as the `headers` value
+  // (applying `{headers, atom|existing_atom|charlist}` if requested). Subsequent rows are
+  // emitted as field lists (default), as tuples when {return, tuple} is set,
+  // or as maps keyed by the header names when {return, map} is also set.
+  // duplicate_header is returned if a header row contains duplicate column
+  // names and map output is requested.
+  std::tuple<bool, ERL_NIF_TERM> decode()
+  {
+    SmallTermVec<64> fields;
+    SmallTermVec<64> header;
+    std::vector<ERL_NIF_TERM> rows;
+    // Conservative row-count estimate (4 B/row minimum, e.g. "a,b\n") avoids
+    // the ~15 doubling reallocations a 25K-row file would otherwise pay as
+    // `rows` grows one push_back at a time; an overestimate only wastes
+    // unused capacity, never time, so erring high for short rows is fine.
+    rows.reserve((m_end - m_beg) / 4);
+    size_t row_num  = 0;
+    bool err = false;
+    auto rec = read_record(fields, err);
+
+    if (!rec) [[unlikely]]
+      goto DONE;
+
+    // Populate header: explicit list beats reading a header row from the data.
+    if (m_opts.explicit_headers) {
+      for (auto h : m_opts.header_list)
+        header.push_back(h);
+      // Do NOT consume a data row as the header.
+    } else if (m_opts.headers) {
+      for (auto field : fields)
+        header.push_back(make_header_key(field));
+      rec = read_record(fields, err);
+    }
+
+    // Duplicate header names are illegal when rows are emitted as maps; map
+    // keys are unique in Erlang, and a duplicate column list would otherwise
+    // silently collapse to the last value. This check must happen before the
+    // first row is converted to a map, not later in `to_erl_map()`.
+    if (m_opts.return_kind == CSVReturnKind::map && !header.empty()) {
+      for (size_t i = 0; i < header.size(); ++i)
+        for (size_t j = i + 1; j < header.size(); ++j)
+          if (enif_is_identical(header[i], header[j]))
+            return std::make_tuple(false, AM_DUPLICATE_HEADER);
+    }
+
+    // Skip the requested number of leading data rows.
+    {
+      size_t skipped = 0;
+      while (rec && skipped < m_opts.skip_rows) {
+        rec = read_record(fields, err);
+        ++skipped;
+      }
+    }
+
+    // Data rows: maps, tuples, or field lists per {return, ...} (map implies
+    // headers — enforced by parse_csv_decode_opts). Dispatch on return_kind
+    // once here rather than per-record inside the loop below.
+    switch (m_opts.return_kind) {
+      case CSVReturnKind::map:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          ERL_NIF_TERM map = fields.to_erl_map(m_env, header);
+          if (!map) [[unlikely]]
+            return std::make_tuple(false, AM_DUPLICATE_HEADER);
+          rows.push_back(map);
+          rec = read_record(fields, err);
+        }
+        break;
+
+      case CSVReturnKind::tuple:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          rows.push_back(fields.to_erl_tuple(m_env));
+          rec = read_record(fields, err);
+        }
+        break;
+
+      case CSVReturnKind::list:
+        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
+          ++row_num;
+          if (!m_opts.fields.empty()) {
+            if (size_t col = convert_fields(fields))
+              return std::make_tuple(
+                      false,
+                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
+                                       enif_make_uint64(m_env, row_num),
+                                       enif_make_uint64(m_env, col)));
+          }
+          rows.push_back(fields.to_erl_list(m_env));
+          rec = read_record(fields, err);
+        }
+        break;
+    }
+
+  DONE:
+    if (err) [[unlikely]]
+      return std::make_tuple(false, AM_UNTERMINATED_QUOTED_FIELD);
+
+    ERL_NIF_TERM headers_term = m_opts.headers
+      ? enif_make_list_from_array(m_env, header.data(), unsigned(header.size()))
+      : AM_NIL;
+    ERL_NIF_TERM data_term =
+      enif_make_list_from_array(m_env, rows.data(), unsigned(rows.size()));
+
+    ERL_NIF_TERM keys[2] = { AM_HEADERS, AM_DATA };
+    ERL_NIF_TERM vals[2] = { headers_term, data_term };
+    ERL_NIF_TERM result;
+    enif_make_map_from_arrays(m_env, keys, vals, 2, &result);
+
+    return std::make_tuple(true, result);
+  }
+  
+private:
   ErlNifEnv*           m_env;
   const CSVDecodeOpts& m_opts;
   const char*          m_beg;
@@ -441,13 +579,9 @@ struct CSVDecoder {
   const char*          m_end;
   ERL_NIF_TERM         m_input_bin; // original binary term — used for zero-copy sub_binary
 
-  CSVDecoder(ErlNifEnv* e, const CSVDecodeOpts& o, const char* data, size_t size,
-             ERL_NIF_TERM input_bin)
-    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size), m_input_bin(input_bin) {}
-
   static bool is_eol(char c) { return c == '\n' || c == '\r'; }
 
-  void skip_eol() {
+  inline void skip_eol() {
     if (m_p < m_end && *m_p == '\r') ++m_p;
     if (m_p < m_end && *m_p == '\n') ++m_p;
   }
@@ -458,7 +592,7 @@ struct CSVDecoder {
   // long as any sub-binary referencing it does.
   // With copy_strings == true: always allocates a fresh binary, allowing the
   // GC to reclaim the input buffer independently of the decoded results.
-  ERL_NIF_TERM make_raw_field_term(std::string_view sv)
+  inline ERL_NIF_TERM make_raw_field_term(std::string_view sv)
   {
     return make_span_term(m_env, m_input_bin, m_beg, m_end, sv, m_opts.copy_strings);
   }
@@ -677,128 +811,6 @@ struct CSVDecoder {
       cps.push_back(enif_make_uint(m_env, decode_utf8(p, end)));
     return enif_make_list_from_array(m_env, cps.data(), unsigned(cps.size()));
   }
-
-  // Decodes the entire input.
-  // Returns:
-  //   - success: {true, #{headers => nil|[binary()|atom()], data => [[term()]]|[map()]}}
-  //   - failure: {false, atom | binary}
-  //
-  // When `headers` is set the first row is extracted as the `headers` value
-  // (applying `{headers, atom|existing_atom|charlist}` if requested). Subsequent rows are
-  // emitted as field lists (default), as tuples when {return, tuple} is set,
-  // or as maps keyed by the header names when {return, map} is also set.
-  // duplicate_header is returned if a header row contains duplicate column
-  // names and map output is requested.
-  std::tuple<bool, ERL_NIF_TERM> decode()
-  {
-    SmallTermVec<64> fields;
-    SmallTermVec<64> header;
-    std::vector<ERL_NIF_TERM> rows;
-    // Conservative row-count estimate (4 B/row minimum, e.g. "a,b\n") avoids
-    // the ~15 doubling reallocations a 25K-row file would otherwise pay as
-    // `rows` grows one push_back at a time; an overestimate only wastes
-    // unused capacity, never time, so erring high for short rows is fine.
-    rows.reserve((m_end - m_beg) / 4);
-    size_t row_num  = 0;
-    bool err = false;
-    auto rec = read_record(fields, err);
-
-    if (!rec) [[unlikely]]
-      goto DONE;
-
-    // Populate header: explicit list beats reading a header row from the data.
-    if (m_opts.explicit_headers) {
-      for (auto h : m_opts.header_list)
-        header.push_back(h);
-      // Do NOT consume a data row as the header.
-    } else if (m_opts.headers) {
-      for (auto field : fields)
-        header.push_back(make_header_key(field));
-      rec = read_record(fields, err);
-    }
-
-    // Skip the requested number of leading data rows.
-    {
-      size_t skipped = 0;
-      while (rec && skipped < m_opts.skip_rows) {
-        rec = read_record(fields, err);
-        ++skipped;
-      }
-    }
-
-    // Data rows: maps, tuples, or field lists per {return, ...} (map implies
-    // headers — enforced by parse_csv_decode_opts). Dispatch on return_kind
-    // once here rather than per-record inside the loop below.
-    switch (m_opts.return_kind) {
-      case CSVReturnKind::map:
-        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
-          ++row_num;
-          if (!m_opts.fields.empty()) {
-            if (size_t col = convert_fields(fields))
-              return std::make_tuple(
-                      false,
-                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                       enif_make_uint64(m_env, row_num),
-                                       enif_make_uint64(m_env, col)));
-          }
-          ERL_NIF_TERM map = fields.to_erl_map(m_env, header);
-          if (!map) [[unlikely]]
-            return std::make_tuple(false, AM_DUPLICATE_HEADER);
-          rows.push_back(map);
-          rec = read_record(fields, err);
-        }
-        break;
-
-      case CSVReturnKind::tuple:
-        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
-          ++row_num;
-          if (!m_opts.fields.empty()) {
-            if (size_t col = convert_fields(fields))
-              return std::make_tuple(
-                      false,
-                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                       enif_make_uint64(m_env, row_num),
-                                       enif_make_uint64(m_env, col)));
-          }
-          rows.push_back(fields.to_erl_tuple(m_env));
-          rec = read_record(fields, err);
-        }
-        break;
-
-      case CSVReturnKind::list:
-        while (rec && (m_opts.limit == 0 || row_num < m_opts.limit)) {
-          ++row_num;
-          if (!m_opts.fields.empty()) {
-            if (size_t col = convert_fields(fields))
-              return std::make_tuple(
-                      false,
-                      enif_make_tuple3(m_env, AM_INVALID_FIELD_VALUE,
-                                       enif_make_uint64(m_env, row_num),
-                                       enif_make_uint64(m_env, col)));
-          }
-          rows.push_back(fields.to_erl_list(m_env));
-          rec = read_record(fields, err);
-        }
-        break;
-    }
-
-  DONE:
-    if (err) [[unlikely]]
-      return std::make_tuple(false, AM_UNTERMINATED_QUOTED_FIELD);
-
-    ERL_NIF_TERM headers_term = m_opts.headers
-      ? enif_make_list_from_array(m_env, header.data(), unsigned(header.size()))
-      : AM_NIL;
-    ERL_NIF_TERM data_term =
-      enif_make_list_from_array(m_env, rows.data(), unsigned(rows.size()));
-
-    ERL_NIF_TERM keys[2] = { AM_HEADERS, AM_DATA };
-    ERL_NIF_TERM vals[2] = { headers_term, data_term };
-    ERL_NIF_TERM result;
-    enif_make_map_from_arrays(m_env, keys, vals, 2, &result);
-
-    return std::make_tuple(true, result);
-  }
 };
 
 //-----------------------------------------------------------------------------
@@ -806,14 +818,78 @@ struct CSVDecoder {
 //-----------------------------------------------------------------------------
 
 struct CSVEncoder {
+  CSVEncoder(ErlNifEnv* e, const CSVEncodeOpts& o, OutBuf& out)
+    : m_env(e), m_opts(o), m_out(out), m_err(""), m_err_term(AM_NIL) {}
+
+  ErlNifEnv*   env()       const { return m_env;      }
+  const char*  err()       const { return m_err;      }
+  ERL_NIF_TERM err_term()  const { return m_err_term; }
+
+  // `term` is a list of rows (each a list of fields), or — with `headers` —
+  // a list of maps.
+  bool encode(ERL_NIF_TERM term)
+  {
+    if (!enif_is_list(m_env, term)) { m_err = "expected a list of rows"; return false; }
+
+    if (enif_is_empty_list(m_env, term)) return true;
+
+    if (m_opts.headers) {
+      std::vector<ERL_NIF_TERM> header;
+
+      if (m_opts.explicit_headers) {
+        // Use the explicitly given column order/names.
+        header = m_opts.header_list;
+      } else {
+        // Determine column order from the first row's map keys.
+        ERL_NIF_TERM head, tail = term;
+        enif_get_list_cell(m_env, tail, &head, &tail);
+        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+          return error("headers option requires rows to be maps", head);
+
+        ERL_NIF_TERM key, val;
+        auto it = MapIterator::create(m_env, head);
+        if (!it) [[unlikely]]
+          return error("failed to create a map iterator", AM_NIL);
+        while (it->get_pair(&key, &val)) {
+          header.push_back(key);
+          it->next();
+        }
+      }
+
+      // Emit header row.
+      for (size_t i = 0; i < header.size(); ++i) {
+        if (i > 0) m_out.push(m_opts.delimiter);
+        if (!encode_field(header[i])) [[unlikely]]
+          return error("cannot encode CSV header", header[i]);
+      }
+      m_out.push(m_opts.line_ending);
+
+      ERL_NIF_TERM row, rest = term;
+      while (enif_get_list_cell(m_env, rest, &row, &rest)) {
+        if (enif_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+          return error("headers option requires rows to be maps", row);
+        if (!encode_map_row(row, header)) [[unlikely]]
+          return false;
+      }
+      return true;
+    }
+
+    ERL_NIF_TERM row, rest = term;
+    while (enif_get_list_cell(m_env, rest, &row, &rest)) {
+      if (!enif_is_list(m_env, row)) [[unlikely]]
+        return error("expected each row to be a list", row);
+      if (!encode_row(row)) [[unlikely]]
+        return false;
+    }
+    return true;
+  }
+
+private:
   ErlNifEnv*           m_env;
   const CSVEncodeOpts& m_opts;
   OutBuf&              m_out;
   const char*          m_err;
   ERL_NIF_TERM         m_err_term;
-
-  CSVEncoder(ErlNifEnv* e, const CSVEncodeOpts& o, OutBuf& out)
-    : m_env(e), m_opts(o), m_out(out), m_err(""), m_err_term(AM_NIL) {}
 
   void push_field_raw(std::string_view sv)
   {
@@ -904,65 +980,6 @@ struct CSVEncoder {
     return true;
   }
 
-  // `term` is a list of rows (each a list of fields), or — with `headers` —
-  // a list of maps.
-  bool encode(ERL_NIF_TERM term)
-  {
-    if (!enif_is_list(m_env, term)) { m_err = "expected a list of rows"; return false; }
-
-    if (enif_is_empty_list(m_env, term)) return true;
-
-    if (m_opts.headers) {
-      std::vector<ERL_NIF_TERM> header;
-
-      if (m_opts.explicit_headers) {
-        // Use the explicitly given column order/names.
-        header = m_opts.header_list;
-      } else {
-        // Determine column order from the first row's map keys.
-        ERL_NIF_TERM head, tail = term;
-        enif_get_list_cell(m_env, tail, &head, &tail);
-        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
-          return error("headers option requires rows to be maps", head);
-
-        ERL_NIF_TERM key, val;
-        auto it = MapIterator::create(m_env, head);
-        if (!it) [[unlikely]]
-          return error("failed to create a map iterator", AM_NIL);
-        while (it->get_pair(&key, &val)) {
-          header.push_back(key);
-          it->next();
-        }
-      }
-
-      // Emit header row.
-      for (size_t i = 0; i < header.size(); ++i) {
-        if (i > 0) m_out.push(m_opts.delimiter);
-        if (!encode_field(header[i])) [[unlikely]]
-          return error("cannot encode CSV header", header[i]);
-      }
-      m_out.push(m_opts.line_ending);
-
-      ERL_NIF_TERM row, rest = term;
-      while (enif_get_list_cell(m_env, rest, &row, &rest)) {
-        if (enif_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
-          return error("headers option requires rows to be maps", row);
-        if (!encode_map_row(row, header)) [[unlikely]]
-          return false;
-      }
-      return true;
-    }
-
-    ERL_NIF_TERM row, rest = term;
-    while (enif_get_list_cell(m_env, rest, &row, &rest)) {
-      if (!enif_is_list(m_env, row)) [[unlikely]]
-        return error("expected each row to be a list", row);
-      if (!encode_row(row)) [[unlikely]]
-        return false;
-    }
-    return true;
-  }
-private:
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {
     m_err      = err;

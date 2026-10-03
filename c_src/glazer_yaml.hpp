@@ -221,6 +221,72 @@ static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLEncode
 //-----------------------------------------------------------------------------
 
 struct YAMLDecoder {
+  YAMLDecoder(ErlNifEnv*   e,    const  YAMLDecodeOpts& o,
+              const char*  data, size_t size,
+              ERL_NIF_TERM input_bin)
+  : m_env(e), m_opts(o)
+  , m_beg(data), m_p(data), m_end(data + size)
+  , m_input_bin(input_bin), m_use_key_cache(size >= KEY_CACHE_MIN_SIZE)
+  {}
+
+  std::tuple<bool, ERL_NIF_TERM> decode()
+  {
+    skip_blank_and_comment_lines();
+    if (at_end()) [[unlikely]]
+      return std::make_tuple(true, m_opts.null_term);
+
+    size_t indent = peek_indent();
+    ERL_NIF_TERM result;
+    const char* p = m_p + indent;
+    if (p < m_end && (*p == '&' || *p == '*')) {
+      // Root-node anchors are useless in single-document mode (nothing can
+      // alias the root before it completes) — reject rather than mis-parse.
+      m_err = "top-level anchors/aliases are not supported";
+      result = 0;
+    }
+    else if (p < m_end && (*p == '|' || *p == '>')) {
+      // Top-level block scalar document.
+      m_p = p;
+      result = read_block_scalar(*p == '>', indent);
+    }
+    else if (p < m_end && (*p == '[' || *p == '{')) {
+      // Top-level flow document.
+      m_p = p;
+      result = parse_flow_node();
+    }
+    else if (p < m_end && *p == '-' && (p + 1 >= m_end || is_blank(p[1]) || is_break(p[1])))
+      result = parse_sequence(indent);
+    else {
+      // Could be a single top-level scalar document.
+      m_p += indent;
+      const char* save = m_p;
+      // Try mapping first: if the line contains "key:" at top level.
+      if (looks_like_mapping_line()) {
+        m_p = save;
+        result = parse_mapping(indent, /*at_line_start=*/false);
+      } else {
+        result = parse_scalar(indent);
+        skip_blank_and_comment_lines();
+      }
+    }
+
+    if (!result) [[unlikely]] {
+      std::string msg = m_err.empty()
+        ? ("YAML parse error at offset " + std::to_string(m_p - m_beg))
+        : (m_err + " at offset " + std::to_string(m_p - m_beg));
+      return std::make_tuple(false, make_binary(m_env, msg));
+    }
+
+    skip_blank_and_comment_lines();
+    if (!at_end()) [[unlikely]] {
+      std::string msg = "trailing content at offset " + std::to_string(m_p - m_beg);
+      return std::make_tuple(false, make_binary(m_env, msg));
+    }
+
+    return std::make_tuple(true, result);
+  }
+
+private:
   ErlNifEnv*            m_env;
   const YAMLDecodeOpts& m_opts;
   const char*           m_beg;
@@ -236,11 +302,6 @@ struct YAMLDecoder {
 
   static constexpr size_t   KEY_CACHE_MIN_SIZE = 2048;
   static constexpr unsigned MAX_DEPTH = 256;
-
-  YAMLDecoder(ErlNifEnv* e, const YAMLDecodeOpts& o, const char* data, size_t size,
-              ERL_NIF_TERM input_bin)
-    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
-      m_input_bin(input_bin), m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
 
   struct DepthGuard {
     explicit DepthGuard(YAMLDecoder* d) : d(d) { ++d->m_depth; }
@@ -1414,66 +1475,6 @@ struct YAMLDecoder {
     return false;
   }
 
-  // -------------------------------------------------------------------------
-  // Entry point
-  // -------------------------------------------------------------------------
-
-  std::tuple<bool, ERL_NIF_TERM> decode() {
-    skip_blank_and_comment_lines();
-    if (at_end()) [[unlikely]]
-      return std::make_tuple(true, m_opts.null_term);
-
-    size_t indent = peek_indent();
-    ERL_NIF_TERM result;
-    const char* p = m_p + indent;
-    if (p < m_end && (*p == '&' || *p == '*')) {
-      // Root-node anchors are useless in single-document mode (nothing can
-      // alias the root before it completes) — reject rather than mis-parse.
-      m_err = "top-level anchors/aliases are not supported";
-      result = 0;
-    }
-    else if (p < m_end && (*p == '|' || *p == '>')) {
-      // Top-level block scalar document.
-      m_p = p;
-      result = read_block_scalar(*p == '>', indent);
-    }
-    else if (p < m_end && (*p == '[' || *p == '{')) {
-      // Top-level flow document.
-      m_p = p;
-      result = parse_flow_node();
-    }
-    else if (p < m_end && *p == '-' && (p + 1 >= m_end || is_blank(p[1]) || is_break(p[1])))
-      result = parse_sequence(indent);
-    else {
-      // Could be a single top-level scalar document.
-      m_p += indent;
-      const char* save = m_p;
-      // Try mapping first: if the line contains "key:" at top level.
-      if (looks_like_mapping_line()) {
-        m_p = save;
-        result = parse_mapping(indent, /*at_line_start=*/false);
-      } else {
-        result = parse_scalar(indent);
-        skip_blank_and_comment_lines();
-      }
-    }
-
-    if (!result) [[unlikely]] {
-      std::string msg = m_err.empty()
-        ? ("YAML parse error at offset " + std::to_string(m_p - m_beg))
-        : (m_err + " at offset " + std::to_string(m_p - m_beg));
-      return std::make_tuple(false, make_binary(m_env, msg));
-    }
-
-    skip_blank_and_comment_lines();
-    if (!at_end()) [[unlikely]] {
-      std::string msg = "trailing content at offset " + std::to_string(m_p - m_beg);
-      return std::make_tuple(false, make_binary(m_env, msg));
-    }
-
-    return std::make_tuple(true, result);
-  }
-
   // Heuristic: does the current line, read as a plain/quoted scalar key,
   // contain a top-level "key:" / "key: value" separator (i.e. is this a
   // mapping key line)? Restores m_p.
@@ -1525,6 +1526,21 @@ struct YAMLDecoder {
 //-----------------------------------------------------------------------------
 
 struct YAMLEncoder {
+  YAMLEncoder(ErlNifEnv* env, const YAMLEncodeOpts& opts, OutBuf& out)
+    : m_env(env), m_opts(opts), m_out(out), m_err(nullptr), m_err_term(0)
+  {}
+
+  ErlNifEnv*   env()       const { return m_env;      }
+  const char*  err()       const { return m_err;      }
+  ERL_NIF_TERM err_term()  const { return m_err_term; }
+
+  bool encode(ERL_NIF_TERM term) {
+    if (!encode_node(term, 0)) return false;
+    m_out.push('\n');
+    return true;
+  }
+
+private:
   ErlNifEnv*            m_env;
   const YAMLEncodeOpts& m_opts;
   OutBuf&               m_out;
@@ -1718,16 +1734,6 @@ struct YAMLEncoder {
     if (is_safe_plain_scalar(s))    m_out.push(s);
     else if (needs_double_quote(s)) emit_double_quoted(s);
     else                             emit_single_quoted(s);
-  }
-
-  // -------------------------------------------------------------------------
-  // Top-level entry point
-  // -------------------------------------------------------------------------
-
-  bool encode(ERL_NIF_TERM term) {
-    if (!encode_node(term, 0)) return false;
-    m_out.push('\n');
-    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -1995,7 +2001,6 @@ struct YAMLEncoder {
     return true;
   }
 
-private:
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {
     m_err      = err;

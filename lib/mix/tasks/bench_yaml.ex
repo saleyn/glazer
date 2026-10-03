@@ -20,6 +20,10 @@ defmodule Mix.Tasks.BenchYaml do
   """
   use Mix.Task
 
+  @compile {:no_warn_undefined, [
+    YamlRustler, Ymlr, :fast_yaml, :yamerl_constr
+  ]}
+
   @lib_w 13
   @col_w 7
   @sep   2
@@ -72,7 +76,7 @@ defmodule Mix.Tasks.BenchYaml do
        nil,
        YamlRustler},
 
-       {"fast_yaml",
+      {"fast_yaml",
        fn b ->
          {:ok, [doc | _]} = :fast_yaml.decode(b)
          doc

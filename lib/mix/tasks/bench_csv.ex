@@ -16,6 +16,14 @@ defmodule Mix.Tasks.BenchCsv do
   """
   use Mix.Task
 
+  @compile {:no_warn_undefined, [
+    RustyCSV.RFC4180,
+    GlazerBench.NimbleCSVParser,
+    RustyCSV.Simple,
+    CSV,
+    :erl_csv
+  ]}
+
   @lib_w 11
   @col_w 9
   @sep   2

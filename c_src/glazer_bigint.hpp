@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 #include <climits>
+#include <charconv>
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
@@ -19,7 +20,7 @@ namespace glz {
 
 struct BigInt {
 
-  static ERL_NIF_TERM
+  static inline ERL_NIF_TERM
   decode(ErlNifEnv* env, const char* begin, const char* end)
   {
     if (begin >= end) [[unlikely]]
@@ -40,20 +41,26 @@ struct BigInt {
   // uint64, and arbitrary-precision bignum cases. Returns false if `term`
   // isn't an integer.
   template <class Out>
-  static bool encode(ErlNifEnv* env, ERL_NIF_TERM term, Out& out)
+  static inline bool encode(ErlNifEnv* env, ERL_NIF_TERM term, Out& out)
   {
     ErlNifSInt64 i;
     if (enif_get_int64(env, term, &i)) [[likely]] {
-      char buf[22]; size_t n = int64_to_chars(buf, i);
-      out.push(buf, n);
+      char buf[32];
+      auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), i);
+      if (ec != std::errc{}) return false;
+      out.push(buf, p - buf);
       return true;
     }
+
     ErlNifUInt64 u;
     if (enif_get_uint64(env, term, &u)) {
-      char buf[20]; size_t n = uint64_to_chars(buf, u);
-      out.push(buf, n);
+      char buf[32];
+      auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), u);
+      if (ec != std::errc{}) return false;
+      out.push(buf, p - buf);
       return true;
     }
+
     // bigint — doesn't fit in 64 bits
     ErlNifBinary bin;
     if (!enif_term_to_binary(env, term, &bin)) return false;
@@ -64,31 +71,7 @@ struct BigInt {
 
 private:
 
-  // Writes the decimal representation of `value` into `buf` (>= 22 bytes),
-  // left-justified, and returns its length.
-  static size_t int64_to_chars(char* buf, ErlNifSInt64 value) {
-    bool neg = value < 0;
-    ErlNifUInt64 u = neg ? -static_cast<ErlNifUInt64>(value) : static_cast<ErlNifUInt64>(value);
-    char tmp[20];
-    size_t n = uint64_to_chars(tmp, u);
-    char* p = buf;
-    if (neg) *p++ = '-';
-    memcpy(p, tmp, n);
-    return (p - buf) + n;
-  }
-
-  // Writes the decimal representation of `value` into `buf` (>= 20 bytes),
-  // left-justified, and returns its length.
-  static size_t uint64_to_chars(char* buf, ErlNifUInt64 value) {
-    char tmp[20];
-    char* p = tmp + sizeof(tmp);
-    do { *--p = '0' + (value % 10); value /= 10; } while (value);
-    size_t n = tmp + sizeof(tmp) - p;
-    memcpy(buf, p, n);
-    return n;
-  }
-
-  static ERL_NIF_TERM parse_decimal_string(ErlNifEnv* env, const char* begin, const char* end) {
+  static inline ERL_NIF_TERM parse_decimal_string(ErlNifEnv* env, const char* begin, const char* end) {
     size_t len = end - begin;
     bool negative = false;
 
@@ -97,15 +80,17 @@ private:
 
     if (len == 0) [[unlikely]] return 0;
 
-    while (len > 1 && *begin == '0') { ++begin; --len; }
+    while (len > 1 && *begin == '0')    { ++begin; --len; }
 
     // Fast path: fits in a signed 64-bit integer
     if (len <= 18) {
       ErlNifSInt64 result = 0;
       for (size_t i = 0; i < len; ++i) {
         char c = begin[i];
-        if (c < '0' || c > '9') [[unlikely]] return 0;
-        if (result > (LLONG_MAX / 10)) goto bigint;
+        if (c < '0' || c > '9') [[unlikely]]
+          return 0;
+        if (result > (LLONG_MAX / 10))
+          goto bigint;
         result = result * 10 + (c - '0');
       }
       return negative ? enif_make_int64(env, -result) : enif_make_int64(env, result);
@@ -161,8 +146,9 @@ private:
 
   // Write Erlang external bignum format directly from the limb array —
   // no intermediate `bytes` vector.
-  static ERL_NIF_TERM limbs_to_term(ErlNifEnv* env,
-                                    const std::vector<uint32_t>& limbs, bool negative)
+  static ERL_NIF_TERM limbs_to_term(
+    ErlNifEnv* env,
+    const std::vector<uint32_t>& limbs, bool negative)
   {
     if (limbs.empty()) return enif_make_int(env, 0);
 
@@ -197,9 +183,9 @@ private:
     // Copy limbs as little-endian bytes directly into the payload.
     // Use byte_len to bound the write: full limbs first, then the
     // partial last limb (byte_len may be < limbs.size()*4 after trimming).
-    uint8_t* dst = buf.data() + hdr;
-    size_t full_limbs = byte_len >> 2; // division by 4
-    size_t tail_bytes = byte_len & 3;  // remainder mod 4
+    uint8_t* dst        = buf.data() + hdr;
+    size_t   full_limbs = byte_len >> 2; // division by 4
+    size_t   tail_bytes = byte_len & 3;  // remainder mod 4
     for (size_t i = 0; i < full_limbs; ++i) {
       uint32_t w = limbs[i];
       dst[0] = w & 0xFF;
@@ -215,7 +201,7 @@ private:
     }
 
     ERL_NIF_TERM result;
-    if (!enif_binary_to_term(env, buf.data(), hdr + byte_len, &result, 0))
+    if (!enif_binary_to_term(env, buf.data(), hdr + byte_len, &result, 0)) [[unlikely]]
       return 0;
     return result;
   }

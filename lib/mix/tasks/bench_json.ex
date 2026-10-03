@@ -21,6 +21,14 @@ defmodule Mix.Tasks.BenchJson do
   """
   use Mix.Task
 
+  @compile {:no_warn_undefined, [
+    Jason,
+    :simdjson,
+    :jiffy,
+    :thoas,
+    :euneus
+  ]}
+
   @lib_w 12
   @col_w 7
   @sep   2
@@ -40,7 +48,7 @@ defmodule Mix.Tasks.BenchJson do
     # Ensure all deps are started so NIFs get loaded.
     Mix.Task.run("app.start")
 
-    suites  = build_suites()
+    suites  = top_suites(args, build_suites())
     files   = load_files()
 
     if files == [] do
@@ -60,6 +68,14 @@ defmodule Mix.Tasks.BenchJson do
   # ---------------------------------------------------------------------------
   # Suite builder
   # ---------------------------------------------------------------------------
+
+  def top_suites(args, suites) do
+    case top_limit(args) do
+      nil -> suites
+      n when is_integer(n) and n > 0 -> Enum.take(suites, n)
+      _ -> suites
+    end
+  end
 
   defp build_suites do
     base = [
@@ -125,6 +141,25 @@ defmodule Mix.Tasks.BenchJson do
       _            -> false
     end
   end
+
+  defp top_limit(args) do
+    value = top_arg(args) || System.get_env("TOP")
+
+    case value do
+      nil -> nil
+      value ->
+        case Integer.parse(value) do
+          {n, ""} when n > 0 -> n
+          {n,  _} when n > 0 -> n
+          _ -> nil
+        end
+    end
+  end
+
+  defp top_arg(["--top=" <> n | _]), do: n
+  defp top_arg(["--top", n | _]), do: n
+  defp top_arg([_ | rest]), do: top_arg(rest)
+  defp top_arg([]), do: nil
 
   # ---------------------------------------------------------------------------
   # Data loading

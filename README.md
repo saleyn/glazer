@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/glazer.svg)](https://hex.pm/packages/glazer)
 [![Hex.pm](https://img.shields.io/hexpm/dt/glazer.svg)](https://hex.pm/packages/glazer)
 
-`glazer` - the fastest Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
+`glazer` - fast Erlang NIF encoder/decoder for **JSON**, **YAML**, and **CSV**,
 built around hand-rolled recursive-descent decoders and direct
 term-to-text encoders that produce/consume native Erlang terms in a
 single pass. The JSON implementation was inspired by the
@@ -193,8 +193,8 @@ Benchmarking:
 
 ## [Performance](#table-of-contents)
 
-- **[JSON](#benchmarking-json)**: faster than every other library benchmarked on
-  both encoding and decoding, competitive with `torque` (Rust `sonic-rs` NIF)
+- **[JSON](#benchmarking-json)**: faster than almost every library benchmarked on
+  both encoding and decoding. It's competitive with `torque` (Rust `sonic-rs` NIF)
   JSON-only library, and well ahead of `simdjsone`, `jiffy`, and the
   pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
 - **[YAML](#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
@@ -651,21 +651,22 @@ A comparison benchmark against other JSON libraries (`simdjsone`,
 `torque`) is available via:
 
 ```sh
-$ PARALLEL=2 make bench-json
+$ make bench-json
 ==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
 
 (numbers in µs)
-JSON        twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
-            decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
--------------------------------------------------------------------------------------------------------------
-glazer      1161.8    614.6     1083.2   1067.7        1.9      2.0        1.2      0.9        0.3      0.3
-torque      1629.4    476.5     1204.4    672.0        1.9      1.8        1.3      1.2        0.4      0.3
-simdjsone   1756.5   1220.6     2790.9   2649.2        4.2      5.1        2.8      3.4        0.6      1.2
-jiffy       2150.1    893.3     3117.7   1467.7        4.0      4.0        2.6      2.4        0.8      0.8
-jason       3743.7   3505.1     7240.1   6665.5        8.2      6.8        4.4      4.9        0.9      0.8
-json        3563.4   2608.9     4444.8   4852.2        5.4      6.1        3.2      3.5        0.7      0.9
-thoas       3925.1   3927.4     6823.3   7306.2        7.2      7.1        5.2      5.4        0.8      0.8
-euneus      3872.2   2487.2     4567.3   4835.7        6.8      5.7        3.5      3.7        1.1      0.8
+JSON           twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
+               decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
+----------------------------------------------------------------------------------------------------------------
+glazer         3056.7   1139.8     2802.2   1803.3        8.0      6.0        4.7      4.3        0.8      1.0
+glazer+utf8    3350.4   1003.8     3452.9   1744.7        8.2      7.6        5.9      3.2        1.8      1.5
+torque         2391.9    998.8     3107.5   2603.9        7.4      4.9        5.9      3.2        1.2      0.7
+simdjsone      3688.8   2833.0     6742.6   6016.7       15.8     18.8       11.9     13.2        2.1      6.6
+jiffy          5468.8   2642.9     6875.0   6505.4       20.8     22.3       12.0     10.6        2.9      3.8
+jason          8667.0   7668.1    14350.8  19042.8       32.4     29.0       15.7     15.0        3.2      4.7
+json           7793.3   5741.3    15210.0  12957.5       22.1     16.8       11.7      9.6        3.4      2.3
+thoas          8710.0   9141.5    20712.9  22007.2       32.5     35.4       17.1     21.9        3.0      2.4
+euneus         7183.1   6743.2    16592.7  16423.2       23.3     21.4       14.7     13.6        3.1      2.4
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
@@ -786,11 +787,11 @@ $ PARALLEL=2 make bench-yaml
 YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
                 decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer             6.7      3.5        4.6      2.4        0.8      0.5
-yaml_rustler      57.2      n/a       34.2      n/a        5.6      n/a
-fast_yaml         57.8     21.9       33.4     13.3        7.0      2.9
-yamerl           582.5      n/a      414.8      n/a      182.7      n/a
-ymlr               n/a     18.2        n/a     14.3        n/a      2.3
+glazer            24.6      8.2       18.7      4.8        2.4      1.2
+yaml_rustler     136.5      n/a       83.1      n/a       13.3      n/a
+fast_yaml        169.2     72.9       96.4     36.8       18.3      7.5
+yamerl          1545.3      n/a     1176.9      n/a      585.4      n/a
+ymlr               n/a     50.1        n/a     50.1        n/a      5.3
 ```
 
 ## [CSV](#table-of-contents)
@@ -1010,11 +1011,11 @@ $ PARALLEL=2 make bench-csv
 CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
                 decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer             4.2        1.4        256.3      164.2      10754.6     5071.0
-rusty_csv         12.6        n/a        290.2        n/a      11003.5        n/a
-nimble_csv        10.4        9.6       1335.4     1076.6      76950.5    47645.6
-csv               29.2       69.7       2116.6     6000.1     127761.4   211760.9
-erl_csv           12.5       12.6       1112.0     1181.3      51759.3    64465.4
+glazer             8.8        5.0        917.9      428.4      26411.7     9596.2
+rusty_csv         34.3        n/a       1167.0        n/a      33518.3        n/a
+nimble_csv        35.5       34.6       6042.9     3355.5     180571.7   110273.4
+csv               69.6      219.8       5874.3    14229.1     325996.6   521524.7
+erl_csv           16.7       21.3       1528.7     1574.8      55473.9    71353.1
 ```
 
 #### [glazer vs rusty_csv](#table-of-contents)
@@ -1127,14 +1128,16 @@ recursive descent on adversarial input.
 
 ## [Performance Optimization Details](#table-of-contents)
 
-`glazer` is faster than all competitors on both encoding and decoding in all
-data formats - JSON/YAML/CSV. On JSON decoding it has a slight edge over
-`torque` (Rust `sonic-rs` NIF) across every benchmarked workload, and on encoding
-the lead is by by ~10–30%. Both sit well ahead of the remaining contenders
-(`simdjsone`, `jiffy`, and the pure-Elixir libraries `jason`, `thoas`, `euneus`,
-and OTP's built-in `json`). On CSV it's close competitor is also Rust-backended
-`rusty_csv` project, though that project is missing encoding implementation.
-Here are some observations about `glazer`'s design:
+`glazer` is faster than the majority of competitors on both encoding and
+decoding in all data formats - JSON/YAML/CSV. On JSON decoding it is comparable
+to `torque` (Rust `sonic-rs` NIF), though on large payload `torque` performs
+around 20% better. The performance depends on the OS and hardware architecture -
+Intel and ARM produce different results. Both `torque` and `glazer` sit well
+ahead of the remaining contenders (`simdjsone`, `jiffy`, and the pure-Elixir
+libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`). On CSV it's
+close competitor is also Rust-backended `rusty_csv` project, though that project
+is missing encoding implementation. Here are some observations about `glazer`'s
+design:
 
 - **No tuple-of-binaries intermediate representation.** `glazer` decodes
   straight to native Erlang terms (maps, lists, binaries, numbers) and

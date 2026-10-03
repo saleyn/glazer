@@ -42,7 +42,53 @@ namespace glz {
 // processes the same way.
 //-----------------------------------------------------------------------------
 
-static constexpr size_t DIRTY_THRESHOLD = 8192;
+static constexpr size_t DIRTY_THRESHOLD = 4096;
+
+static inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term)
+{
+  if (enif_is_binary(env, term)) {
+    ErlNifBinary bin;
+    if (enif_inspect_binary(env, term, &bin))
+      return bin.size * 2 + 8;
+  }
+
+  if (enif_is_list(env, term)) {
+    ERL_NIF_TERM list = term;
+    ERL_NIF_TERM head;
+    size_t count = 0;
+    size_t bytes = 0;
+    while (enif_get_list_cell(env, list, &head, &list)) {
+      ++count;
+      bytes += estimate_json_term_size(env, head);
+      if (count >= 256) return DIRTY_THRESHOLD + 1;
+    }
+    return bytes + count * 8;
+  }
+
+  if (enif_is_map(env, term)) {
+    size_t size = 0;
+    if (enif_get_map_size(env, term, &size))
+      return size * 32;
+  }
+
+  if (enif_is_tuple(env, term)) {
+    int arity = 0;
+    const ERL_NIF_TERM* elems = nullptr;
+    if (enif_get_tuple(env, term, &arity, &elems)) {
+      size_t bytes = 0;
+      for (int i = 0; i < arity; ++i)
+        bytes += estimate_json_term_size(env, elems[i]);
+      return bytes + size_t(arity) * 12;
+    }
+  }
+
+  return 0;
+}
+
+static inline bool should_use_dirty_scheduler(ErlNifEnv* env, ERL_NIF_TERM term)
+{
+  return estimate_json_term_size(env, term) >= DIRTY_THRESHOLD;
+}
 
 //-----------------------------------------------------------------------------
 // NIF: json_decode
@@ -265,12 +311,16 @@ static ERL_NIF_TERM do_json_try_encode(ErlNifEnv* env, int argc, const ERL_NIF_T
   if (argc == 2 && (!enif_is_list(env, argv[1]) || !parse_encode_opts(env, argv[1], opts))) [[unlikely]]
     return enif_make_tuple2(env, AM_ERROR, AM_BADARG);
 
-  OutBuf out;
+  thread_local OutBuf out;
+  out.clear();
+  size_t est = estimate_json_term_size(env, argv[0]);
+  if (est > 0) out.reserve(est + 64);
+
   JSONEncoder enc{env, opts, out};
   if (!enc.encode(argv[0])) [[unlikely]]
     return enif_make_tuple2(env, AM_ERROR,
       enif_make_tuple2(env, AM_ENCODE_ERROR,
-        enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+        enif_make_tuple2(env, make_binary(env, std::string_view(enc.err())), enc.err_term())));
 
   if (!opts.pretty) {
     update_reduction_count(env, out.view().size());
@@ -294,8 +344,7 @@ static ERL_NIF_TERM nif_json_try_encode(ErlNifEnv* env, int argc, const ERL_NIF_
 
   // Output size is unknown upfront; use input binary size as a proxy.
   // For non-binary terms (atoms, integers, short lists) always run inline.
-  ErlNifBinary bin;
-  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+  if (should_use_dirty_scheduler(env, argv[0])) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
     return enif_schedule_nif(env, "glazer_json_try_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
                              nif_json_try_encode_dirty, 2, sched_argv);
@@ -315,12 +364,16 @@ static ERL_NIF_TERM do_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
     return enif_make_badarg(env);
 
   try {
-    OutBuf out;
+    thread_local OutBuf out;
+    out.clear();
+    size_t est = estimate_json_term_size(env, argv[0]);
+    if (est > 0) out.reserve(est + 64);
+
     JSONEncoder enc{env, opts, out};
     if (!enc.encode(argv[0])) [[unlikely]]
       return enif_raise_exception(env,
         enif_make_tuple2(env, AM_ENCODE_ERROR,
-          enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+          enif_make_tuple2(env, make_binary(env, std::string_view(enc.err())), enc.err_term())));
 
     if (!opts.pretty) {
       update_reduction_count(env, out.view().size());
@@ -349,8 +402,7 @@ static ERL_NIF_TERM nif_json_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 
   // Output size is unknown upfront; use input binary size as a proxy.
   // For non-binary terms (atoms, integers, short lists) always run inline.
-  ErlNifBinary bin;
-  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+  if (should_use_dirty_scheduler(env, argv[0])) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
     return enif_schedule_nif(env, "glazer_json_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
                              nif_json_encode_dirty, 2, sched_argv);
@@ -373,9 +425,17 @@ static ERL_NIF_TERM do_json_encode_ndjson(ErlNifEnv* env, int argc, const ERL_NI
     return enif_make_badarg(env);
 
   try {
-    OutBuf out;
-    ERL_NIF_TERM head;
+    thread_local OutBuf out;
+    out.clear();
+    size_t est = 0;
     ERL_NIF_TERM list = argv[0];
+    ERL_NIF_TERM head;
+    while (enif_get_list_cell(env, list, &head, &list)) {
+      est += estimate_json_term_size(env, head);
+      if (enif_is_empty_list(env, list)) break;
+    }
+    if (est > 0) out.reserve(est + 64);
+    list = argv[0];
 
     // Iterate through the list and encode each element, appending \n after each
     while (enif_get_list_cell(env, list, &head, &list)) {
@@ -383,7 +443,7 @@ static ERL_NIF_TERM do_json_encode_ndjson(ErlNifEnv* env, int argc, const ERL_NI
       if (!enc.encode(head)) [[unlikely]]
         return enif_raise_exception(env,
           enif_make_tuple2(env, AM_ENCODE_ERROR,
-            enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+            enif_make_tuple2(env, make_binary(env, std::string_view(enc.err())), enc.err_term())));
       out.push('\n');
     }
 
@@ -449,13 +509,14 @@ static ERL_NIF_TERM do_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
     return enif_make_badarg(env);
 
   try {
-    OutBuf out;
+    thread_local OutBuf out;
+    out.clear();
     YAMLEncoder enc{env, opts, out};
     if (!enc.encode(argv[0])) {
-      if (enc.m_err)
+      if (enc.err())
         return enif_raise_exception(env,
           enif_make_tuple2(env, AM_ENCODE_ERROR,
-            enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+            enif_make_tuple2(env, make_binary(env, std::string_view(enc.err())), enc.err_term())));
       return enif_raise_exception(env, AM_INVALID_INPUT);
     }
 
@@ -479,8 +540,7 @@ static ERL_NIF_TERM nif_yaml_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM
     return enif_make_badarg(env);
 
   // Output size is unknown upfront; use input binary size as a proxy.
-  ErlNifBinary bin;
-  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+  if (should_use_dirty_scheduler(env, argv[0])) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
     return enif_schedule_nif(env, "glazer_yaml_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
                              nif_yaml_encode_dirty, 2, sched_argv);
@@ -499,12 +559,13 @@ static ERL_NIF_TERM do_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
     return enif_make_badarg(env);
 
   try {
-    OutBuf out;
+    thread_local OutBuf out;
+    out.clear();
     CSVEncoder enc{env, opts, out};
     if (!enc.encode(argv[0])) [[unlikely]]
       return enif_raise_exception(env,
         enif_make_tuple2(env, AM_ENCODE_ERROR,
-          enif_make_tuple2(env, make_binary(env, std::string_view(enc.m_err)), enc.m_err_term)));
+          enif_make_tuple2(env, make_binary(env, std::string_view(enc.err())), enc.err_term())));
 
     update_reduction_count(env, out.view().size());
     return make_binary(env, out.view());
@@ -525,8 +586,7 @@ static ERL_NIF_TERM nif_csv_encode(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
   if (argc < 1 || argc > 2) [[unlikely]]
     return enif_make_badarg(env);
 
-  ErlNifBinary bin;
-  if (enif_inspect_binary(env, argv[0], &bin) && bin.size >= DIRTY_THRESHOLD) [[unlikely]] {
+  if (should_use_dirty_scheduler(env, argv[0])) [[unlikely]] {
     ERL_NIF_TERM sched_argv[2] = { argv[0], argc > 1 ? argv[1] : enif_make_list(env, 0) };
     return enif_schedule_nif(env, "glazer_csv_encode", ERL_NIF_DIRTY_JOB_CPU_BOUND,
                              nif_csv_encode_dirty, 2, sched_argv);

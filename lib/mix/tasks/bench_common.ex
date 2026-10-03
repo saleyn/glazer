@@ -19,12 +19,12 @@ defmodule Mix.Tasks.Bench.Common do
     nworkers =
       case value do
         nil ->
-          nproc
+          1
 
         value ->
           case Integer.parse(value) do
             {n, _} -> n |> max(1) |> min(nproc)
-            :error -> nproc
+            :error -> 1
           end
       end
 

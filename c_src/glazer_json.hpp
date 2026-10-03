@@ -145,17 +145,6 @@ static constexpr auto JSON_ESCAPE_CHAR_TABLE = [] {
 //-----------------------------------------------------------------------------
 
 struct JSONDecoder {
-  ErlNifEnv*        m_env;
-  const JSONDecodeOpts& m_opts;
-  const char*       m_beg;  // start of input (for error reporting)
-  const char*       m_p;    // current position
-  const char*       m_end;
-  ERL_NIF_TERM      m_input_bin; // original binary term — used for zero-copy sub_binary
-  KeyCache          m_key_cache;
-  bool              m_use_key_cache;
-  unsigned          m_depth = 0;
-  std::string       m_err;
-
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
   // like RPC messages, where glazer otherwise loses ground to torque).
@@ -169,11 +158,50 @@ struct JSONDecoder {
   // each frame considerably compared to a normal build).
   static constexpr unsigned MAX_DEPTH = 256;
 
-  JSONDecoder(ErlNifEnv* e, const JSONDecodeOpts& o, const char* data, size_t size,
-          ERL_NIF_TERM input_bin)
-    : m_env(e), m_opts(o), m_beg(data), m_p(data), m_end(data + size),
-      m_input_bin(input_bin),
-      m_use_key_cache(size >= KEY_CACHE_MIN_SIZE) {}
+  JSONDecoder(ErlNifEnv*   e,    const JSONDecodeOpts& o,
+              const char*  data, size_t size,
+              ERL_NIF_TERM input_bin)
+  : m_env(e), m_opts(o)
+  , m_beg(data), m_p(data)
+  , m_end(data + size)
+  , m_input_bin(input_bin)
+  , m_use_key_cache(size >= KEY_CACHE_MIN_SIZE)
+  {}
+
+  // Always returns {ok, Term} | {error, Msg}.
+  // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
+  std::tuple<bool, ERL_NIF_TERM> decode(const char* data, size_t size)
+  {
+    m_p = data; m_end = data + size; m_beg = data;
+    std::string scratch;
+    ERL_NIF_TERM result = parse_value(scratch);
+    if (result) skip_ws();
+    if (result && m_p == m_end) [[likely]]
+      return std::make_tuple(true, result);
+
+    if (result && m_opts.return_trailer) {
+      ERL_NIF_TERM rest = make_span_term(m_env, m_input_bin, m_beg, m_end,
+                                          std::string_view(m_p, m_end - m_p), false);
+      return std::make_tuple(true, enif_make_tuple3(m_env, AM_HAS_TRAILER, result, rest));
+    }
+
+    std::string msg = m_err.empty()
+      ? "JSON parse error at offset " + std::to_string(m_p - m_beg)
+      : m_err + " at offset " + std::to_string(m_p - m_beg);
+    return std::make_tuple(false, make_binary(m_env, msg));
+  }
+
+private:
+  ErlNifEnv*        m_env;
+  const JSONDecodeOpts& m_opts;
+  const char*       m_beg;  // start of input (for error reporting)
+  const char*       m_p;    // current position
+  const char*       m_end;
+  ERL_NIF_TERM      m_input_bin; // original binary term — used for zero-copy sub_binary
+  KeyCache          m_key_cache;
+  bool              m_use_key_cache;
+  unsigned          m_depth = 0;
+  std::string       m_err;
 
   // Increments the shared depth counter for the lifetime of a parse_array /
   // parse_object call, so every return path (including early `return 0`)
@@ -693,8 +721,11 @@ struct JSONDecoder {
       return enif_make_tuple1(m_env, pairs.to_erl_list(m_env));
     }
 
-    // Map path
-    SmallTermVec<32> ks, vs;
+    // Map path: build the key/value arrays once and hand them to the native
+    // `enif_make_map_from_arrays` fast path, which avoids the repeated map
+    // rehash / mutation cost of `enif_make_map_put` in a per-entry loop.
+    SmallTermVec<32> keys;
+    SmallTermVec<32> vals;
 
     if (m_p < m_end && *m_p == '}') {
       ++m_p;
@@ -713,6 +744,7 @@ struct JSONDecoder {
 
       auto key = make_key_term(kstr, klen, kesc, scratch);
       if (!key) [[unlikely]] return 0;
+      keys.push_back(key);
       skip_ws();
 
       if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
@@ -720,8 +752,7 @@ struct JSONDecoder {
 
       auto val = parse_value(scratch);
       if (!val) [[unlikely]] return 0;
-
-      ks.push_back(key); vs.push_back(val);
+      vals.push_back(val);
       skip_ws();
 
       if (m_p >= m_end) [[unlikely]] return 0;
@@ -731,32 +762,9 @@ struct JSONDecoder {
       skip_ws();
     }
 
-    [[maybe_unused]] auto map = vs.to_erl_map<true>(m_env, ks);
-    assert(map);
-    return map;
-  }
-
-  // Always returns {ok, Term} | {error, Msg}.
-  // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
-  std::tuple<bool, ERL_NIF_TERM> decode(const char* data, size_t size)
-  {
-    m_p = data; m_end = data + size; m_beg = data;
-    std::string scratch;
-    ERL_NIF_TERM result = parse_value(scratch);
-    if (result) skip_ws();
-    if (result && m_p == m_end) [[likely]]
-      return std::make_tuple(true, result);
-
-    if (result && m_opts.return_trailer) {
-      ERL_NIF_TERM rest = make_span_term(m_env, m_input_bin, m_beg, m_end,
-                                          std::string_view(m_p, m_end - m_p), false);
-      return std::make_tuple(true, enif_make_tuple3(m_env, AM_HAS_TRAILER, result, rest));
-    }
-
-    std::string msg = m_err.empty()
-      ? "JSON parse error at offset " + std::to_string(m_p - m_beg)
-      : m_err + " at offset " + std::to_string(m_p - m_beg);
-    return std::make_tuple(false, make_binary(m_env, msg));
+    if (m_opts.dedupe_keys)
+      return vals.to_erl_map<true>(m_env, keys);
+    return vals.to_erl_map(m_env, keys);
   }
 };
 
@@ -918,28 +926,131 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
 
 // find_escape_pos is defined in glazer_common.hpp and shared with glazer_yaml.hpp.
 
+inline bool is_valid_utf8(std::string_view sv)
+{
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(sv.data());
+  const unsigned char* e = p + sv.size();
+  while (p < e) {
+    unsigned char c = *p++;
+    if (c < 0x80) continue;
+    if (c >= 0xC2 && c <= 0xDF) {
+      if (p == e || (p[0] & 0xC0) != 0x80) return false;
+      ++p;
+    } else if (c >= 0xE0 && c <= 0xEF) {
+      if (p + 1 >= e || (p[0] & 0xC0) != 0x80 || (p[1] & 0xC0) != 0x80) return false;
+      if (c == 0xE0 && (p[0] < 0xA0)) return false;
+      if (c == 0xED && (p[0] >= 0xA0)) return false;
+      p += 2;
+    } else if (c >= 0xF0 && c <= 0xF4) {
+      if (p + 2 >= e || (p[0] & 0xC0) != 0x80 || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) return false;
+      if (c == 0xF0 && (p[0] < 0x90)) return false;
+      if (c == 0xF4 && (p[0] >= 0x90)) return false;
+      p += 3;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Fast valid-UTF8 escape path for the common case where there are no forced
+// unicode replacements or escapes beyond JSON's standard control-char quoting.
+static inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
+{
+  // Valid UTF-8 strings only need escaping for control chars, quotes, backslashes,
+  // and optional slash; all non-ASCII bytes are already encoded as UTF-8 sequences.
+  out.ensure(sv.size() * 2 + 2);
+
+  char* dst = out.m_data + out.m_len;
+  *dst++ = '"';
+  const char* p = sv.data();
+  const char* end = p + sv.size();
+
+  while (p < end) {
+    const unsigned char c = static_cast<unsigned char>(*p++);
+    switch (c) {
+      case '"':  *dst++ = '\\'; *dst++ = '"';  break;
+      case '\\': *dst++ = '\\'; *dst++ = '\\'; break;
+      case '\n': *dst++ = '\\'; *dst++ = 'n';  break;
+      case '\r': *dst++ = '\\'; *dst++ = 'r';  break;
+      case '\t': *dst++ = '\\'; *dst++ = 't';  break;
+      case '\b': *dst++ = '\\'; *dst++ = 'b';  break;
+      case '\f': *dst++ = '\\'; *dst++ = 'f';  break;
+      default:
+        if (c < 0x20) {
+          *dst++ = '\\'; *dst++ = 'u'; *dst++ = '0'; *dst++ = '0';
+          *dst++ = "0123456789abcdef"[(c >> 4) & 0xF];
+          *dst++ = "0123456789abcdef"[c & 0xF];
+        } else {
+          *dst++ = static_cast<char>(c);
+        }
+        break;
+    }
+  }
+
+  *dst++ = '"';
+  out.m_len = static_cast<size_t>(dst - out.m_data);
+}
+
 // JSON-escape a UTF-8 byte sequence into out.
 // Pre-reserves worst-case space (6 bytes per input byte + 2 quotes) in one
 // shot, then writes into the already-reserved tail via raw pointer — no
 // further ensure() calls inside the loop.  find_escape_pos bulk-skips clean
 // runs (NEON/AVX2/SSE2/table); ESCAPE_TAB handles special bytes with a
 // single indexed load + memcpy instead of a switch branch.
-static void json_escape_string(std::string_view sv, OutBuf& out)
+static inline void json_escape_string(std::string_view sv, OutBuf& out)
 {
-  // Worst case: every byte escapes to 6 chars (\uXXXX), plus 2 quotes.
-  out.ensure(sv.size() * 6 + 2);
+  // Common case: long strings are mostly plain ASCII. Copy whole SIMD words
+  // directly into the output buffer until the first byte that requires escaping,
+  // then escape that byte and continue. This avoids the extra scan-only pass of
+  // find_escape_pos() on the highest-volume path.
+  out.ensure(sv.size() * 2 + 2);
 
-  char* dst       = out.m_data + out.m_len;
-  *dst++          = '"';
-  const char* p   = sv.data();
+  char* dst = out.m_data + out.m_len;
+  *dst++ = '"';
+  const char* p = sv.data();
   const char* end = p + sv.size();
 
   while (p < end) {
-    const char* special = find_escape_pos(p, end);
-    size_t      run     = static_cast<size_t>(special - p);
-    if (run) { memcpy(dst, p, run); dst += run; }
-    p = special;
+#if defined(__AVX2__)
+    while (p + 32 <= end) {
+      const __m256i v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      const __m256i vq = _mm256_set1_epi8('"');
+      const __m256i vbs = _mm256_set1_epi8('\\');
+      const __m256i vbias = _mm256_set1_epi8(-128);
+      const __m256i vcmp = _mm256_set1_epi8(-96);
+      const __m256i biased = _mm256_xor_si256(v, vbias);
+      const uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
+        _mm256_or_si256(_mm256_cmpgt_epi8(vcmp, biased), _mm256_cmpeq_epi8(v, vq)),
+        _mm256_cmpeq_epi8(v, vbs)));
+      if (mask) break;
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst), v);
+      dst += 32;
+      p += 32;
+    }
+#endif
+#if defined(__SSE2__)
+    while (p + 16 <= end) {
+      const __m128i v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      const __m128i vq = _mm_set1_epi8('"');
+      const __m128i vbs = _mm_set1_epi8('\\');
+      const __m128i vbias = _mm_set1_epi8(-128);
+      const __m128i vcmp = _mm_set1_epi8(-96);
+      const __m128i biased = _mm_xor_si128(v, vbias);
+      const unsigned mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(
+        _mm_or_si128(_mm_cmpgt_epi8(vcmp, biased), _mm_cmpeq_epi8(v, vq)),
+        _mm_cmpeq_epi8(v, vbs)));
+      if (mask) break;
+      _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), v);
+      dst += 16;
+      p   += 16;
+    }
+#endif
     if (p >= end) break;
+    if (!NEEDS_ESCAPE_TAB[(unsigned char)*p]) {
+      *dst++ = *p++;
+      continue;
+    }
 
     const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
     memcpy(dst, e.seq, e.len);
@@ -953,33 +1064,58 @@ static void json_escape_string(std::string_view sv, OutBuf& out)
 // JSON-escape a UTF-8 byte sequence with optional forward slash escaping
 static void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool escape_fwd_slash)
 {
-  // Worst case: every byte escapes to 6 chars (\uXXXX), plus 2 quotes.
-  out.ensure(sv.size() * 6 + 2);
+  out.ensure(sv.size() * 2 + 2);
 
-  char* dst       = out.m_data + out.m_len;
-  *dst++          = '"';
-  const char* p   = sv.data();
+  char* dst = out.m_data + out.m_len;
+  *dst++ = '"';
+  const char* p = sv.data();
   const char* end = p + sv.size();
 
   while (p < end) {
-    const char* run_start = p;
-
-    // Find the next character that needs special handling (either standard escape or forward slash)
-    while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p] && !(*p == '/' && escape_fwd_slash)) {
-      ++p;
+#if defined(__AVX2__)
+    while (p + 32 <= end) {
+      const __m256i v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      const __m256i vq = _mm256_set1_epi8('"');
+      const __m256i vbs = _mm256_set1_epi8('\\');
+      const __m256i vslash = _mm256_set1_epi8('/');
+      const __m256i vbias = _mm256_set1_epi8(-128);
+      const __m256i vcmp = _mm256_set1_epi8(-96);
+      const __m256i biased = _mm256_xor_si256(v, vbias);
+      const __m256i need = _mm256_or_si256(
+        _mm256_or_si256(_mm256_or_si256(_mm256_cmpgt_epi8(vcmp, biased), _mm256_cmpeq_epi8(v, vq)),
+        _mm256_cmpeq_epi8(v, vbs)),
+        escape_fwd_slash ? _mm256_cmpeq_epi8(v, vslash) : _mm256_setzero_si256());
+      if ((uint32_t)_mm256_movemask_epi8(need)) break;
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst), v);
+      dst += 32;
+      p += 32;
     }
-
-    // Copy the run of normal characters
-    size_t run = static_cast<size_t>(p - run_start);
-    if (run) {
-      memcpy(dst, run_start, run);
-      dst += run;
+#endif
+#if defined(__SSE2__)
+    while (p + 16 <= end) {
+      const __m128i v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      const __m128i vq = _mm_set1_epi8('"');
+      const __m128i vbs = _mm_set1_epi8('\\');
+      const __m128i vslash = _mm_set1_epi8('/');
+      const __m128i vbias = _mm_set1_epi8(-128);
+      const __m128i vcmp = _mm_set1_epi8(-96);
+      const __m128i biased = _mm_xor_si128(v, vbias);
+      const __m128i need = _mm_or_si128(
+        _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, biased), _mm_cmpeq_epi8(v, vq)),
+        _mm_cmpeq_epi8(v, vbs)),
+        escape_fwd_slash ? _mm_cmpeq_epi8(v, vslash) : _mm_setzero_si128());
+      if ((unsigned)_mm_movemask_epi8(need)) break;
+      _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), v);
+      dst += 16;
+      p += 16;
     }
-
+#endif
     if (p >= end) break;
-
-    // Handle the special character
-    if (*p == '/' && escape_fwd_slash) {
+    if (!NEEDS_ESCAPE_TAB[(unsigned char)*p] && !(escape_fwd_slash && *p == '/')) {
+      *dst++ = *p++;
+      continue;
+    }
+    if (escape_fwd_slash && *p == '/') {
       *dst++ = '\\';
       *dst++ = '/';
       ++p;
@@ -1000,6 +1136,7 @@ static void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
 static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
                                        bool uescape, bool force_utf8, bool escape_fwd_slash = false)
 {
+  out.reserve(sv.size() * 6 + 2);
   out.push('"');
   const char* p   = sv.data();
   const char* end = p + sv.size();
@@ -1052,6 +1189,52 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
 }
 
 struct JSONEncoder {
+  JSONEncoder(ErlNifEnv* env, const JSONEncodeOpts& opts, OutBuf& out)
+    : m_env(env), m_opts(opts), m_out(out), m_err(nullptr), m_err_term(0)
+  {}
+
+  ErlNifEnv*   env()       const { return m_env;      }
+  const char*  err()       const { return m_err;      }
+  ERL_NIF_TERM err_term()  const { return m_err_term; }
+
+  bool encode(ERL_NIF_TERM term)
+  {
+    switch (enif_term_type(m_env, term)) {
+      case ERL_NIF_TERM_TYPE_BITSTRING: {
+        ErlNifBinary bin;
+        if (!enif_inspect_binary(m_env, term, &bin)) return false;
+        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
+      }
+
+      case ERL_NIF_TERM_TYPE_INTEGER:
+        return encode_integer(term);
+
+      case ERL_NIF_TERM_TYPE_MAP:
+        return encode_map(term);
+
+      case ERL_NIF_TERM_TYPE_LIST:
+        return encode_list(term);
+
+      case ERL_NIF_TERM_TYPE_ATOM:
+        return encode_atom(term);
+
+      case ERL_NIF_TERM_TYPE_FLOAT:
+        return encode_float(term);
+
+      case ERL_NIF_TERM_TYPE_TUPLE: {
+        int arity; const ERL_NIF_TERM* tp;
+        enif_get_tuple(m_env, term, &arity, &tp);
+        if (arity == 1 && enif_is_list(m_env, tp[0])) [[likely]]
+          return encode_proplist_inline(tp[0]);
+        return error("tuple is not an object", term);
+      }
+
+      default:
+        return error("unsupported term type", term);
+    }
+  }
+
+private:
   ErlNifEnv*            m_env;
   const JSONEncodeOpts& m_opts;
   OutBuf&               m_out;
@@ -1061,6 +1244,29 @@ struct JSONEncoder {
 
   bool escape_string(std::string_view sv)
   {
+    if (sv.empty()) {
+      m_out.push("\"\"", 2);
+      return true;
+    }
+
+    const char* p = sv.data();
+    const char* end = p + sv.size();
+    if (!m_opts.uescape && !m_opts.force_utf8) {
+      if (!m_opts.escape_fwd_slash) {
+        if (find_escape_pos(p, end) == end) {
+          m_out.push_quoted(sv);
+          return true;
+        }
+      } else {
+        const char* q = p;
+        while (q < end && *q != '/' && !NEEDS_ESCAPE_TAB[(unsigned char)*q]) ++q;
+        if (q == end) {
+          m_out.push_quoted(sv);
+          return true;
+        }
+      }
+    }
+
     if (m_opts.uescape || m_opts.force_utf8)
       json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8, m_opts.escape_fwd_slash);
     else if (m_opts.escape_fwd_slash)
@@ -1070,113 +1276,84 @@ struct JSONEncoder {
     return true;
   }
 
-  bool encode(ERL_NIF_TERM term)
+  bool append_escaped_latin1_atom(const char* s, size_t len)
   {
-    // Dispatch on the term's runtime type once — avoids the cascade of
-    // enif_is_identical / enif_get_* probes that each cost a C call.
-    switch (enif_term_type(m_env, term)) {
-      case ERL_NIF_TERM_TYPE_BITSTRING: {
-        ErlNifBinary bin;
-        if (!enif_inspect_binary(m_env, term, &bin)) return false;
-        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
-      }
-
-      case ERL_NIF_TERM_TYPE_INTEGER:
-        return glz::BigInt::encode(m_env, term, m_out);
-
-      case ERL_NIF_TERM_TYPE_MAP: {
-        m_out.push('{');
-        auto iter = MapIterator::create(m_env, term);
-        if (!iter) [[unlikely]] return false;
-        ERL_NIF_TERM k, v;
-        bool first = true;
-        while (iter->get_pair(&k, &v)) {
-          if (!first) m_out.push(',');
-          first = false;
-          if (!encode_key(k)) [[unlikely]] return error("cannot encode key", k);
-          m_out.push(':');
-          if (!encode(v))     [[unlikely]] return error("cannot encode value", v);
-          iter->next();
-        }
-        m_out.push('}');
-        return true;
-      }
-
-      case ERL_NIF_TERM_TYPE_LIST: {
-        m_out.push('[');
-        ERL_NIF_TERM h, t = term;
-        bool first = true;
-        while (enif_get_list_cell(m_env, t, &h, &t)) {
-          if (!first) m_out.push(',');
-          first = false;
-          if (!encode(h)) [[unlikely]]
-            return error("cannot encode list element", h);
-        }
-        if (!enif_is_empty_list(m_env, t)) [[unlikely]]  // improper list
-          return error("improper list", t);
-        m_out.push(']');
-        return true;
-      }
-
-      case ERL_NIF_TERM_TYPE_ATOM:
-        return encode_atom(term);
-
-      case ERL_NIF_TERM_TYPE_FLOAT: {
-        double d;
-        if (!enif_get_double(m_env, term, &d))
-          return error("not a float", term);
-        if (!std::isfinite(d)) {
-          m_out.push("null", 4);
-          return true;
-        }
-        // chars_format::general produces the shortest round-trip representation
-        // (same as ryu's output), which is typically shorter than %.17g.
-        char buf[32];
-        auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-        if (ec == std::errc{}) [[likely]] {
-          bool has_dot = false;
-          for (char* p = buf; p < e; ++p) {
-            if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
-          }
-          m_out.push(buf, e - buf);
-          if (!has_dot) m_out.push(".0", 2);
-        } else {
-          // Fallback: should never happen for finite doubles, but be safe.
-          int n = snprintf(buf, sizeof(buf), "%.17g", d);
-          m_out.push(buf, n);
-        }
-        return true;
-      }
-
-      case ERL_NIF_TERM_TYPE_TUPLE: {
-        // {[{K,V}...]} proplist → object
-        int arity; const ERL_NIF_TERM* tp;
-        enif_get_tuple(m_env, term, &arity, &tp);
-        if (arity == 1 && enif_is_list(m_env, tp[0])) [[likely]] {
-          m_out.push('{');
-          ERL_NIF_TERM h, t = tp[0];
-          bool first = true;
-          while (enif_get_list_cell(m_env, t, &h, &t)) {
-            int pa; const ERL_NIF_TERM* pp;
-            if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) [[unlikely]]
-              return error("not a tuple", h);
-            if (!first) m_out.push(',');
-            first = false;
-            if (!encode_key(pp[0])) [[unlikely]]
-              return error("cannot encode key", pp[0]);
-            m_out.push(':');
-            if (!encode(pp[1])) [[unlikely]]
-              return error("cannot encode value", pp[1]);
-          }
-          m_out.push('}');
-          return true;
-        }
-        return error("tuple is not an object", term);
-      }
-
-      default:
-        return error("unsupported term type", term);
+    if (len == 0) {
+      m_out.push("\"\"", 2);
+      return true;
     }
+
+    const char* end = s + len;
+    if (!m_opts.escape_fwd_slash) {
+      if (find_escape_pos(s, end) == end) {
+        m_out.push_quoted({s, len});
+        return true;
+      }
+    } else {
+      const char* p = s;
+      while (p < end && *p != '/' && !NEEDS_ESCAPE_TAB[(unsigned char)*p]) ++p;
+      if (p == end) {
+        m_out.push_quoted({s, len});
+        return true;
+      }
+    }
+
+    m_out.push('"');
+    const char* p = s;
+    while (p < end) {
+      const char* run_start = p;
+      while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p] && !(m_opts.escape_fwd_slash && *p == '/'))
+        ++p;
+
+      if (p > run_start)
+        m_out.push(run_start, static_cast<size_t>(p - run_start));
+      if (p >= end)
+        break;
+
+      if (m_opts.escape_fwd_slash && *p == '/') {
+        m_out.push("\\/", 2);
+        ++p;
+        continue;
+      }
+
+      const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+      m_out.push(e.seq, e.len);
+    }
+    m_out.push('"');
+    return true;
+  }
+
+  bool encode_integer(ERL_NIF_TERM term)
+  {
+    return glz::BigInt::encode(m_env, term, m_out)
+        || error("cannot encode integer", term);
+  }
+
+  bool encode_float(ERL_NIF_TERM term)
+  {
+    double d;
+    if (!enif_get_double(m_env, term, &d)) [[unlikely]]
+      return error("not a float", term);
+    if (!std::isfinite(d)) [[unlikely]] {
+      m_out.push("null", 4);
+      return true;
+    }
+
+    char buf[32];
+    auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::general);
+    if (ec == std::errc{}) {
+      bool has_dot = false;
+      for (char* q = buf; q < p; ++q) {
+        if (*q == '.' || *q == 'e' || *q == 'E') { has_dot = true; break; }
+      }
+      m_out.push(buf, p - buf);
+      if (!has_dot) m_out.push(".0", 2);
+      return true;
+    }
+
+    int n = snprintf(buf, sizeof(buf), "%.17g", d);
+    m_out.push(buf, n);
+    return true;
   }
 
   bool encode_key(ERL_NIF_TERM key)
@@ -1184,21 +1361,23 @@ struct JSONEncoder {
     switch (enif_term_type(m_env, key)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
-        if (!enif_inspect_binary(m_env, key, &bin)) return false;
+        if (!enif_inspect_binary(m_env, key, &bin))
+          return error("not a binary", key);
         return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
       }
-
       case ERL_NIF_TERM_TYPE_ATOM:
-        return encode_atom(key);
-
+        return encode_atom_key(key);
       case ERL_NIF_TERM_TYPE_INTEGER: {
         m_out.push('"');
-        glz::BigInt::encode(m_env, key, m_out);
+        if (!glz::BigInt::encode(m_env, key, m_out))
+          return error("cannot encode integer", key);
         m_out.push('"');
         return true;
       }
-
       case ERL_NIF_TERM_TYPE_LIST: {
+        if (enif_is_empty_list(m_env, key))
+          return escape_string("");
+
         ERL_NIF_TERM h, t = key;
         int i = 0;
         const int max_len = sizeof(m_atom_buf) - 1;
@@ -1206,16 +1385,106 @@ struct JSONEncoder {
           unsigned int ch;
           if (!enif_get_uint(m_env, h, &ch) || ch > 255) [[unlikely]]
             return error("list key is not a charlist", key);
-          m_atom_buf[i++] = ch;
+          m_atom_buf[i++] = static_cast<char>(ch);
           if (i > max_len) [[unlikely]]
             return error("charlist key is too long", key);
         }
+        if (!enif_is_empty_list(m_env, t)) [[unlikely]]
+          return error("list key is not a proper charlist", key);
         return escape_string(std::string_view(m_atom_buf, i));
       }
-
       default:
         return error("unsupported key type", key);
     }
+  }
+
+  inline bool encode_map(ERL_NIF_TERM term)
+  {
+    size_t map_size = 0;
+    if (enif_get_map_size(m_env, term, &map_size)) [[likely]]
+      m_out.reserve(map_size * 24 + 2);
+    m_out.push('{');
+    auto iter = MapIterator::create(m_env, term);
+    if (!iter) [[unlikely]] return false;
+    ERL_NIF_TERM k, v;
+    bool first = true;
+    while (iter->get_pair(&k, &v)) {
+      if (!first) m_out.push(',');
+      first = false;
+      if (!encode_key(k)) [[unlikely]] return error("cannot encode key", k);
+      m_out.push(':');
+      if (!encode(v))     [[unlikely]] return error("cannot encode value", v);
+      iter->next();
+    }
+    m_out.push('}');
+    return true;
+  }
+
+  inline bool encode_list(ERL_NIF_TERM term)
+  {
+    unsigned list_len = 0;
+    if (enif_get_list_length(m_env, term, &list_len)) [[likely]]
+      m_out.reserve(static_cast<size_t>(list_len) * 12 + 2);
+    m_out.push('[');
+    ERL_NIF_TERM h, t = term;
+    bool first = true;
+    while (enif_get_list_cell(m_env, t, &h, &t)) {
+      if (!first) m_out.push(',');
+      first = false;
+      if (!encode(h)) [[unlikely]]
+        return error("cannot encode list element", h);
+    }
+    if (!enif_is_empty_list(m_env, t)) [[unlikely]]  // improper list
+      return error("improper list", t);
+    m_out.push(']');
+    return true;
+  }
+
+  bool encode_proplist_inline(ERL_NIF_TERM term)
+  {
+    unsigned list_len = 0;
+    if (enif_get_list_length(m_env, term, &list_len)) [[likely]]
+      m_out.reserve(static_cast<size_t>(list_len) * 24 + 2);
+    m_out.push('{');
+    ERL_NIF_TERM h, t = term;
+    bool first = true;
+    while (enif_get_list_cell(m_env, t, &h, &t)) {
+      int pa; const ERL_NIF_TERM* pp;
+      if (!enif_get_tuple(m_env, h, &pa, &pp) || pa != 2) [[unlikely]]
+        return error("not a tuple", h);
+      if (!first) m_out.push(',');
+      first = false;
+      if (!encode_key(pp[0])) [[unlikely]]
+        return error("cannot encode key", pp[0]);
+      m_out.push(':');
+      if (!encode(pp[1])) [[unlikely]]
+        return error("cannot encode value", pp[1]);
+    }
+    if (!enif_is_empty_list(m_env, t)) [[unlikely]]
+      return error("improper list", t);
+    m_out.push('}');
+    return true;
+  }
+
+  bool encode_atom_key(ERL_NIF_TERM term) {
+    // Object keys are always strings, even for atoms like `true`, `false`, or
+    // `nil`. Treat them as names rather than raw JSON literals so the output is
+    // always a valid quoted JSON object member.
+    unsigned len = 0;
+    if (!enif_get_atom_length(m_env, term, &len, ERL_NIF_LATIN1)) [[unlikely]]
+      return error("cannot convert atom to string", term);
+
+    if (len + 1 > sizeof(m_atom_buf)) {
+      char* tmp = static_cast<char*>(malloc(len + 1));
+      if (!tmp) return error("cannot convert atom to string", term);
+      enif_get_atom(m_env, term, tmp, len + 1, ERL_NIF_LATIN1);
+      bool ok = append_escaped_latin1_atom(tmp, len);
+      free(tmp);
+      return ok;
+    }
+
+    enif_get_atom(m_env, term, m_atom_buf, sizeof(m_atom_buf), ERL_NIF_LATIN1);
+    return append_escaped_latin1_atom(m_atom_buf, len);
   }
 
   bool encode_atom(ERL_NIF_TERM term) {
@@ -1223,13 +1492,23 @@ struct JSONEncoder {
     if (enif_is_identical(term, AM_TRUE))  { m_out.push("true",  4); return true; }
     if (enif_is_identical(term, AM_FALSE)) { m_out.push("false", 5); return true; }
     if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
-    std::string_view sv;
-    if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) [[unlikely]]
+    unsigned len = 0;
+    if (!enif_get_atom_length(m_env, term, &len, ERL_NIF_LATIN1)) [[unlikely]]
       return error("cannot convert atom to string", term);
-    return escape_string(sv);
+
+    if (len + 1 > sizeof(m_atom_buf)) [[unlikely]] {
+      using SmartPtr = std::unique_ptr<char[], decltype(&free)>;
+
+      SmartPtr tmp(static_cast<char*>(malloc(len + 1)), &free);
+      if (!tmp) return error("cannot convert atom to string", term);
+      enif_get_atom(m_env, term, tmp.get(), len + 1, ERL_NIF_LATIN1);
+      return append_escaped_latin1_atom(tmp.get(), len);
+    }
+
+    enif_get_atom(m_env, term, m_atom_buf, sizeof(m_atom_buf), ERL_NIF_LATIN1);
+    return append_escaped_latin1_atom(m_atom_buf, len);
   }
 
-private:
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {
     m_err = err;
