@@ -53,6 +53,7 @@ defmodule Glazer.JSON do
   `data` cannot be encoded. The atom `nil` is encoded as JSON `null`.
 
   See `:glazer_json.try_encode/2`.
+  Raise `ArgumentError` on encoding failure.
   """
   def encode!(data), do: encode!(data, [])
 
@@ -60,11 +61,16 @@ defmodule Glazer.JSON do
   Like `encode!/1`, but with encode options (see `t::glazer_json.encode_opts/0`).
 
   See `:glazer_json.try_encode/2`.
+  Raise `ArgumentError` on encoding failure.
   """
   def encode!(data, opts) do
     case :glazer.json_try_encode(data, [:use_nil | opts]) do
-      {:ok,    res} -> res
-      {:error, why} -> raise Glazer.ParseError, message: why
+      {:ok, res} ->
+        res
+      {:error, {:encode_error, {reason, term}}} ->
+        raise ArgumentError, message: "#{reason}: #{inspect(term)}"
+      {:error, why} ->
+        raise ArgumentError, message: why
     end
   end
 
@@ -83,7 +89,7 @@ defmodule Glazer.JSON do
   defdelegate encode_ndjson(list, opts), to: :glazer_json
 
   @doc """
-  Encode an Elixir term to JSON as iodata, raising `Glazer.ParseError` if
+  Encode an Elixir term to JSON as iodata, raising `ArgumentError` if
   `data` cannot be encoded. Equivalent to `encode!/1`, provided for API
   parity with Elixir's `JSON.encode_to_iodata!/1`.
 

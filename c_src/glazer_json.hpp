@@ -1052,14 +1052,14 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
 }
 
 struct JSONEncoder {
-  ErlNifEnv*        m_env;
+  ErlNifEnv*            m_env;
   const JSONEncodeOpts& m_opts;
-  OutBuf&           m_out;
-  char              m_atom_buf[256]; // scratch for atom → string_view
-  const char*       m_err;
-  ERL_NIF_TERM      m_err_term;
+  OutBuf&               m_out;
+  char                  m_atom_buf[256]; // scratch for atom → string_view
+  const char*           m_err;
+  ERL_NIF_TERM          m_err_term;
 
-  void escape_string(std::string_view sv)
+  bool escape_string(std::string_view sv)
   {
     if (m_opts.uescape || m_opts.force_utf8)
       json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8, m_opts.escape_fwd_slash);
@@ -1067,6 +1067,7 @@ struct JSONEncoder {
       json_escape_string_fwd_slash(sv, m_out, true);
     else
       json_escape_string(sv, m_out);
+    return true;
   }
 
   bool encode(ERL_NIF_TERM term)
@@ -1077,8 +1078,7 @@ struct JSONEncoder {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
-        escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
-        return true;
+        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
       }
 
       case ERL_NIF_TERM_TYPE_INTEGER:
@@ -1118,18 +1118,8 @@ struct JSONEncoder {
         return true;
       }
 
-      case ERL_NIF_TERM_TYPE_ATOM: {
-        if (enif_is_identical(term, m_opts.null_term)) { m_out.push("null", 4); return true; }
-        if (enif_is_identical(term, AM_TRUE))  { m_out.push("true",  4); return true; }
-        if (enif_is_identical(term, AM_FALSE)) { m_out.push("false", 5); return true; }
-        if (enif_is_identical(term, AM_NULL))  { m_out.push("null",  4); return true; }
-        if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
-        std::string_view sv;
-        if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) [[unlikely]]
-          return error("cannot convert atom to string", term);
-        escape_string(sv);
-        return true;
-      }
+      case ERL_NIF_TERM_TYPE_ATOM:
+        return encode_atom(term);
 
       case ERL_NIF_TERM_TYPE_FLOAT: {
         double d;
@@ -1189,22 +1179,56 @@ struct JSONEncoder {
     }
   }
 
-  bool encode_key(ERL_NIF_TERM k)
+  bool encode_key(ERL_NIF_TERM key)
   {
-    ErlNifBinary bin;
-    if (enif_inspect_binary(m_env, k, &bin)) {
-      escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
-      return true;
-    }
-    if (enif_is_atom(m_env, k)) {
-      std::string_view sv;
-      if (!atom_to_sv(m_env, k, m_atom_buf, sizeof(m_atom_buf), sv)) return false;
+    switch (enif_term_type(m_env, key)) {
+      case ERL_NIF_TERM_TYPE_BITSTRING: {
+        ErlNifBinary bin;
+        if (!enif_inspect_binary(m_env, key, &bin)) return false;
+        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
+      }
 
-      escape_string(sv);
-      return true;
+      case ERL_NIF_TERM_TYPE_ATOM:
+        return encode_atom(key);
+
+      case ERL_NIF_TERM_TYPE_INTEGER: {
+        m_out.push('"');
+        glz::BigInt::encode(m_env, key, m_out);
+        m_out.push('"');
+        return true;
+      }
+
+      case ERL_NIF_TERM_TYPE_LIST: {
+        ERL_NIF_TERM h, t = key;
+        int i = 0;
+        const int max_len = sizeof(m_atom_buf) - 1;
+        while (enif_get_list_cell(m_env, t, &h, &t)) {
+          unsigned int ch;
+          if (!enif_get_uint(m_env, h, &ch) || ch > 255) [[unlikely]]
+            return error("list key is not a charlist", key);
+          m_atom_buf[i++] = ch;
+          if (i > max_len) [[unlikely]]
+            return error("charlist key is too long", key);
+        }
+        return escape_string(std::string_view(m_atom_buf, i));
+      }
+
+      default:
+        return error("unsupported key type", key);
     }
-    return false;
   }
+
+  bool encode_atom(ERL_NIF_TERM term) {
+    if (enif_is_identical(term, m_opts.null_term)) { m_out.push("null", 4); return true; }
+    if (enif_is_identical(term, AM_TRUE))  { m_out.push("true",  4); return true; }
+    if (enif_is_identical(term, AM_FALSE)) { m_out.push("false", 5); return true; }
+    if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
+    std::string_view sv;
+    if (!atom_to_sv(m_env, term, m_atom_buf, sizeof(m_atom_buf), sv)) [[unlikely]]
+      return error("cannot convert atom to string", term);
+    return escape_string(sv);
+  }
+
 private:
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {

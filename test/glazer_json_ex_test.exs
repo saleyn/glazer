@@ -34,8 +34,8 @@ defmodule Glazer.JSONTest do
       assert Glazer.JSON.encode!(%{"a" => 1}, [:pretty]) =~ "\n"
     end
 
-    test "raises Glazer.ParseError when the term cannot be encoded" do
-      assert_raise Glazer.ParseError, fn -> Glazer.JSON.encode!([1 | 2]) end
+    test "raises ArgumentError when the term cannot be encoded" do
+      assert_raise ArgumentError, fn -> Glazer.JSON.encode!([1 | 2]) end
     end
   end
 

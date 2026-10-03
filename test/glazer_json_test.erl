@@ -125,9 +125,15 @@ null_atom_test_() ->
 encode_map_keys_test_() ->
   [
     %% atom keys
-    ?_assertMatch(<<"{", _/binary>>, glazer_json:encode(#{a => 1})),
+    ?_assertEqual(<<"{\"a\":1}">>, glazer_json:encode(#{a => 1})),
     %% binary keys
-    ?_assertMatch(<<"{", _/binary>>, glazer_json:encode(#{<<"a">> => 1}))
+    ?_assertEqual(<<"{\"a\":1}">>, glazer_json:encode(#{<<"a">> => 1})),
+    %% integer keys stringify as their decimal text
+    ?_assertEqual(<<"{\"1\":\"abc\"}">>, glazer_json:encode(#{1 => <<"abc">>})),
+    %% list-of-integer keys become their textual form: [65,66,67] -> "ABC"
+    ?_assertEqual(<<"{\"ABC\":1}">>, glazer_json:encode(#{[65, 66, 67] => 1})),
+    %% empty-list key becomes empty string
+    ?_assertEqual(<<"{\"\":1}">>, glazer_json:encode(#{[] => 1}))
   ].
 
 %% Improper lists (e.g. [1|2]) must be rejected with an encode_error rather
