@@ -166,7 +166,23 @@ jobs:
           VERSION="${{ needs.detect.outputs.version }}"
           APP="glazer"
           echo "Publishing $APP $VERSION"
-          rebar3 hex publish --repo hexpm --yes
+
+          REPLACE_FLAG=""
+          if curl -fsSL "https://hex.pm/api/packages/$APP/releases/$VERSION" -o /tmp/hex_release.json 2>/dev/null; then
+            INSERTED_AT=$(jq -r '.inserted_at // .insertedAt // ""' /tmp/hex_release.json)
+            if [ -n "$INSERTED_AT" ]; then
+              INSERTED_EPOCH=$(date -u -d "$INSERTED_AT" +%s 2>/dev/null || true)
+              if [ -n "$INSERTED_EPOCH" ]; then
+                NOW_EPOCH=$(date -u +%s)
+                AGE_SECONDS=$((NOW_EPOCH - INSERTED_EPOCH))
+                if [ "$AGE_SECONDS" -le 3600 ]; then
+                  REPLACE_FLAG="--replace"
+                fi
+              fi
+            fi
+          fi
+
+          rebar3 hex publish --repo hexpm --yes $REPLACE_FLAG
 
       - name: Retire prior versions
         run: |
