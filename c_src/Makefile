@@ -116,7 +116,11 @@ ifeq ($(ASAN),1)
   CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer -DGLAZER_OPT_LEVEL='"O1"'
 else
   CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native -fdata-sections -ffunction-sections $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
-  LDFLAGS  += $(LINK_FLAGS) -Wl,--gc-sections
+  ifeq ($(shell uname -s),Darwin)
+    LDFLAGS += $(LINK_FLAGS) -Wl,-dead_strip
+  else
+    LDFLAGS += $(LINK_FLAGS) -Wl,--gc-sections
+  endif
   ifeq ($(PGO),generate)
     CXXFLAGS += -fprofile-generate=$(PGO_DIR)
     LDFLAGS  += -fprofile-generate=$(PGO_DIR)
