@@ -185,7 +185,7 @@ optimize:
 	  echo "===> PGO step 3/3: rebuild with profile data"; \
 	  rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so; \
 	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all; \
-	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); \
+	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(if $(strip $(MIX_ENV)),as $(strip $(MIX_ENV)),) $(COMPILE); \
 	  echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"; \
 	fi
 

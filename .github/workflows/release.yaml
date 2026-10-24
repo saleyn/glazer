@@ -189,8 +189,10 @@ jobs:
           set +e
           APP=$(sed -nE '/\{application/{s/.*\{application,\s*([a-z_]+)\s*,.*/\1/p; q}' src/glazer.app.src)
 
-          # Releases are returned newest-first.
-          VSNS=$(curl -fsS "https://hex.pm/api/packages/$APP" | jq -r '.releases[].version')
+          # Releases are returned newest-first. Limit the list to the most recent
+          # KEEP_RELEASES + 5 versions so the retirement pass only evaluates a
+          # bounded recent window rather than the whole history.
+          VSNS=$(curl -fsS "https://hex.pm/api/packages/$APP" | jq -r '.releases[0:'"$((KEEP_RELEASES + 5))"'] | .[].version')
 
           if [ -z "$VSNS" ]; then
             echo "$APP: no releases were found on Hex"
