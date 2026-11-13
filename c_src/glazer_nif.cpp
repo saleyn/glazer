@@ -36,6 +36,9 @@
 
 namespace glz {
 
+// Schema resource type (initialized in nif_load)
+ErlNifResourceType* SCHEMA_RESOURCE_TYPE = nullptr;
+
 //-----------------------------------------------------------------------------
 // Dirty-scheduler threshold — inputs larger than this are offloaded to a
 // dirty CPU scheduler so they don't block normal scheduler threads.
@@ -931,10 +934,28 @@ static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info
       if (enif_is_identical(tp[0], AM_NULL) && enif_is_atom(env, tp[1]))
         am_null = tp[1];
   }
+
+  // Initialize schema resource type
+  ErlNifResourceType* res_type = enif_open_resource_type(
+    env,
+    nullptr,
+    "schema_resource",
+    schema_resource_cleanup,
+    ERL_NIF_RT_CREATE,
+    nullptr
+  );
+
+  if (res_type) {
+    SCHEMA_RESOURCE_TYPE = res_type;
+  }
+  // Note: Continue even if resource type creation fails;
+  // schema validation features will still be available via NIFs
+
   return 0;
 }
 
 static ErlNifFunc nif_funcs[] = {
+  // JSON decoding/encoding
   {"json_try_decode",    1, nif_json_try_decode,    0},
   {"json_try_decode",    2, nif_json_try_decode,    0},
   {"yaml_try_decode",    1, nif_yaml_try_decode,    0},
@@ -959,6 +980,13 @@ static ErlNifFunc nif_funcs[] = {
   {"try_decode_integer", 1, nif_try_decode_integer, 0},
   {"nif_compile_path",   1, nif_compile_path,       0},
   {"nif_info",           0, nif_info,               0},
+
+  // JSON schema validation
+  {"json_compile_schema", 1, nif_compile_schema, 0},
+  {"json_validate",       2, nif_validate,       0},
+  {"json_validate",       3, nif_validate,       0},
+  {"json_validate_term",  2, nif_validate_term,  0},
+  {"json_validate_term",  3, nif_validate_term,  0},
 };
 
 } // namespace glz

@@ -12,6 +12,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include <erl_nif.h>
 
@@ -21,7 +22,7 @@
 namespace glz {
 
 class SchemaCompiler {
- public:
+public:
   SchemaCompiler(ErlNifEnv* env) : m_env(env) {}
 
   // Compile a schema (map or list) to bytecode
@@ -31,7 +32,7 @@ class SchemaCompiler {
     std::string& error_msg
   );
 
- private:
+private:
   ErlNifEnv* m_env;
   std::vector<uint8_t> m_bytecode;
   std::vector<std::shared_ptr<std::regex>> m_patterns;
@@ -162,7 +163,7 @@ class SchemaCompiler {
   }
 };
 
-}  // namespace glz
-
 // Include implementation at end of header
 #include "glazer_schema_compiler.hxx"
+
+}  // namespace glz
