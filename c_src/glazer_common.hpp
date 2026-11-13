@@ -157,6 +157,62 @@ struct SmallTermVec {
 };
 
 //-----------------------------------------------------------------------------
+// Generic small vector — stack allocation for small lists (ValidationError, etc)
+//
+// Optimizes common case where error lists have <16 errors: zero heap allocation
+// for typical validation runs. Falls back to heap for larger collections.
+//-----------------------------------------------------------------------------
+
+template <typename T, size_t N>
+struct SmallVec {
+  T           m_inline[N];
+  T*          m_data = m_inline;
+  size_t      m_len  = 0;
+  size_t      m_cap  = N;
+
+  ~SmallVec() { if (m_data != m_inline) delete[] m_data; }
+
+  void push_back(const T& v) {
+    if (m_len == m_cap) [[unlikely]] {
+      size_t nc = m_cap * 2;
+      T* nb = new T[nc];
+      std::move(m_data, m_data + m_len, nb);
+      if (m_data != m_inline) delete[] m_data;
+      m_data = nb;
+      m_cap = nc;
+    }
+    m_data[m_len++] = v;
+  }
+
+  void push_back(T&& v) {
+    if (m_len == m_cap) [[unlikely]] {
+      size_t nc = m_cap * 2;
+      T* nb = new T[nc];
+      std::move(m_data, m_data + m_len, nb);
+      if (m_data != m_inline) delete[] m_data;
+      m_data = nb;
+      m_cap = nc;
+    }
+    m_data[m_len++] = std::move(v);
+  }
+
+  const T* begin() const { return m_data; }
+  const T* end()   const { return m_data + m_len; }
+  T*       begin()       { return m_data; }
+  T*       end()         { return m_data + m_len; }
+
+  T&       back()       { return m_data[m_len - 1]; }
+  const T& back() const { return m_data[m_len - 1]; }
+
+  T&       operator[](size_t i)       { return m_data[i]; }
+  const T& operator[](size_t i) const { return m_data[i]; }
+
+  size_t size()  const { return m_len; }
+  bool   empty() const { return m_len == 0; }
+  void   clear()       { m_len = 0; }
+};
+
+//-----------------------------------------------------------------------------
 // Hex digit lookup — shared by the JSON \uXXXX and YAML \xXX/\uXXXX/\UXXXXXXXX
 // escape decoders. A 256-entry table turns the 3-branch chain
 // ('0'-'9' / 'a'-'f' / 'A'-'F') into a single array index.

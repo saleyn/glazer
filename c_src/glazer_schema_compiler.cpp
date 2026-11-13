@@ -53,57 +53,78 @@ bool SchemaCompiler::compile_schema_term(ERL_NIF_TERM schema_term, std::string& 
       continue;
     }
 
-    // Handle known keywords
-    if (key_str == "type") {
-      if (!compile_type(value, error_msg)) return false;
-    } else if (key_str == "minimum") {
-      compile_minimum(value);
-    } else if (key_str == "maximum") {
-      compile_maximum(value);
-    } else if (key_str == "exclusiveMinimum") {
-      compile_exclusive_minimum(value);
-    } else if (key_str == "exclusiveMaximum") {
-      compile_exclusive_maximum(value);
-    } else if (key_str == "multipleOf") {
-      compile_multiple_of(value);
-    } else if (key_str == "minLength") {
-      compile_min_length(value);
-    } else if (key_str == "maxLength") {
-      compile_max_length(value);
-    } else if (key_str == "pattern") {
-      compile_pattern(value, error_msg);
-    } else if (key_str == "minItems") {
-      compile_min_items(value);
-    } else if (key_str == "maxItems") {
-      compile_max_items(value);
-    } else if (key_str == "uniqueItems") {
-      compile_unique_items(value);
-    } else if (key_str == "items") {
-      if (!compile_items(value, error_msg)) return false;
-    } else if (key_str == "minProperties") {
-      compile_min_properties(value);
-    } else if (key_str == "maxProperties") {
-      compile_max_properties(value);
-    } else if (key_str == "required") {
-      if (!compile_required(value, error_msg)) return false;
-    } else if (key_str == "properties") {
-      if (!compile_properties(value, error_msg)) return false;
-    } else if (key_str == "additionalProperties") {
-      if (!compile_additional_properties(value, error_msg)) return false;
-    } else if (key_str == "not") {
-      if (!compile_not(value, error_msg)) return false;
-    } else if (key_str == "anyOf") {
-      if (!compile_any_of(value, error_msg)) return false;
-    } else if (key_str == "oneOf") {
-      if (!compile_one_of(value, error_msg)) return false;
-    } else if (key_str == "allOf") {
-      if (!compile_all_of(value, error_msg)) return false;
-    } else if (key_str == "$ref") {
-      if (!compile_ref(value, error_msg)) return false;
-    } else if (key_str == "format") {
-      compile_format(value);
+    // Hash-based keyword dispatch (first 8 bytes for speed)
+    uint64_t keyword_hash = str_to_u64(key_str.c_str());
+    switch (keyword_hash) {
+      case str_to_u64("type"):
+        if (!compile_type(value, error_msg)) return false;
+        break;
+      case str_to_u64("minimum"):
+        compile_minimum(value);
+        break;
+      case str_to_u64("maximum"):
+        compile_maximum(value);
+        break;
+      case str_to_u64("pattern"):
+        compile_pattern(value, error_msg);
+        break;
+      case str_to_u64("minItems"):
+        compile_min_items(value);
+        break;
+      case str_to_u64("maxItems"):
+        compile_max_items(value);
+        break;
+      case str_to_u64("items\0\0\0\0"):  // "items" + 4 null bytes = 8 bytes
+        if (!compile_items(value, error_msg)) return false;
+        break;
+      case str_to_u64("required"):
+        if (!compile_required(value, error_msg)) return false;
+        break;
+      case str_to_u64("not\0\0\0\0\0"):  // "not" + 5 null bytes = 8 bytes
+        if (!compile_not(value, error_msg)) return false;
+        break;
+      case str_to_u64("anyOf\0\0\0"):  // "anyOf" + 3 null bytes = 8 bytes
+        if (!compile_any_of(value, error_msg)) return false;
+        break;
+      case str_to_u64("oneOf\0\0\0"):  // "oneOf" + 3 null bytes = 8 bytes
+        if (!compile_one_of(value, error_msg)) return false;
+        break;
+      case str_to_u64("allOf\0\0\0"):  // "allOf" + 3 null bytes = 8 bytes
+        if (!compile_all_of(value, error_msg)) return false;
+        break;
+      case str_to_u64("$ref\0\0\0\0"):  // "$ref" + 4 null bytes = 8 bytes
+        if (!compile_ref(value, error_msg)) return false;
+        break;
+      case str_to_u64("format\0\0"):  // "format" + 2 null bytes = 8 bytes
+        compile_format(value);
+        break;
+      // For longer keywords (>8 bytes), fall back to string comparison
+      default:
+        if (key_str == "exclusiveMinimum") {
+          compile_exclusive_minimum(value);
+        } else if (key_str == "exclusiveMaximum") {
+          compile_exclusive_maximum(value);
+        } else if (key_str == "multipleOf") {
+          compile_multiple_of(value);
+        } else if (key_str == "minLength") {
+          compile_min_length(value);
+        } else if (key_str == "maxLength") {
+          compile_max_length(value);
+        } else if (key_str == "uniqueItems") {
+          compile_unique_items(value);
+        } else if (key_str == "minProperties") {
+          compile_min_properties(value);
+        } else if (key_str == "maxProperties") {
+          compile_max_properties(value);
+        } else if (key_str == "properties") {
+          if (!compile_properties(value, error_msg)) return false;
+        } else if (key_str == "additionalProperties") {
+          if (!compile_additional_properties(value, error_msg)) return false;
+        }
+        // Else: ignore metadata keywords (title, description, default, examples, $defs, etc.)
+        break;
     }
-    // Ignore metadata keywords: title, description, default, examples, $defs, etc.
+
   }
 
   return true;
@@ -128,7 +149,7 @@ bool SchemaCompiler::compile_type(ERL_NIF_TERM type_term, std::string& error_msg
   uint8_t type_mask = 0;
 
   if (type_str.length() <= 8) {
-    uint64_t type_hash = str_to_u64(type_str.c_str());
+    auto type_hash = str_to_u64(type_str.c_str());
 
     switch (type_hash) {
       case str_to_u64("null"):
