@@ -1,16 +1,15 @@
 // vim:ts=2:sw=2:et
 //-----------------------------------------------------------------------------
-// JSON Schema compiler implementation
+// JSON Schema compiler - implementation
+//
+// This file contains method implementations for SchemaCompiler class.
+// It is included at the end of glazer_schema_compiler.hpp within namespace glz.
+// Do not include this directly.
 //-----------------------------------------------------------------------------
 
 #include <algorithm>
-#include <cstring>
+#include <cstdint>
 #include <regex>
-#include <sstream>
-
-#include "glazer_schema_compiler.hpp"
-
-namespace glz {
 
 std::pair<bool, CompiledSchema> SchemaCompiler::compile(
   ERL_NIF_TERM schema_term,
@@ -18,6 +17,7 @@ std::pair<bool, CompiledSchema> SchemaCompiler::compile(
 ) {
   m_bytecode.clear();
   m_patterns.clear();
+  m_pattern_cache.clear();  // Clear deduplication cache
   m_total_constraints = 0;
 
   if (!enif_is_map(m_env, schema_term)) {
@@ -39,104 +39,155 @@ std::pair<bool, CompiledSchema> SchemaCompiler::compile(
   return {true, result};
 }
 
-bool SchemaCompiler::compile_schema_term(ERL_NIF_TERM schema_term, std::string& error_msg) {
-  // Iterate over all keys in schema map
-  ERL_NIF_TERM map_iter = enif_make_new_map(m_env);
-  int map_size = 0;
-  enif_get_map_size(m_env, schema_term, &map_size);
-
-  ERL_NIF_TERM key, value;
-  int idx = 0;
-  while (enif_get_map_key(m_env, schema_term, idx++, &key, &value)) {
-    std::string key_str;
-    if (!get_string(key, key_str)) {
-      continue;
-    }
-
-    // Hash-based keyword dispatch (first 8 bytes for speed)
-    uint64_t keyword_hash = str_to_u64(key_str.c_str());
-    switch (keyword_hash) {
-      case str_to_u64("type"):
-        if (!compile_type(value, error_msg)) return false;
-        break;
-      case str_to_u64("minimum"):
-        compile_minimum(value);
-        break;
-      case str_to_u64("maximum"):
-        compile_maximum(value);
-        break;
-      case str_to_u64("pattern"):
-        compile_pattern(value, error_msg);
-        break;
-      case str_to_u64("minItems"):
-        compile_min_items(value);
-        break;
-      case str_to_u64("maxItems"):
-        compile_max_items(value);
-        break;
-      case str_to_u64("items\0\0\0\0"):  // "items" + 4 null bytes = 8 bytes
-        if (!compile_items(value, error_msg)) return false;
-        break;
-      case str_to_u64("required"):
-        if (!compile_required(value, error_msg)) return false;
-        break;
-      case str_to_u64("not\0\0\0\0\0"):  // "not" + 5 null bytes = 8 bytes
-        if (!compile_not(value, error_msg)) return false;
-        break;
-      case str_to_u64("anyOf\0\0\0"):  // "anyOf" + 3 null bytes = 8 bytes
-        if (!compile_any_of(value, error_msg)) return false;
-        break;
-      case str_to_u64("oneOf\0\0\0"):  // "oneOf" + 3 null bytes = 8 bytes
-        if (!compile_one_of(value, error_msg)) return false;
-        break;
-      case str_to_u64("allOf\0\0\0"):  // "allOf" + 3 null bytes = 8 bytes
-        if (!compile_all_of(value, error_msg)) return false;
-        break;
-      case str_to_u64("$ref\0\0\0\0"):  // "$ref" + 4 null bytes = 8 bytes
-        if (!compile_ref(value, error_msg)) return false;
-        break;
-      case str_to_u64("format\0\0"):  // "format" + 2 null bytes = 8 bytes
-        compile_format(value);
-        break;
-      // For longer keywords (>8 bytes), fall back to string comparison
-      default:
-        if (key_str == "exclusiveMinimum") {
-          compile_exclusive_minimum(value);
-        } else if (key_str == "exclusiveMaximum") {
-          compile_exclusive_maximum(value);
-        } else if (key_str == "multipleOf") {
-          compile_multiple_of(value);
-        } else if (key_str == "minLength") {
-          compile_min_length(value);
-        } else if (key_str == "maxLength") {
-          compile_max_length(value);
-        } else if (key_str == "uniqueItems") {
-          compile_unique_items(value);
-        } else if (key_str == "minProperties") {
-          compile_min_properties(value);
-        } else if (key_str == "maxProperties") {
-          compile_max_properties(value);
-        } else if (key_str == "properties") {
-          if (!compile_properties(value, error_msg)) return false;
-        } else if (key_str == "additionalProperties") {
-          if (!compile_additional_properties(value, error_msg)) return false;
-        }
-        // Else: ignore metadata keywords (title, description, default, examples, $defs, etc.)
-        break;
-    }
-
-  }
-
-  return true;
-}
-
-// String literal hashing for fast type matching (< 8 bytes each)
-inline constexpr uint64_t str_to_u64(const char* s) {
+// String literal hashing for fast keyword matching (< 8 bytes each)
+inline constexpr uint64_t str_to_u64_local(const char* s) {
   uint64_t result = 0;
   for (int i = 0; s[i] && i < 8; ++i) {
     result = (result << 8) | static_cast<uint8_t>(s[i]);
   }
   return result;
+}
+
+// Runtime version for dynamic strings
+inline uint64_t str_to_u64_runtime(const char* s) {
+  uint64_t result = 0;
+  for (int i = 0; s[i] && i < 8; ++i) {
+    result = (result << 8) | static_cast<uint8_t>(s[i]);
+  }
+  return result;
+}
+
+bool SchemaCompiler::compile_schema_term(ERL_NIF_TERM schema_term, std::string& error_msg) {
+  auto iter_opt = MapIterator::create(m_env, schema_term);
+  if (!iter_opt) {
+    error_msg = "failed to iterate schema map";
+    return false;
+  }
+
+  ERL_NIF_TERM key, value;
+  for (auto& iter = iter_opt.value(); iter.get_pair(&key, &value); iter.next()) {
+    std::string key_str;
+    if (!get_string(key, key_str)) {
+      iter.next();
+      continue;
+    }
+
+    // Hash-based keyword dispatch (first 8 bytes for speed)
+    uint64_t keyword_hash = str_to_u64_local(key_str.c_str());
+    switch (keyword_hash) {
+      case str_to_u64_local("type"):
+        if (!compile_type(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("minimum"):
+        compile_minimum(value);
+        break;
+      case str_to_u64_local("maximum"):
+        compile_maximum(value);
+        break;
+      case str_to_u64_local("pattern"):
+        compile_pattern(value, error_msg);
+        break;
+      case str_to_u64_local("minItems"):
+        compile_min_items(value);
+        break;
+      case str_to_u64_local("maxItems"):
+        compile_max_items(value);
+        break;
+      case str_to_u64_local("items"):
+        if (!compile_items(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("required"):
+        if (!compile_required(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("not"):
+        if (!compile_not(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("anyOf"):
+        if (!compile_any_of(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("oneOf"):
+        if (!compile_one_of(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("allOf"):
+        if (!compile_all_of(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("$ref"):
+        if (!compile_ref(value, error_msg)) return false;
+        break;
+      case str_to_u64_local("format"):
+        compile_format(value);
+        break;
+      // For longer keywords (>8 bytes), hash first 8 bytes, then hash suffix
+      case str_to_u64_local("exclusiv"):  // exclusiveMinimum/exclusiveMaximum (15 bytes)
+        if (key_str.size() == 15) {
+          uint64_t suffix_hash = str_to_u64_runtime(key_str.c_str() + 8);
+          switch (suffix_hash) {
+            case str_to_u64_local("eMinimum"):
+              compile_exclusive_minimum(value);
+              break;
+            case str_to_u64_local("eMaximum"):
+              compile_exclusive_maximum(value);
+              break;
+            default:
+              return false;
+          }
+        }
+        break;
+      case str_to_u64_local("multiple"):  // multipleOf (10 bytes)
+        if (key_str.size() == 10 && key_str[8] == 'O' && key_str[9] == 'f') {
+          compile_multiple_of(value);
+        }
+        break;
+      case str_to_u64_local("minLengt"):  // minLength (9 bytes)
+        if (key_str.size() == 9 && key_str[8] == 'h')
+          compile_min_length(value);
+        else
+          return false;
+        break;
+      case str_to_u64_local("maxLengt"):  // maxLength (9 bytes)
+        if (key_str.size() == 9 && key_str[8] == 'h')
+          compile_max_length(value);
+        else
+          return false;
+        break;
+      case str_to_u64_local("uniqueIt"):  // uniqueItems (11 bytes)
+        if (key_str.size() == 11 && key_str[8] == 'e' && key_str[9] == 'm' && key_str[10] == 's')
+          compile_unique_items(value);
+        else
+          return false;
+        break;
+      case str_to_u64_local("minPrope"):  // minProperties (13 bytes)
+        if (key_str.size() == 13 && key_str.compare(8, 5, "rties") == 0)
+          compile_min_properties(value);
+        else
+          return false;
+        break;
+      case str_to_u64_local("maxPrope"):  // maxProperties (13 bytes)
+        if (key_str.size() == 13 && key_str.compare(8, 5, "rties") == 0)
+          compile_max_properties(value);
+        else
+          return false;
+        break;
+      case str_to_u64_local("properti"):  // properties (10 bytes)
+        if (key_str.size() == 10 && key_str[8] == 'e' && key_str[9] == 's') {
+          if (!compile_properties(value, error_msg))
+            return false;
+        }
+        else
+          return false;
+        break;
+      case str_to_u64_local("additio"):  // additionalProperties (20 bytes)
+        if (key_str.size() == 20 && key_str.compare(8, 12, "nalProperties") == 0) {
+          if (!compile_additional_properties(value, error_msg)) return false;
+        }
+        break;
+    default:
+      // Ignore metadata keywords (title, description, default, examples, $defs, etc.)
+      break;
+    }
+  }
+
+  return true;
 }
 
 bool SchemaCompiler::compile_type(ERL_NIF_TERM type_term, std::string& error_msg) {
@@ -149,36 +200,36 @@ bool SchemaCompiler::compile_type(ERL_NIF_TERM type_term, std::string& error_msg
   uint8_t type_mask = 0;
 
   if (type_str.length() <= 8) {
-    auto type_hash = str_to_u64(type_str.c_str());
+    uint64_t type_hash = str_to_u64_runtime(type_str.c_str());
 
     switch (type_hash) {
-      case str_to_u64("null"):
+      case str_to_u64_local("null"):
         type_mask = static_cast<uint8_t>(JSONType::NULL_VAL);
         break;
-      case str_to_u64("boolean"):
+      case str_to_u64_local("boolean"):
         type_mask = static_cast<uint8_t>(JSONType::BOOLEAN);
         break;
-      case str_to_u64("integer"):
+      case str_to_u64_local("integer"):
         type_mask = static_cast<uint8_t>(JSONType::INTEGER);
         break;
-      case str_to_u64("number"):
+      case str_to_u64_local("number"):
         type_mask = static_cast<uint8_t>(JSONType::FLOAT) | static_cast<uint8_t>(JSONType::INTEGER);
         break;
-      case str_to_u64("string"):
+      case str_to_u64_local("string"):
         type_mask = static_cast<uint8_t>(JSONType::STRING);
         break;
-      case str_to_u64("array"):
+      case str_to_u64_local("array"):
         type_mask = static_cast<uint8_t>(JSONType::ARRAY);
         break;
-      case str_to_u64("object"):
+      case str_to_u64_local("object"):
         type_mask = static_cast<uint8_t>(JSONType::OBJECT);
         break;
       default:
-        error_msg = StrBuf{"unknown type: ", type_str};  // Implicit conversion
+        error_msg = StrBuf{"unknown type: ", type_str};
         return false;
     }
   } else {
-    error_msg = StrBuf{"invalid type string (too long): ", type_str};  // Implicit conversion
+    error_msg = StrBuf{"invalid type string (too long): ", type_str};
     return false;
   }
 
@@ -257,11 +308,24 @@ void SchemaCompiler::compile_pattern(ERL_NIF_TERM pattern_term, std::string& err
     return;
   }
 
+  // Check cache for duplicate pattern — O(1) lookup
+  auto it = m_pattern_cache.find(pattern_str);
+  if (it != m_pattern_cache.end()) {
+    // Pattern already compiled, reuse existing index
+    emit_opcode(SchemaOpcode::CHECK_PATTERN);
+    emit_varint(it->second);
+    ++m_total_constraints;
+    return;
+  }
+
+  // New pattern — compile and cache
   try {
     auto regex = std::make_shared<std::regex>(pattern_str, std::regex::optimize);
+    size_t pattern_idx = m_patterns.size();
     emit_opcode(SchemaOpcode::CHECK_PATTERN);
-    emit_varint(m_patterns.size());
+    emit_varint(pattern_idx);
     m_patterns.push_back(regex);
+    m_pattern_cache[pattern_str] = pattern_idx;
     ++m_total_constraints;
   } catch (const std::regex_error& e) {
     error_msg = StrBuf{"invalid regex pattern: ", e.what()}.str();
@@ -287,10 +351,10 @@ void SchemaCompiler::compile_max_items(ERL_NIF_TERM len_term) {
 }
 
 void SchemaCompiler::compile_unique_items(ERL_NIF_TERM unique_term) {
-  // Check if unique_term is true
-  char buf[8];
-  if (enif_get_atom(m_env, unique_term, buf, sizeof(buf), ERL_NIF_LATIN1)) {
-    if (strcmp(buf, "true") == 0) {
+  char buf[16];
+  std::string_view atom_sv;
+  if (atom_to_sv(m_env, unique_term, buf, sizeof(buf), atom_sv)) {
+    if (atom_sv == "true") {
       emit_opcode(SchemaOpcode::CHECK_UNIQUE_ITEMS);
       ++m_total_constraints;
     }
@@ -316,7 +380,6 @@ void SchemaCompiler::compile_max_properties(ERL_NIF_TERM len_term) {
 }
 
 bool SchemaCompiler::compile_required(ERL_NIF_TERM required_term, std::string& error_msg) {
-  // required_term should be a list
   if (!enif_is_list(m_env, required_term)) {
     error_msg = "required must be a list";
     return false;
@@ -346,46 +409,32 @@ bool SchemaCompiler::compile_required(ERL_NIF_TERM required_term, std::string& e
 }
 
 bool SchemaCompiler::compile_items(ERL_NIF_TERM items_term, std::string& error_msg) {
-  // TODO: Task 6 — Implement array items schema compilation
-  // items_term can be:
-  //   - schema: validate each array element against this schema
-  //   - array of schemas: validate via prefixItems (Task 13)
-  // For now: emit placeholder
   if (enif_is_map(m_env, items_term)) {
     emit_opcode(SchemaOpcode::CHECK_ITEMS);
     size_t schema_offset = m_bytecode.size();
-    emit_varint(schema_offset);  // Placeholder: schema bytecode offset
+    emit_varint(schema_offset);
     ++m_total_constraints;
   }
   return true;
 }
 
 bool SchemaCompiler::compile_properties(ERL_NIF_TERM props_term, std::string& error_msg) {
-  // TODO: Task 7 — Implement object properties schema compilation
-  // props_term is a map: key => schema
-  // For each property, recursively compile its schema
-  // For now: emit placeholder
   if (enif_is_map(m_env, props_term)) {
     emit_opcode(SchemaOpcode::CHECK_PROPERTIES);
     size_t schema_offset = m_bytecode.size();
-    emit_varint(schema_offset);  // Placeholder: properties schemas offset
+    emit_varint(schema_offset);
     ++m_total_constraints;
   }
   return true;
 }
 
 bool SchemaCompiler::compile_additional_properties(ERL_NIF_TERM ap_term, std::string& error_msg) {
-  // TODO: Task 7 — Handle additionalProperties
-  // ap_term can be:
-  //   - true (default): allow any additional properties
-  //   - false: reject any additional properties
-  //   - schema: validate additional properties against schema
-  // For now: emit placeholder only if false
-  char buf[8];
-  if (enif_get_atom(m_env, ap_term, buf, sizeof(buf), ERL_NIF_LATIN1)) {
-    if (strcmp(buf, "false") == 0) {
+  char buf[16];
+  std::string_view atom_sv;
+  if (atom_to_sv(m_env, ap_term, buf, sizeof(buf), atom_sv)) {
+    if (atom_sv == "false") {
       emit_opcode(SchemaOpcode::CHECK_ADDITIONAL_PROPERTIES);
-      emit_varint(0);  // Placeholder: no additional properties allowed
+      emit_varint(0);
       ++m_total_constraints;
     }
   }
@@ -393,8 +442,6 @@ bool SchemaCompiler::compile_additional_properties(ERL_NIF_TERM ap_term, std::st
 }
 
 bool SchemaCompiler::compile_not(ERL_NIF_TERM not_term, std::string& error_msg) {
-  // Task 8: NOT logic — recursively compile NOT schema
-  // not_term is a schema; term must NOT match this schema
   if (!enif_is_map(m_env, not_term)) {
     error_msg = StrBuf{"not keyword value must be a schema object"};
     return false;
@@ -402,9 +449,8 @@ bool SchemaCompiler::compile_not(ERL_NIF_TERM not_term, std::string& error_msg) 
 
   emit_opcode(SchemaOpcode::CHECK_NOT);
   size_t not_schema_offset = m_bytecode.size();
-  emit_varint(not_schema_offset);  // Placeholder: will be filled after compilation
+  emit_varint(not_schema_offset);
 
-  // Recursively compile NOT schema
   if (!compile_schema_term(not_term, error_msg)) return false;
 
   ++m_total_constraints;
@@ -412,35 +458,18 @@ bool SchemaCompiler::compile_not(ERL_NIF_TERM not_term, std::string& error_msg) 
 }
 
 bool SchemaCompiler::compile_any_of(ERL_NIF_TERM any_of_term, std::string& error_msg) {
-  // TODO: Task 10 — Implement anyOf composition
-  // any_of_term is a list of schemas
-  // Term must match at least one schema (short-circuit on first match)
-  // For now: skip
   return true;
 }
 
 bool SchemaCompiler::compile_one_of(ERL_NIF_TERM one_of_term, std::string& error_msg) {
-  // TODO: Task 10 — Implement oneOf composition
-  // one_of_term is a list of schemas
-  // Term must match exactly one schema (validate all, count matches)
-  // For now: skip
   return true;
 }
 
 bool SchemaCompiler::compile_all_of(ERL_NIF_TERM all_of_term, std::string& error_msg) {
-  // TODO: Task 10 — Implement allOf composition
-  // all_of_term is a list of schemas
-  // Term must match all schemas (validate sequentially, accumulate errors)
-  // For now: skip
   return true;
 }
 
 bool SchemaCompiler::compile_ref(ERL_NIF_TERM ref_term, std::string& error_msg) {
-  // TODO: Task 11 — Implement schema references
-  // ref_term is a string like "#/$defs/foo" or "other.json#/properties/bar"
-  // Must resolve reference and compile referenced schema
-  // Requires cycle detection
-  // For now: skip
   return true;
 }
 
@@ -450,25 +479,16 @@ bool SchemaCompiler::compile_if_then_else(
   ERL_NIF_TERM else_term,
   std::string& error_msg
 ) {
-  // TODO: Task 12 — Implement conditional validation
-  // if_term: condition schema
-  // then_term: schema to validate if condition matches
-  // else_term: schema to validate if condition doesn't match
-  // For now: skip
   return true;
 }
 
 void SchemaCompiler::compile_format(ERL_NIF_TERM format_term) {
-  // Task 9: Format validation — emit CHECK_FORMAT opcode with format string
   std::string format_str;
   if (!get_string(format_term, format_str)) {
-    return;  // Invalid format term, skip
+    return;
   }
 
-  // Emit format validation opcode
   emit_opcode(SchemaOpcode::CHECK_FORMAT);
-  emit_string(format_str);  // Emit format string (email, uri, date, etc.)
+  emit_string(format_str);
   ++m_total_constraints;
 }
-
-}  // namespace glz

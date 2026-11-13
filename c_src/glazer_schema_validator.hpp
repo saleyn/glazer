@@ -87,14 +87,18 @@ class SchemaValidator {
   // Helper: make error tuple
   ERL_NIF_TERM make_error_tuple(const ValidationError& err);
 
-  // Helper: make error list
-  ERL_NIF_TERM make_error_list(const std::vector<ValidationError>& errors);
+  // Helper: make error list (works with std::vector or SmallVec)
+  template<typename ErrorVec>
+  ERL_NIF_TERM make_error_list(const ErrorVec& errors);
 
   // Read varint from bytecode
   bool read_varint(size_t& offset, uint64_t& out);
 };
 
-}  // namespace glz
+// Forward declaration for format validator (defined in .hxx)
+bool check_format_value(ErlNifEnv* env, ERL_NIF_TERM term, std::string_view format);
 
 // Include implementation at end of header
 #include "glazer_schema_validator.hxx"
+
+}  // namespace glz
