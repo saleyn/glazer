@@ -153,7 +153,7 @@ struct ValidationError {
 struct ValidationContext {
   ErlNifEnv* m_env;
   ValidationMode m_mode = ValidationMode::FAIL_FAST;
-  std::vector<ValidationError> m_errors;
+  SmallVec<ValidationError, 16> m_errors;  // Zero heap allocation for typical error lists
   size_t m_max_errors = 1;
   size_t m_max_depth = 128;
   size_t m_current_depth = 0;
@@ -234,11 +234,11 @@ inline JSONType term_to_type(ErlNifEnv* env, ERL_NIF_TERM term) {
   long long_val;
   if (enif_get_int64(env, term, &long_val)) return JSONType::INTEGER;
 
+  uint64_t uval;
+  if (enif_get_uint64(env, term, &uval)) return JSONType::INTEGER;
+
   double dbl_val;
   if (enif_get_double(env, term, &dbl_val)) return JSONType::FLOAT;
-
-  // BigInt
-  if (enif_is_big_integer(env, term))       return JSONType::INTEGER;
 
   return JSONType::NULL_VAL;
 }

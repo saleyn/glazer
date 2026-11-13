@@ -29,6 +29,11 @@
 #include "glazer_csv.hpp"
 #include "glazer_jq.hpp"
 
+// Include schema implementations as part of this compilation unit
+#include "glazer_schema_nif.hpp"
+#include "glazer_schema_compiler.hpp"
+#include "glazer_schema_validator.hpp"
+
 namespace glz {
 
 //-----------------------------------------------------------------------------

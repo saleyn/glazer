@@ -7,15 +7,9 @@ OBJ_DIR  ?= $(APP_DIR)/obj
 REBAR    := rebar3
 COMPILE  := $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),bare compile --paths $(patsubst %/_build/%,%/_build,$(REBAR_BARE_COMPILER_OUTPUT_DIR))/default/plugins/*/ebin,compile)
 
-SRC      := glazer_nif.cpp                   \
-            glazer_schema_nif.cpp             \
-            glazer_schema_compiler.cpp        \
-            glazer_schema_validator.cpp
+SRC      := glazer_nif.cpp
 
-OBJ      := $(OBJ_DIR)/glazer_nif.o          \
-            $(OBJ_DIR)/glazer_schema_nif.o   \
-            $(OBJ_DIR)/glazer_schema_compiler.o \
-            $(OBJ_DIR)/glazer_schema_validator.o
+OBJ      := $(OBJ_DIR)/glazer_nif.o
 
 # erlang:load_nif/2 appends the platform-specific extension itself
 # (.dll on Windows, .so elsewhere), so the build output must match.

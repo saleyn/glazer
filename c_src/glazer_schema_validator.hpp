@@ -95,3 +95,6 @@ class SchemaValidator {
 };
 
 }  // namespace glz
+
+// Include implementation at end of header
+#include "glazer_schema_validator.hxx"
