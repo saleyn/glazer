@@ -496,7 +496,7 @@ file_schema_format_option_test() ->
   Dir = tmp_dir(),
   File = filename:join(Dir, "schema.txt"),
   ok = file:write_file(File, ~"{\"type\": \"string\"}"),
-  ?assertMatch({error, {unsupported_format, ".txt"}}, glazer_schema:compile_schema_file(File)),
+  ?assertMatch({error, {unsupported_format, <<".txt">>}}, glazer_schema:compile_schema_file(File)),
   {ok, C} = glazer_schema:compile_schema_file(File, [{format, json}, {registry, false}]),
   ok = glazer_schema:validate(C, ~"x"),
   ok = file:delete(File),

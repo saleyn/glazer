@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate SVG bar charts from the JSON/YAML/CSV benchmark tables in README.md.
+Generate SVG bar charts from the JSON/YAML/CSV benchmark tables in the guides.
 
 Produces one SVG per file-size category (small/medium/large). Each SVG is a
 3x2 grid: rows are JSON/YAML/CSV, columns are decode/encode, and each cell is
@@ -8,16 +8,18 @@ a bar chart comparing libraries for that format's representative file at that
 size category.
 
 Usage:
-    bin/gen-bench-charts.py [bench.txt] [README.md] [output_dir]
+    bin/gen-bench-charts.py [bench.txt] [output_dir]
 
 If a .txt file is given as the first argument the script first updates the
-matching (numbers in µs) tables in README.md with the data found in that file,
+matching (numbers in µs) tables in guides/json.md, guides/yaml.md and guides/csv.md
+with the data found in that file,
 then regenerates the charts.  The file may contain one or more benchmark
 sections (JSON / YAML / CSV) in any order; each section is identified by the
 format keyword (JSON, YAML, or CSV) that appears on the line immediately after
 "(numbers in µs)".
 
-Defaults: README.md in the repo root, output to assets/.
+The charts are written to output_dir (default assets/ in the repo root). The README
+embeds them and links to the tables in the guides; it is not changed.
 """
 
 import math
@@ -27,10 +29,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+GUIDES = ROOT / "guides"
+
 TABLES = [
-    {"format": "JSON", "heading": "### Benchmarking JSON"},
-    {"format": "YAML", "heading": "### Benchmarking YAML"},
-    {"format": "CSV",  "heading": "### Benchmarking CSV"},
+    {"format": "JSON", "file": GUIDES / "json.md", "heading": "## Benchmarking JSON"},
+    {"format": "YAML", "file": GUIDES / "yaml.md", "heading": "## Benchmarking YAML"},
+    {"format": "CSV",  "file": GUIDES / "csv.md",  "heading": "## Benchmarking CSV"},
 ]
 
 # For each format, which group label represents the small/medium/large file.
@@ -395,29 +399,28 @@ def extract_bench_blocks(text):
     return blocks
 
 
-def replace_bench_table(readme_text, fmt, new_table):
-    heading = f"### Benchmarking {fmt}"
-    hi = find_heading(readme_text, heading)
+def replace_bench_table(guide_text, heading, new_table, guide_name):
+    hi = find_heading(guide_text, heading)
     if hi == -1:
-        print(f"warning: {heading!r} not found in README — skipping", file=sys.stderr)
-        return readme_text, False
+        print(f"warning: {heading!r} not found in {guide_name} — skipping", file=sys.stderr)
+        return guide_text, False
 
-    fence_open = readme_text.index("```", hi)
-    fence_close = readme_text.index("\n```", fence_open + 3)
-    block = readme_text[fence_open:fence_close]
+    fence_open = guide_text.index("```", hi)
+    fence_close = guide_text.index("\n```", fence_open + 3)
+    block = guide_text[fence_open:fence_close]
 
     try:
         table_idx = block.index("(numbers in")
     except ValueError:
-        print(f"warning: '(numbers in' not found in {heading!r} block — skipping",
+        print(f"warning: '(numbers in' not found in {heading!r} block in {guide_name} — skipping",
               file=sys.stderr)
-        return readme_text, False
+        return guide_text, False
 
     # ⭐ NEW: strip trailing whitespace from every line
     cleaned_table = "\n".join(line.rstrip() for line in new_table.splitlines())
 
     new_block = block[:table_idx] + cleaned_table
-    new_text = readme_text[:fence_open] + new_block + readme_text[fence_close:]
+    new_text = guide_text[:fence_open] + new_block + guide_text[fence_close:]
     return new_text, True
 
 def main():
@@ -427,8 +430,7 @@ def main():
     if args and args[0].endswith(".txt"):
         bench_file = Path(args.pop(0))
 
-    readme  = Path(args[0]) if args       else ROOT / "README.md"
-    out_dir = Path(args[1]) if len(args) > 1 else ROOT / "assets"
+    out_dir = Path(args[0]) if args else ROOT / "assets"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if bench_file is not None:
@@ -436,17 +438,19 @@ def main():
         if not blocks:
             print(f"error: no (numbers in µs) tables found in {bench_file}", file=sys.stderr)
             sys.exit(1)
-        text = readme.read_text()
-        for fmt, table in blocks:
-            text, replaced = replace_bench_table(text, fmt, table)
+        by_format = {table["format"]: table for table in TABLES}
+        for fmt, table_text in blocks:
+            table = by_format[fmt]
+            guide = table["file"]
+            text, replaced = replace_bench_table(guide.read_text(), table["heading"],
+                                                 table_text, guide.name)
             if replaced:
-                print(f"updated ### Benchmarking {fmt} in {readme.name}")
-        readme.write_text(text)
-    else:
-        text = readme.read_text()
+                guide.write_text(text)
+                print(f"updated {table['heading']} in {guide.relative_to(ROOT)}")
 
     parsed = {}
     for table in TABLES:
+        text = table["file"].read_text()
         lines = extract_table_block(text, table["heading"])
         group_labels, group_sizes, rows = parse_table(lines)
         parsed[table["format"]] = (group_labels, group_sizes, rows)

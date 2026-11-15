@@ -191,7 +191,7 @@ static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVDecodeOp
       int cp;
       if (!enif_get_int(env, tp[1], &cp) || cp <= 0 || cp > 0x7F) return false;
       opts.delimiter = static_cast<char>(cp);
-    } else if (enif_is_identical(tp[0], AM_NULL_TERM)) {
+    } else if (enif_is_identical(tp[0], AM_NULL) || enif_is_identical(tp[0], AM_NULL_TERM)) {   // {null, Atom}; null_term is deprecated
       if (!enif_is_atom(env, tp[1])) return false;
       opts.null_term = tp[1];
     } else if (enif_is_identical(tp[0], AM_RETURN)) {

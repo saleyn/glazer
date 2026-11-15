@@ -7,7 +7,7 @@
 
 namespace glz {
 
-// Returns a prettified copy of `in` (2-space indent, assumes valid JSON).
+// Returns a prettified copy of `in` (3-space indent, assumes valid JSON).
 inline std::string prettify_json(std::string_view in)
 {
   std::string out;

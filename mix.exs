@@ -123,15 +123,21 @@ defmodule Glazer.MixProject do
   def docs do
     [
       extras: [
-        "README.md":  %{title: "Overview"},
-        "LICENSE":    %{title: "License"},
-        "RELEASE.md": %{title: "Release"}
+        "README.md":                    %{title: "Overview"},
+        "guides/json.md":               %{title: "JSON"},
+        "guides/yaml.md":               %{title: "YAML"},
+        "guides/csv.md":                %{title: "CSV"},
+        "guides/json-validation.md":    %{title: "JSON Schema validation"},
+        "guides/performance.md":        %{title: "Performance details"},
+        "LICENSE":                      %{title: "License"},
+        "RELEASE.md":                   %{title: "Release"}
       ],
       main:          "readme",
       source_url:    "https://github.com/saleyn/glazer",
       #assets:        %{assets: "assets/"},
       groups_for_extras: [
-        %{Release: "release"}
+        %{Release: "release"},
+        %{Guides: ~r/guides\//}
       ],
       groups_for_modules: [
         Erlang:        ~r/glazer/,
