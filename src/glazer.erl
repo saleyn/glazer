@@ -32,6 +32,8 @@ config :glazer, null: nil
          json_encode/1, json_encode/2, json_encode_ndjson/1, json_encode_ndjson/2,
          json_minify/1, json_prettify/1,
          json_query/2, json_query/3, json_scan/1, json_scan/2,
+         compile_schema/1, compile_schema/2, schema_validate/2, schema_validate/3,
+         schema_validate_term/2, schema_validate_term/3,
          format_error/2]).
 
 -on_load(init/0).
@@ -170,6 +172,30 @@ Decode a JSON number string to an integer, returning `{ok, Int}` or
 try_decode_integer(_NumberString) ->
   ?NOT_LOADED_ERROR.
 
+-doc false.
+compile_schema(_Schema) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+compile_schema(_Schema, _Options) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+schema_validate(_CompiledSchema, _Data) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+schema_validate(_CompiledSchema, _Data, _Options) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+schema_validate_term(_Schema, _Data) ->
+  ?NOT_LOADED_ERROR.
+
+-doc false.
+schema_validate_term(_Schema, _Data, _Options) ->
+  ?NOT_LOADED_ERROR.
+
 -doc """
 Format an error message with `io_lib:format/2` and flatten to a binary.
 """.
@@ -221,18 +247,21 @@ Return build information about the loaded NIF library:
                   working tree was dirty at build time)
 - `pgo`:         `true` if built with profile-guided optimisation
                   (`make optimize` / `make PGO=use`)
-- `optimization`: `none`, `'O1'` (debug/ASan builds), or `'O3'` (release)
+- `optimization`: a binary: `<<"none">>`, `<<"O1">>` (debug/ASan builds), `<<"O2">>`, or `<<"O3">>` (release)
+- `regex_engine`: `pcre2` or `srell`, the engine behind schema `pattern`
+                  and `format` (see `c_src/glazer_regex.hpp`)
 
 ## Example
 
 ```erlang
 1> glazer:info().
 #{app_version => <<"0.5.9">>, version => <<"0.5.9-3-abc123">>,
-  pgo => true, optimization => 'O3'}
+  pgo => true, optimization => <<"O3">>, regex_engine => pcre2}
 ```
 """.
 -spec info() -> #{app_version => binary(), version => binary(),
-                   pgo => boolean(), optimization => none | 'O1' | 'O3'}.
+                   pgo => boolean(), optimization => binary(),
+                   regex_engine => pcre2 | srell}.
 info() ->
   nif_info().
 

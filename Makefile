@@ -72,6 +72,28 @@ test:
 	@#rm -rf _build/test obj priv/glazer.so
 	@OPTIMIZE=1 mix test
 	@OPTIMIZE=1 $(REBAR) as test eunit
+	@$(MAKE) test-jsts
+
+# Official JSON Schema test suite (2020-12 scope), see test/json_schema_suite.es.
+# Not part of `make test`: the first run needs network access to fetch the suite.
+# Set JSTS_DIR to a local checkout of json-schema-org/JSON-Schema-Test-Suite to
+# skip the fetch.
+JSTS_REPO   := https://github.com/json-schema-org/JSON-Schema-Test-Suite.git
+JSTS_COMMIT := 38dea93
+JSTS_DIR    ?= _build/json-schema-test-suite
+
+test-jsts:
+	@if [ ! -d "$(JSTS_DIR)/validation/tests" ]; then \
+	  command -v git >/dev/null 2>&1 || { echo "Error: git is required to fetch the JSON Schema test suite"; exit 1; }; \
+	  echo "===> Fetching JSON-Schema-Test-Suite $(JSTS_COMMIT) into $(JSTS_DIR)"; \
+	  git clone -q --filter=blob:none --no-checkout $(JSTS_REPO) "$(JSTS_DIR)" && \
+	  git -C "$(JSTS_DIR)" checkout -q $(JSTS_COMMIT) || { echo "Error: could not check out $(JSTS_COMMIT)"; exit 1; }; \
+	fi
+	@$(REBAR) as test compile
+	@echo "===> Running JSON Schema Test Suite tests from $(JSTS_DIR)/validation/tests"
+	@test/json_schema_suite.es "$(JSTS_DIR)/validation/tests"
+
+.PHONY: test-jsts
 
 check:
 	@$(REBAR) xref

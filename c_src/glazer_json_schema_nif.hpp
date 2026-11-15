@@ -3,9 +3,9 @@
 // JSON Schema validator NIF interface
 //
 // Exposes schema validation functions to Erlang:
-//   - glazer_json:compile_schema/1
-//   - glazer_json:validate/2,3
-//   - glazer_json:validate_term/2,3
+//   - glazer_schema:compile_schema/1
+//   - glazer_schema:validate/2,3
+//   - glazer_schema:validate_term/2,3
 //   - glazer_json:validate_batch/2,3
 //
 // This header is included by glazer_nif.cpp to register schema functions
@@ -14,9 +14,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -24,9 +26,9 @@
 
 #include "glazer_atoms.hpp"
 #include "glazer_common.hpp"
-#include "glazer_schema.hpp"
-#include "glazer_schema_compiler.hpp"
-#include "glazer_schema_validator.hpp"
+#include "glazer_json_schema.hpp"
+#include "glazer_json_schema_compiler.hpp"
+#include "glazer_json_schema_validator.hpp"
 
 // Note: This file is included at the END of glazer_nif.cpp to ensure all
 // schema functions are registered. The schema namespace declarations merge
@@ -72,8 +74,17 @@ struct ValidationOptions {
   ValidationMode mode              = ValidationMode::FAIL_FAST;
   size_t max_depth                 = 128;
   size_t max_errors                = 1;
+  bool   max_errors_set            = false;  // explicit max_errors option given
   int timeout_ms                   = 0;
 };
+
+// Error messages cross into Erlang as binaries
+inline ERL_NIF_TERM make_message_binary(ErlNifEnv* env, const std::string& msg) {
+  ERL_NIF_TERM term;
+  unsigned char* p = enif_make_new_binary(env, msg.size(), &term);
+  std::memcpy(p, msg.data(), msg.size());
+  return term;
+}
 
 bool parse_validation_options(
   ErlNifEnv* env,
@@ -84,4 +95,4 @@ bool parse_validation_options(
 }  // namespace glz
 
 // Include implementation at end of header
-#include "glazer_schema_nif.hxx"
+#include "glazer_json_schema_nif.hxx"

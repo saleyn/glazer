@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 #include <erl_nif.h>
 
 namespace glz {
@@ -67,6 +68,12 @@ struct BigInt {
     bool ok = binary_to_decimal(bin.data, bin.size, out);
     enif_release_binary(&bin);
     return ok;
+  }
+
+  // Build an integer term from little-endian 32-bit limbs and a sign
+  static inline ERL_NIF_TERM term_from_magnitude(ErlNifEnv* env,
+                                                 const std::vector<uint32_t>& limbs, bool negative) {
+    return limbs_to_term(env, limbs, negative);
   }
 
 private:
@@ -283,6 +290,211 @@ private:
     while (digits.size() > 1 && digits.back() == '0') digits.pop_back();
     std::reverse(digits.begin(), digits.end());
     out.push(digits.data(), digits.size());
+    return true;
+  }
+};
+
+//------------------------------------------------------------------------------
+// BigNum: an exact integer of any size, for comparisons and arithmetic where a
+// double is not exact enough (schema bounds, equality, multipleOf). Values are
+// a sign and little-endian 32-bit magnitude limbs with no high zero limbs.
+//------------------------------------------------------------------------------
+struct BigNum {
+  bool negative = false;
+  std::vector<uint32_t> mag;   // empty for zero; negative is false for zero
+
+  bool is_zero() const { return mag.empty(); }
+
+  void trim() {
+    while (!mag.empty() && mag.back() == 0) mag.pop_back();
+    if (mag.empty()) negative = false;
+  }
+
+  static void set_u64(std::vector<uint32_t>& m, uint64_t u) {
+    m.clear();
+    while (u) { m.push_back(static_cast<uint32_t>(u)); u >>= 32; }
+  }
+
+  static BigNum from_int64(int64_t v) {
+    BigNum r;
+    uint64_t u = v < 0 ? uint64_t(0) - static_cast<uint64_t>(v) : static_cast<uint64_t>(v);
+    set_u64(r.mag, u);
+    r.negative = v < 0;
+    r.trim();
+    return r;
+  }
+
+  // True when the value fits in an int64, which is then stored in out
+  bool to_int64(int64_t& out) const {
+    if (mag.size() > 2) return false;
+    uint64_t u = 0;
+    for (size_t i = mag.size(); i-- > 0;) u = (u << 32) | mag[i];
+    if (negative) {
+      if (u > static_cast<uint64_t>(INT64_MAX) + 1) return false;
+      out = static_cast<int64_t>(uint64_t(0) - u);
+    } else {
+      if (u > static_cast<uint64_t>(INT64_MAX)) return false;
+      out = static_cast<int64_t>(u);
+    }
+    return true;
+  }
+
+  // Approximate value, for the places that combine with floats
+  double to_double() const {
+    double r = 0;
+    for (size_t i = mag.size(); i-- > 0;) r = r * 4294967296.0 + mag[i];
+    return negative ? -r : r;
+  }
+
+  // Exact value of any Erlang integer term. False for non-integers, including
+  // floats.
+  static bool from_term(ErlNifEnv* env, ERL_NIF_TERM term, BigNum& out) {
+    ErlNifSInt64 i;
+    if (enif_get_int64(env, term, &i)) { out = from_int64(i); return true; }
+    ErlNifUInt64 u;
+    if (enif_get_uint64(env, term, &u)) {
+      out = BigNum();
+      set_u64(out.mag, u);
+      return true;
+    }
+    double d;
+    if (enif_get_double(env, term, &d) || !enif_is_number(env, term)) return false;
+    ErlNifBinary bin;
+    if (!enif_term_to_binary(env, term, &bin)) return false;
+    bool ok = parse_external(bin.data, bin.size, out);
+    enif_release_binary(&bin);
+    return ok;
+  }
+
+  // The integer term for this value
+  ERL_NIF_TERM to_term(ErlNifEnv* env) const {
+    int64_t small;
+    if (to_int64(small)) return enif_make_int64(env, small);
+    return BigInt::term_from_magnitude(env, mag, negative);
+  }
+
+  // Exact value of a finite, integral double (false otherwise)
+  static bool from_integral_double(double d, BigNum& out) {
+    if (!std::isfinite(d) || d != std::trunc(d)) return false;
+    out = BigNum();
+    if (std::fabs(d) < 9.0e18) {
+      out = from_int64(static_cast<int64_t>(d));
+      return true;
+    }
+    int e = 0;
+    double m = std::frexp(std::fabs(d), &e);          // |d| = m * 2^e, 0.5 <= m < 1
+    auto mantissa = static_cast<uint64_t>(std::ldexp(m, 53));   // exact: 53 bits
+    set_u64(out.mag, mantissa);
+    shift_left(out.mag, static_cast<size_t>(e - 53)); // |d| >= 2^63, so e - 53 >= 0
+    out.negative = d < 0;
+    out.trim();
+    return true;
+  }
+
+  static int compare_magnitude(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+    if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
+    for (size_t i = a.size(); i-- > 0;)
+      if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+  }
+
+  // -1, 0 or 1
+  static int compare(const BigNum& a, const BigNum& b) {
+    if (a.negative != b.negative) return a.negative ? -1 : 1;
+    int c = compare_magnitude(a.mag, b.mag);
+    return a.negative ? -c : c;
+  }
+
+  // Exact comparison of an integer with a finite double: -1, 0 or 1
+  static int compare_double(const BigNum& a, double d) {
+    double t = std::trunc(d);
+    BigNum bt;
+    from_integral_double(t, bt);
+    int c = compare(a, bt);
+    if (c != 0) return c;
+    if (d > t) return -1;   // a equals the whole part of d, and d has a positive fraction
+    if (d < t) return 1;
+    return 0;
+  }
+
+  // |a| mod d, for d > 0
+  static uint64_t mod_u64(const BigNum& a, uint64_t d) {
+    unsigned __int128 rem = 0;
+    for (size_t i = a.mag.size(); i-- > 0;)
+      rem = ((rem << 32) | a.mag[i]) % d;
+    return static_cast<uint64_t>(rem);
+  }
+
+  // |a| mod |d|, for a non-zero d, by shift and subtract
+  static BigNum mod(const BigNum& a, const BigNum& d) {
+    BigNum r;
+    for (size_t i = a.mag.size() * 32; i-- > 0;) {
+      shift_left(r.mag, 1);
+      if ((a.mag[i / 32] >> (i % 32)) & 1u) {
+        if (r.mag.empty()) r.mag.push_back(1);
+        else r.mag[0] |= 1u;
+      }
+      if (compare_magnitude(r.mag, d.mag) >= 0)
+        subtract_magnitude(r.mag, d.mag);
+    }
+    r.negative = false;
+    r.trim();
+    return r;
+  }
+
+private:
+
+  static void shift_left(std::vector<uint32_t>& m, size_t bits) {
+    if (m.empty()) return;
+    size_t words = bits / 32, rem = bits % 32;
+    if (rem) {
+      uint32_t carry = 0;
+      for (auto& w : m) {
+        uint32_t next = (w << rem) | carry;
+        carry = w >> (32 - rem);
+        w = next;
+      }
+      if (carry) m.push_back(carry);
+    }
+    m.insert(m.begin(), words, 0u);
+  }
+
+  // a -= b, for |a| >= |b|
+  static void subtract_magnitude(std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+    uint64_t borrow = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+      uint64_t bi = (i < b.size() ? b[i] : 0) + borrow;
+      if (a[i] >= bi) { a[i] = static_cast<uint32_t>(a[i] - bi); borrow = 0; }
+      else            { a[i] = static_cast<uint32_t>((uint64_t(1) << 32) + a[i] - bi); borrow = 1; }
+    }
+    while (!a.empty() && a.back() == 0) a.pop_back();
+  }
+
+  // Reads an Erlang external-format integer (SMALL_BIG_EXT or LARGE_BIG_EXT)
+  static bool parse_external(const uint8_t* data, size_t size, BigNum& out) {
+    if (size < 4 || data[0] != 131) return false;
+    const uint8_t* payload;
+    size_t byte_len;
+    bool neg;
+    if (data[1] == 'n') {
+      byte_len = data[2];
+      neg = data[3] != 0;
+      payload = data + 4;
+    } else if (data[1] == 'o') {
+      if (size < 7) return false;
+      byte_len = (size_t(data[2]) << 24) | (size_t(data[3]) << 16) | (size_t(data[4]) << 8) | size_t(data[5]);
+      neg = data[6] != 0;
+      payload = data + 7;
+    } else {
+      return false;
+    }
+    if (payload + byte_len > data + size) return false;
+    out = BigNum();
+    out.mag.assign((byte_len + 3) / 4, 0u);
+    for (size_t i = 0; i < byte_len; ++i)
+      out.mag[i / 4] |= uint32_t(payload[i]) << (8 * (i % 4));
+    out.negative = neg;
+    out.trim();
     return true;
   }
 };

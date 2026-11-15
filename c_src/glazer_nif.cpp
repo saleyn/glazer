@@ -30,9 +30,9 @@
 #include "glazer_jq.hpp"
 
 // Include schema implementations as part of this compilation unit
-#include "glazer_schema_nif.hpp"
-#include "glazer_schema_compiler.hpp"
-#include "glazer_schema_validator.hpp"
+#include "glazer_json_schema_nif.hpp"
+#include "glazer_json_schema_compiler.hpp"
+#include "glazer_json_schema_validator.hpp"
 
 namespace glz {
 
@@ -869,24 +869,21 @@ static ERL_NIF_TERM nif_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
   if (argc != 0) [[unlikely]]
     return enif_make_badarg(env);
 
-  auto opt = [=]() {
-    if (!strcmp(GLAZER_OPT_LEVEL, "none")) return enif_make_atom(env, GLAZER_OPT_LEVEL);
-    if (!strcmp(GLAZER_OPT_LEVEL, "O1"))   return enif_make_int(env, 1);
-    if (!strcmp(GLAZER_OPT_LEVEL, "O2"))   return enif_make_int(env, 2);
-    if (!strcmp(GLAZER_OPT_LEVEL, "O3"))   return enif_make_int(env, 3);
-    return make_binary(env, std::string_view(GLAZER_OPT_LEVEL));
-  };
+  // "none", "O1", "O2" or "O3", as a binary
+  auto opt = [=]() { return make_binary(env, std::string_view(GLAZER_OPT_LEVEL)); };
 
-  ERL_NIF_TERM keys[]   = { AM_VERSION, AM_APP_VERSION, AM_PGO, AM_OPTIMIZATION };
+  ERL_NIF_TERM keys[]   = { AM_VERSION, AM_APP_VERSION, AM_PGO, AM_OPTIMIZATION,
+                            AM_REGEX_ENGINE };
   ERL_NIF_TERM values[] = {
     make_binary(env, std::string_view(GLAZER_VERSION)),
     make_binary(env, std::string_view(GLAZER_APP_VERSION)),
     GLAZER_PGO ? AM_TRUE : AM_FALSE,
-    opt()
+    opt(),
+    strcmp(SchemaRegex::engine(), "pcre2") == 0 ? AM_PCRE2 : AM_SRELL
   };
 
   ERL_NIF_TERM map;
-  enif_make_map_from_arrays(env, keys, values, 4, &map);
+  enif_make_map_from_arrays(env, keys, values, 5, &map);
   return map;
 }
 
@@ -981,12 +978,13 @@ static ErlNifFunc nif_funcs[] = {
   {"nif_compile_path",   1, nif_compile_path,       0},
   {"nif_info",           0, nif_info,               0},
 
-  // JSON schema validation
-  {"json_compile_schema", 1, nif_compile_schema, 0},
-  {"json_validate",       2, nif_validate,       0},
-  {"json_validate",       3, nif_validate,       0},
-  {"json_validate_term",  2, nif_validate_term,  0},
-  {"json_validate_term",  3, nif_validate_term,  0},
+  // Schema compilation and validation (JSON Schema documents, any term as data)
+  {"compile_schema", 1, nif_compile_schema, 0},
+  {"compile_schema", 2, nif_compile_schema, 0},
+  {"schema_validate",       2, nif_validate,       0},
+  {"schema_validate",       3, nif_validate,       0},
+  {"schema_validate_term",  2, nif_validate_term,  0},
+  {"schema_validate_term",  3, nif_validate_term,  0},
 };
 
 } // namespace glz

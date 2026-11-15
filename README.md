@@ -58,6 +58,14 @@ formats.
   - [API](#api-2)
   - [Benchmarking CSV](#benchmarking-csv)
     - [glazer vs rusty\_csv](#glazer-vs-rusty_csv)
+- [JSON Schema validation](#json-schema-validation)
+  - [Quick start](#quick-start)
+  - [Reading a schema from a file](#reading-a-schema-from-a-file)
+  - [Schema registry](#schema-registry)
+  - [Standards compliance](#standards-compliance)
+    - [Formats](#formats)
+    - [Regular expressions](#regular-expressions)
+    - [Deviations](#deviations)
 - [Big integers](#big-integers)
   - [API](#api-3)
 - [Limitations](#limitations)
@@ -1061,6 +1069,122 @@ two-phase scan-then-extract design instead of interleaved during scanning
 like glazer. There's no scanning-strategy change available that would close
 the remaining gap without changing the output term shape itself (e.g.
 `{return, tuple}`, which avoids rebuilding a list per row).
+
+## JSON Schema validation
+
+Glazer validates terms against [JSON Schema 2020-12](https://json-schema.org/specification). Compile a schema once, then validate as many values as you like against it.
+
+See the [JSON Schema validation guide](guides/json-validation.md) for keywords, formats, error shapes, options and limits.
+
+### Quick start
+
+```erlang
+Schema = #{
+  ~"type"       => ~"object",
+  ~"required"   => [~"name"],
+  ~"properties" => #{
+    ~"name" => #{~"type" => ~"string", ~"minLength"  => 1}
+  }
+},
+
+{ok, Compiled} = glazer_schema:compile_schema(Schema),
+ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann"}),
+{error, {path, [~"name"], {string_too_short, ~""}}} =
+  glazer_schema:validate(Compiled, #{~"name" => ~""}).
+```
+
+### Reading a schema from a file
+
+`glazer_schema:compile_schema_file/1,2` reads a schema file, decodes it and compiles it with the same options as `compile_schema/2`. The format comes from the extension: `.json` is decoded as JSON, and `.yaml` or `.yml` as YAML. Here is `schemas/user.json`:
+
+```json
+{
+  "$id": "https://example.com/user.json",
+  "type": "object",
+  "required": ["name"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1}
+  }
+}
+```
+
+```erlang
+{ok, Compiled} = glazer_schema:compile_schema_file("schemas/user.json"),
+ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann"}),
+
+%% The $id names the schema in the registry, so it can also be used by name
+ok = glazer_schema:validate(~"https://example.com/user.json", #{~"name" => ~"Ann"}),
+
+%% Errors: the file cannot be read, or its contents are not JSON
+{error, {read_failed, "missing.json", enoent}} = glazer_schema:compile_schema_file("missing.json"),
+{error, {invalid_json, "schemas/bad.json", _}} = glazer_schema:compile_schema_file("schemas/bad.json"),
+
+%% The same schema as YAML: the extension selects the decoder
+{ok, _} = glazer_schema:compile_schema_file("schemas/user.yaml").
+```
+
+### Schema registry
+
+Compiled schemas are registered by default. A schema with a top-level `$id` is registered under that `$id`, so other schemas can `$ref` it and it can be validated by name:
+
+```erlang
+{ok, _} = glazer_schema:compile_schema(#{~"$id" => ~"https://example.com/user.json",
+                                       ~"type" => ~"object"}),
+ok = glazer_schema:validate(~"https://example.com/user.json", #{}).
+```
+
+See the guide for `glazer_schema`, the `name` and `registry` options, and the registry's storage and limits.
+
+### Standards compliance
+
+Schema validation targets [JSON Schema 2020-12](https://json-schema.org/specification): the core, applicator, validation and unevaluated vocabularies. Compliance is checked against the official [JSON-Schema-Test-Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite), pinned at commit `38dea93`. Every in-scope test passes (709 of 709): groups whose `compatibility` covers 2020-12 and that use no legacy keywords. Run it with `make test-jsts`.
+
+Out of scope, and so not claimed: other drafts (draft 3 to 2019-09 keyword forms), the suite's `optional/` and proposal groups, decimals with more precision than a double, and ECMAScript-only regex syntax. Integers of any size are exact (see the bignum note under Deviations). Groups excluded for an upstream issue (json-schema-org/JSON-Schema-Test-Suite#1277) are listed in `test/json_schema_suite.es`.
+
+#### Formats
+
+`format` is asserted by default (see [deviations](#deviations) below).
+
+| `format` | Standard | Notes |
+|---|---|---|
+| `date-time` | RFC 3339 §5.6 | Leap second `23:59:60` accepted only where it is a valid UTC instant. RFC 9557 bracketed suffixes accepted (an extension). |
+| `date` | RFC 3339 §5.6 (`full-date`) | Valid day for the month, leap years included |
+| `time` | RFC 3339 §5.6 (`full-time`) | Leap seconds rejected |
+| `duration` | ISO 8601 as profiled by JSON Schema | Contiguous unit run; weeks (`P2W`) accepted |
+| `email` | RFC 5321 (`Mailbox`, ASCII) | Quoted local parts and IP-literal domains |
+| `idn-email` | RFC 6531 | UTF-8 local part; domain checked as `idn-hostname` |
+| `hostname` | RFC 1123 | 1–63 octets per label, 253 in total |
+| `idn-hostname` | RFC 5890, 5891, 5892, 5893 (IDNA2008); RFC 3492 (Punycode); UTS #46 mapping; UAX #15 (NFC) | Mapping, NFC, label rules (RFC 5892 appendix A), and the RFC 5893 bidi rule across the domain |
+| `ipv4` | RFC 2673 (dotted quad) | Octets as RFC 3986 `dec-octet`: no leading zeros |
+| `ipv6` | RFC 4291 §2.2 | Text forms, including an embedded IPv4 tail |
+| `uri` | RFC 3986 | Absolute URI |
+| `uri-reference` | RFC 3986 | Absolute or relative reference |
+| `iri` | RFC 3987 | Absolute IRI |
+| `iri-reference` | RFC 3987 | IRI or relative reference |
+| `uuid` | RFC 9562 (canonical form, as in RFC 4122) | 8-4-4-4-12 hexadecimal, case-insensitive |
+| `json-pointer` | RFC 6901 | |
+| `relative-json-pointer` | draft-handrews-relative-json-pointer (not an RFC) | |
+| `uri-template` | RFC 6570 | |
+| `regex` | ECMA-262 syntax | Valid when it compiles with the engine in use (see below) |
+
+Unknown format names pass, as the specification requires for annotations. Custom formats can be defined with the `formats` compile option (`#{Name => Pattern}`, matched as a regular expression). This is an extension; it is not part of any standard.
+
+#### Regular expressions
+
+`pattern`, `patternProperties` and the `regex` format use ECMA-262 syntax, as 2020-12 requires. The matching engine is PCRE2 when `libpcre2-8` is available, otherwise [SRELL](https://github.com/upa-url/srell); `glazer:info/0` reports which one (`regex_engine`). Both are close to ECMA-262 but are not the same implementation: check unusual patterns with the engine you deploy.
+
+#### Deviations
+
+These are the places where behaviour differs from the specification on purpose or where the specification leaves a choice:
+
+- **`format` is asserted by default.** 2020-12 treats `format` as an annotation by default. Glazer enforces it; pass `{format_assertion, false}` to keep the specification's default.
+- **`date-time` accepts RFC 9557 suffixes**, which RFC 3339 does not define.
+- **`$ref` never fetches documents.** References resolve from the schema itself, from the `refs` option, or from the [schema registry](#schema-registry). Unknown references fail at compile time.
+- **Decimals beyond double precision.** Integers of any size are compared exactly, but decimal numbers in JSON text are decoded as doubles, so digits beyond double precision are not compared.
+- **Floating-point `multipleOf`** uses a relative tolerance of 1e-9 on the quotient, so a value slightly off a multiple can be accepted. An overflowing quotient is tested exactly instead.
+- **Regex engine failures are errors, not mismatches.** They are reported as `regex_error` with the engine's code. SRELL reports only exceptions, so its code is `-1`. The regex engine is PCRE2 or SRELL, which are close to ECMA-262 but not identical.
+- **`timeout_ms`** is not part of any standard. When it stops a validation early, the result is an error, never `ok`.
+- **The schema registry** is not part of any standard.
 
 ## [Big integers](#table-of-contents)
 

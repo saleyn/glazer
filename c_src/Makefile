@@ -81,6 +81,32 @@ ifeq ($(HAVE_JQ),1)
   LDFLAGS  += -ljq
 endif
 
+# Optional PCRE2 (schema regular expressions). Without it, glazer_regex.hpp
+# uses the SRELL header fetched into vendors/srell.
+HAVE_PCRE2 := $(shell pkg-config --exists libpcre2-8 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAVE_PCRE2),1)
+  CXXFLAGS += -DGLAZER_HAVE_PCRE2 $(shell pkg-config --cflags libpcre2-8)
+  LDFLAGS  += $(shell pkg-config --libs libpcre2-8)
+endif
+
+# SRELL: header-only regex fallback (glazer_regex.hpp), used only when PCRE2 is
+# not installed. Fetched from GitHub at a pinned commit and checked against
+# SHA-256 digests. The downloaded files are not stored in git; see
+# vendors/srell/README.md.
+SRELL_COMMIT   := c3bcf40
+SRELL_HDR_SHA  := c3bc022d72e3b984a222e0d84ee50473532dd9a9b2d93d3f77bf07d4c8e81b39
+SRELL_URL      := https://raw.githubusercontent.com/upa-url/srell/$(SRELL_COMMIT)/srell-src
+SRELL_DIR      := vendors/srell
+SRELL_HDR      := $(SRELL_DIR)/srell.hpp
+SRELL_LICENSE  := $(SRELL_DIR)/LICENSE
+SHA256SUM      := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
+ifeq ($(HAVE_PCRE2),1)
+  SRELL_DEPS :=
+else
+  SRELL_DEPS := $(SRELL_HDR) $(SRELL_LICENSE)
+endif
+
+
 # Profile-Guided Optimisation (PGO) — lets the compiler use real branch
 # frequencies and call counts to lay out hot paths, inline more aggressively,
 # and reorder basic blocks for better instruction-cache usage.  Typical gain
@@ -157,6 +183,7 @@ optimize:
 	  echo "===> Skipping PGO rebuild: $(notdir $(TARGET)) is already PGO-optimized"; \
 	  exit 0; \
 	else \
+	  set -e; \
 	  echo "===> TARGET: $(TARGET)"; \
 	  echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"; \
 	  echo "===> PGO step 1/3: build instrumented binary"; \
@@ -234,6 +261,7 @@ info:
 
 $(TARGET): $(OBJ) | $(PRIV_DIR)
 	@[ -n $(HAVE_JQ) ] && echo "===> Building glazer with jq support" || true
+	@[ $(HAVE_PCRE2) = 1 ] && echo "===> Schema regex: PCRE2" || echo "===> Schema regex: SRELL (PCRE2 not found)"
 	$(CXX) $(OBJ) $(LDFLAGS) -o $@
 
 # When PGO=use the .o is stale by timestamp (same source, same flags string)
@@ -241,7 +269,7 @@ $(TARGET): $(OBJ) | $(PRIV_DIR)
 # Note: GCC writes .gcda files under a path derived from the source file's
 # absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
 # GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
-$(OBJ): $(SRC) $(wildcard *.hpp) $(if $(filter use,$(PGO)),force) \
+$(OBJ): $(SRC) $(wildcard *.hpp) $(SRELL_DEPS) $(if $(filter use,$(PGO)),force) \
         $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -251,3 +279,15 @@ $(PRIV_DIR) $(OBJ_DIR) $(PGO_DIR):
 clean:
 	rm -vf $(OBJ) $(TARGET)
 	rm -rf $(PGO_DIR)
+
+# Fetch rule for SRELL. Defined last so that `all` remains the default goal.
+$(SRELL_HDR) $(SRELL_LICENSE):
+	@echo "===> PCRE2 not found: fetching SRELL $(SRELL_COMMIT) from GitHub"
+	@command -v curl >/dev/null 2>&1 || { echo "Error: curl is required to fetch SRELL (or install libpcre2-8)"; exit 1; }
+	@mkdir -p $(SRELL_DIR)
+	curl -fsSL -o $(SRELL_HDR).part $(SRELL_URL)/single-header/srell.hpp
+	curl -fsSL -o $(SRELL_LICENSE).part $(SRELL_URL)/license.txt
+	@echo "$(SRELL_HDR_SHA)  $(SRELL_HDR).part" | $(SHA256SUM) -c - >/dev/null 2>&1 || \
+	  { rm -f $(SRELL_HDR).part $(SRELL_LICENSE).part; echo "Error: SRELL header checksum mismatch"; exit 1; }
+	mv $(SRELL_HDR).part $(SRELL_HDR)
+	mv $(SRELL_LICENSE).part $(SRELL_LICENSE)

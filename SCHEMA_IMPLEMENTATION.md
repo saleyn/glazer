@@ -131,7 +131,7 @@
 - [x] Unit tests framework
 
 **NIF Interface** (glazer_schema_nif.cpp):
-- [x] `compile_schema/1` — schema → bytecode + resource
+- [x] `compile_schema/1` — schema → bytecode + resource (adds to the schema registry unless `{registry, false}`)
 - [x] `validate/2,3` — validate with options
 - [x] `validate_term/2,3` — inline compile + validate
 - [x] Resource type management (SchemaResource with shared_ptr)
