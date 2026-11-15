@@ -234,8 +234,16 @@ regex_engine_error_is_reported_test() ->
   % catastrophic backtracking on a long non-matching input exceeds PCRE2's match limit
   Long = binary:copy(~"a", 40),
   Input = <<Long/binary, "!">>,
-  ?assertMatch({error, {path, [], {regex_error, _}}},
-               ok(#{~"pattern" => ~"^(a+)+$"}, Input)),
+  % PCRE2 compiles the pattern and fails at match time; the SRELL build
+  % (used on Windows) has no match limit and rejects nested quantifiers
+  % when the schema is compiled.
+  Pattern = #{~"pattern" => ~"^(a+)+$"},
+  case glazer_schema:compile_schema(Pattern, [{registry, false}]) of
+    {error, Msg} ->
+      ?assertMatch(<<"invalid regex pattern", _/binary>>, Msg);
+    {ok, {schema, S}} ->
+      ?assertMatch({error, {path, [], {regex_error, _}}}, glazer_schema:validate(S, Input))
+  end,
   % an ordinary mismatch is still a mismatch
   ?assertMatch({error, {path, [], {pattern_mismatch, _}}},
                ok(#{~"pattern" => ~"^[0-9]+$"}, ~"abc")),

@@ -170,7 +170,16 @@ endif
 
 all: compile
 
-SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(if $(filter 0,$(OPTIMIZE)),no,yes)))
+# PGO is skipped on Windows (MinGW) by default: GCC mangles the absolute
+# profile directory (drive letter), so profile generation fails. Set
+# OPTIMIZE=1 to force it there.
+ifneq (,$(findstring .dll,$(EXT)))
+  PGO_DEFAULT := no
+else
+  PGO_DEFAULT := yes
+endif
+
+SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(if $(filter 0,$(OPTIMIZE)),no,$(PGO_DEFAULT)),no))
 
 ifeq ($(SHOULD_OPTIMIZE),yes)
 compile: optimize
