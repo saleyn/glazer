@@ -224,7 +224,13 @@ bool parse_validation_options(
   return true;
 }
 
-ERL_NIF_TERM nif_validate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+// Validation body shared by the normal-scheduler entry point and the dirty
+// job. With allow_dispatch set, heavy or large work is re-queued on a dirty
+// CPU scheduler, which calls back into this function with allow_dispatch
+// cleared so it runs inline there.
+static ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
+static ERL_NIF_TERM validate_impl(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[], bool allow_dispatch) {
   if (argc < 2 || argc > 3) [[unlikely]]
     return enif_make_badarg(env);
 
@@ -252,14 +258,17 @@ ERL_NIF_TERM nif_validate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   // Estimate validation work
   size_t estimated_work_us = (res->schema->total_constraints * 10) +
                               (static_cast<size_t>(opts.max_depth) * std::min<size_t>(opts.max_errors, 1024));
-  bool use_dirty_scheduler = (estimated_work_us >= 1000) ||
-                              (opts.mode == ValidationMode::COLLECT_ALL && estimated_work_us >= 500);
 
-  if (use_dirty_scheduler) {
-    // Schedule on dirty CPU scheduler
-    ERL_NIF_TERM dirty_argv[] = {schema_term, data_term, enif_make_list(env, 0)};
-    // TODO: dispatch to dirty scheduler
-    // For now, run inline and report work
+  if (allow_dispatch) {
+    bool heavy = (estimated_work_us >= 1000) ||
+                 (opts.mode == ValidationMode::COLLECT_ALL && estimated_work_us >= 500);
+    bool large = estimate_json_term_size(env, data_term) >= DIRTY_THRESHOLD;
+    if (heavy || large) {
+      // Re-run this NIF on a dirty CPU scheduler; the arguments are copied
+      // into the job, so the terms stay valid there.
+      return enif_schedule_nif(env, "glazer_schema_validate", ERL_NIF_DIRTY_JOB_CPU_BOUND,
+                               nif_validate_dirty, argc, argv);
+    }
   }
 
   // Run validation
@@ -276,6 +285,14 @@ ERL_NIF_TERM nif_validate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   update_reduction_count(env, estimated_work_us / 10);
 
   return success ? result_term : enif_make_tuple2(env, AM_ERROR, result_term);
+}
+
+static ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  return validate_impl(env, argc, argv, false);
+}
+
+ERL_NIF_TERM nif_validate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  return validate_impl(env, argc, argv, true);
 }
 
 ERL_NIF_TERM nif_validate_term(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {

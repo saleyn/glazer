@@ -68,6 +68,65 @@ inline T power(T a, size_t b) {
 }
 
 //-----------------------------------------------------------------------------
+// Dirty-scheduler threshold — inputs larger than this are offloaded to a
+// dirty CPU scheduler so they don't block normal scheduler threads.
+// Small inputs run inline on a normal scheduler; for those,
+// update_reduction_count() (see glazer_common.hpp) reports the work done to
+// the scheduler via enif_consume_timeslice so the BEAM updates the calling
+// process's reduction count instead of charging a flat 1 reduction for the
+// call. Dirty schedulers don't need this — they're not shared with regular
+// processes the same way.
+//-----------------------------------------------------------------------------
+
+static constexpr size_t DIRTY_THRESHOLD = 4096;
+
+inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term)
+{
+  if (enif_is_binary(env, term)) {
+    ErlNifBinary bin;
+    if (enif_inspect_binary(env, term, &bin))
+      return bin.size * 2 + 8;
+  }
+
+  if (enif_is_list(env, term)) {
+    ERL_NIF_TERM list = term;
+    ERL_NIF_TERM head;
+    size_t count = 0;
+    size_t bytes = 0;
+    while (enif_get_list_cell(env, list, &head, &list)) {
+      ++count;
+      bytes += estimate_json_term_size(env, head);
+      if (count >= 256) return DIRTY_THRESHOLD + 1;
+    }
+    return bytes + count * 8;
+  }
+
+  if (enif_is_map(env, term)) {
+    size_t size = 0;
+    if (enif_get_map_size(env, term, &size))
+      return size * 32;
+  }
+
+  if (enif_is_tuple(env, term)) {
+    int arity = 0;
+    const ERL_NIF_TERM* elems = nullptr;
+    if (enif_get_tuple(env, term, &arity, &elems)) {
+      size_t bytes = 0;
+      for (int i = 0; i < arity; ++i)
+        bytes += estimate_json_term_size(env, elems[i]);
+      return bytes + size_t(arity) * 12;
+    }
+  }
+
+  return 0;
+}
+
+inline bool should_use_dirty_scheduler(ErlNifEnv* env, ERL_NIF_TERM term)
+{
+  return estimate_json_term_size(env, term) >= DIRTY_THRESHOLD;
+}
+
+//-----------------------------------------------------------------------------
 // Reduction-count bookkeeping for NIFs that run on a normal (non-dirty)
 // scheduler. Without this, the BEAM charges a NIF call a flat 1 reduction
 // regardless of how much CPU it actually used, which can let

@@ -303,7 +303,7 @@ no_name_and_no_id_is_stored_by_content_test() ->
 %% compile_schema_file/1,2
 
 compile_schema_file_test() ->
-  Dir = case os:getenv("TMPDIR") of false -> "/tmp"; D -> D end,
+  Dir = tmp_dir(),
   Good = filename:join(Dir, "glazer_schema_file_ok_" ++ integer_to_list(erlang:unique_integer([positive])) ++ ".json"),
   ok = file:write_file(Good, ~"""
     {"$id": "https://example.test/file-schema-1.json", "type": "object", "required": ["name"]}
@@ -318,7 +318,7 @@ compile_schema_file_test() ->
 compile_schema_file_errors_test() ->
   Missing = "/nonexistent/glazer-no-such-schema.json",
   ?assertMatch({error, {read_failed, Missing, enoent}}, glazer_schema:compile_schema_file(Missing)),
-  Bad = filename:join(case os:getenv("TMPDIR") of false -> "/tmp"; D -> D end,
+  Bad = filename:join(tmp_dir(),
                       "glazer_schema_file_bad_" ++ integer_to_list(erlang:unique_integer([positive])) ++ ".json"),
   ok = file:write_file(Bad, ~"{not json"),
   ?assertMatch({error, {invalid_json, Bad, _}}, glazer_schema:compile_schema_file(Bad)),
@@ -425,7 +425,7 @@ ipv4_and_date_boundaries_test() ->
   ok.
 
 tmp_file(Tag) ->
-  Dir = case os:getenv("TMPDIR") of false -> "/tmp"; D -> D end,
+  Dir = tmp_dir(),
   filename:join(Dir, "glazer_test_" ++ Tag ++ "_" ++ integer_to_list(erlang:unique_integer([positive])) ++ ".json").
 
 %% mutual references: groups
@@ -514,5 +514,27 @@ file_schema_invalid_documents_test() ->
   ok = file:delete(BadJson),
   ok.
 
+%% Inputs with 256+ list elements are above the dirty-scheduler threshold,
+%% so validation runs on a dirty CPU scheduler. Results must match inline runs.
+large_input_dirty_scheduler_test() ->
+  {ok, {schema, S}} = glazer_schema:compile_schema(
+    #{~"items" => #{~"type" => ~"integer", ~"minimum" => 0}}, [{registry, false}]),
+  Big = lists:seq(0, 19999),
+  ?assertEqual(ok, glazer_schema:validate(S, Big)),
+  ?assertMatch({error, _}, glazer_schema:validate(S, Big ++ [-1])),
+  ?assertMatch({error, _}, glazer_schema:validate(S, Big ++ [~"x"])),
+  ?assertEqual(ok, glazer_schema:validate(S, [1, 2, 3])),
+  ok.
+
+%% Read the temp directory from the environment. Windows sets TEMP/TMP and
+%% has no /tmp, so there is no fallback there; elsewhere /tmp.
 tmp_dir() ->
-  case os:getenv("TMPDIR") of false -> "/tmp"; D -> D end.
+  case os:type() of
+    {win32, _} ->
+      case [D || V <- ["TEMP", "TMP"], D <- [os:getenv(V)], D =/= false] of
+        [Dir | _] -> Dir;
+        [] -> erlang:error({no_temp_dir, ["TEMP", "TMP"]})
+      end;
+    _ ->
+      "/tmp"
+  end.
