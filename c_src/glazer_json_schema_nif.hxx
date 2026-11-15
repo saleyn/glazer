@@ -200,17 +200,17 @@ bool parse_validation_options(
         auto val = tuple_items[1];
 
         if (enif_is_identical(key, AM_MAX_DEPTH)) {
-          long max_depth_val;
+          ErlNifSInt64 max_depth_val;
           if (enif_get_int64(env, val, &max_depth_val))
             opts.max_depth = static_cast<size_t>(max_depth_val);
         } else if (enif_is_identical(key, AM_MAX_ERRORS)) {
-          long max_errors_val;
+          ErlNifSInt64 max_errors_val;
           if (enif_get_int64(env, val, &max_errors_val)) {
             opts.max_errors = static_cast<size_t>(max_errors_val);
             opts.max_errors_set = true;
           }
         } else if (enif_is_identical(key, AM_TIMEOUT_MS)) {
-          long timeout_val;
+          ErlNifSInt64 timeout_val;
           if (enif_get_int64(env, val, &timeout_val))
             opts.timeout_ms = static_cast<int>(timeout_val);
         }

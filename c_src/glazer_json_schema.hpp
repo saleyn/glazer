@@ -382,10 +382,10 @@ inline JSONType term_to_type(ErlNifEnv* env, ERL_NIF_TERM term) {
   if (enif_is_binary(env, term))     return JSONType::STRING;
 
   // Integer vs Float
-  long long_val;
+  ErlNifSInt64 long_val;
   if (enif_get_int64(env, term, &long_val)) return JSONType::INTEGER;
 
-  uint64_t uval;
+  ErlNifUInt64 uval;
   if (enif_get_uint64(env, term, &uval)) return JSONType::INTEGER;
 
   // Integers of any size: a number that is not a float

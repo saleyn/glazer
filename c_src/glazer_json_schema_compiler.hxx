@@ -1360,7 +1360,7 @@ bool SchemaCompiler::encode_json(ERL_NIF_TERM term, std::vector<uint8_t>& out, s
   if (enif_is_identical(term, AM_TRUE)) { out.push_back('T'); return true; }
   if (enif_is_identical(term, AM_FALSE)) { out.push_back('F'); return true; }
 
-  long lv = 0;
+  ErlNifSInt64 lv = 0;
   if (enif_get_int64(m_env, term, &lv)) {
     int64_t v = static_cast<int64_t>(lv);
     out.push_back('i');

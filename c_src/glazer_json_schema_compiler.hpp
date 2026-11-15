@@ -96,7 +96,7 @@ private:
   bool get_double(ERL_NIF_TERM term, double& out) {
     if (enif_get_double(m_env, term, &out))
       return true;
-    long long_val;
+    ErlNifSInt64 long_val;
     if (enif_get_int64(m_env, term, &long_val)) {
       out = static_cast<double>(long_val);
       return true;
@@ -106,7 +106,7 @@ private:
 
   // Get integer value
   bool get_int64(ERL_NIF_TERM term, int64_t& out) {
-    long long_val;
+    ErlNifSInt64 long_val;
     if (enif_get_int64(m_env, term, &long_val)) {
       out = long_val;
       return true;
