@@ -514,7 +514,7 @@ bool SchemaValidator::check_type(ERL_NIF_TERM term, uint8_t type_mask, Validatio
 // number. Integers compare exactly, against integer and float bounds alike.
 bool SchemaValidator::compare_to_bound(ERL_NIF_TERM term, const Number& bound, int& cmp) {
   constexpr int64_t EXACT_DOUBLE = int64_t(1) << 53;   // every integer up to here is a double
-  long lv = 0;
+  ErlNifSInt64 lv = 0;
   if (enif_get_int64(m_env, term, &lv)) {
     int64_t v = static_cast<int64_t>(lv);
     if (const auto* bi = std::get_if<int64_t>(&bound)) {
@@ -609,7 +609,7 @@ bool SchemaValidator::check_exclusive_maximum(ERL_NIF_TERM term, const Number& m
 // Whether the integer term is a multiple of an integer factor. False when term
 // is not an integer. The factor is not zero.
 bool SchemaValidator::integer_multiple(ERL_NIF_TERM term, const Number& factor, bool& multiple) {
-  long lv = 0;
+  ErlNifSInt64 lv = 0;
   if (const auto* fi = std::get_if<int64_t>(&factor); fi && enif_get_int64(m_env, term, &lv)) {
     // int64 by int64: magnitudes in uint64 avoid overflow at INT64_MIN
     uint64_t mag = lv < 0 ? uint64_t(0) - static_cast<uint64_t>(lv) : static_cast<uint64_t>(lv);
@@ -885,7 +885,7 @@ bool SchemaValidator::get_number_double(ERL_NIF_TERM term, double& out) {
   if (enif_get_double(m_env, term, &out))
     return true;
 
-  long long_val;
+  ErlNifSInt64 long_val;
   if (enif_get_int64(m_env, term, &long_val)) {
     out = static_cast<double>(long_val);
     return true;
@@ -1647,7 +1647,7 @@ bool SchemaValidator::equal_encoded(ERL_NIF_TERM term, const uint8_t* buf, size_
       int64_t v = 0;
       std::memcpy(&v, buf + pos, sizeof(v));
       pos += sizeof(v);
-      long t = 0;
+      ErlNifSInt64 t = 0;
       if (enif_get_int64(m_env, term, &t))
         return static_cast<int64_t>(t) == v;
       BigNum tb;
@@ -1732,7 +1732,7 @@ bool SchemaValidator::terms_equal(ERL_NIF_TERM a, ERL_NIF_TERM b) {
   if (enif_is_identical(a, b))
     return true;
 
-  long la = 0, lb = 0;
+  ErlNifSInt64 la = 0, lb = 0;
   if (enif_get_int64(m_env, a, &la) && enif_get_int64(m_env, b, &lb))
     return la == lb;
 
