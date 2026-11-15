@@ -240,3 +240,10 @@ regex_engine_error_is_reported_test() ->
   ?assertMatch({error, {path, [], {pattern_mismatch, _}}},
                ok(#{~"pattern" => ~"^[0-9]+$"}, ~"abc")),
   ok.
+
+%% CSV: the documented {null, Atom} option sets the value for on_failure => null
+
+csv_null_option_test() ->
+  Opts = [{null, nil}, {fields, [#{type => integer, on_failure => null}]}],
+  ?assertEqual([[1], [nil]], maps:get(data, glazer_csv:decode(<<"1\nbad\n">>, Opts))),
+  ok.

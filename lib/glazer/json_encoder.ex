@@ -47,6 +47,10 @@ defprotocol Glazer.JSON.Encoder do
   # Result: "{\"id\":1,\"name\":\"Alice\",\"email\":\"alice@example.com\"}"
   ```
 
+  The `Jason.Encoder` fallback can be turned off at compile time with
+  `config :glazer, jason_encoder_fallback: false`; see the comment above it in
+  the source. Recompile after changing the setting.
+
   ## Performance
 
   - **Field filtering**: Happens at compile time; zero runtime cost
@@ -224,7 +228,18 @@ if Code.ensure_loaded?(Decimal) do
   end
 end
 
-if not Code.ensure_loaded?(Jason.Encoder) do
+# Compile-time switch for the Jason.Encoder fallback below. Set it in your config:
+#
+#     config :glazer, jason_encoder_fallback: false
+#
+# With the fallback disabled, Glazer does not define a `Jason.Encoder` protocol,
+# so it never overrides a Jason that is loaded later, and `@derive {Jason.Encoder, ...}`
+# needs Jason. The value is read at compile time: changing it needs a recompile
+# (`mix compile --force`). Defaults to true.
+if Application.compile_env(:glazer, :jason_encoder_fallback, true) and not Code.ensure_loaded?(Jason.Encoder) do
+  # Disable warning about redefining the built-in Jason.Encoder protocol
+  Code.compiler_options(ignore_module_conflict: true)
+
   # `defimpl Jason.Encoder` requires the protocol itself to exist; since Jason
   # isn't a dependency here, define a minimal shim matching Jason's own
   # protocol shape (`encode/2`, `@fallback_to_any true`) so structs can still

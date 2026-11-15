@@ -14,9 +14,12 @@ dependencies, and extended the same approach to YAML and CSV, with
 performance and features unmatched by other existing libraries for these
 formats.
 
+It also has **jq-style filters** for JSON (`query/2,3`, see [jq filter support](guides/json.md#jq-filter-support)),
+and **JSON Schema 2020-12 validation** for JSON and YAML documents, with a schema registry
+(see [JSON Schema validation](#json-schema-validation)).
+
 ## Table of contents
 
-- [Table of contents](#table-of-contents)
 - [Features](#features)
   - [JSON](#json)
   - [YAML](#yaml)
@@ -24,59 +27,23 @@ formats.
 - [Installation](#installation)
   - [Building](#building)
   - [Testing](#testing)
-  - [Benchmarking](#benchmarking)
 - [Performance](#performance)
 - [JSON](#json-1)
-  - [Usage](#usage)
-  - [Streaming](#streaming)
-    - [Efficiency](#efficiency)
-  - [Null term configuration](#null-term-configuration)
-  - [JSON decode options](#json-decode-options)
-  - [JSON encode options](#json-encode-options)
-  - [jq filter support](#jq-filter-support)
-  - [Elixir Protocol Support](#elixir-protocol-support)
-    - [Using with `Jason.Encoder`](#using-with-jasonencoder)
-    - [Why this works](#why-this-works)
-    - [API functions for protocol implementations](#api-functions-for-protocol-implementations)
-  - [Elixir's Phoenix `json_library()` compliance](#elixirs-phoenix-json_library-compliance)
-  - [API](#api)
-  - [Benchmarking JSON](#benchmarking-json)
 - [YAML](#yaml-1)
-  - [Usage](#usage-1)
-  - [Streaming](#streaming-1)
-  - [YAML decode options](#yaml-decode-options)
-  - [YAML encode options](#yaml-encode-options)
-  - [API](#api-1)
-  - [Benchmarking YAML](#benchmarking-yaml)
 - [CSV](#csv-1)
-  - [Usage](#usage-2)
-  - [Streaming](#streaming-2)
-  - [CSV decode options](#csv-decode-options)
-  - [Field type conversion](#field-type-conversion)
-    - [`default` and `on_failure`](#default-and-on_failure)
-  - [CSV Encode options](#csv-encode-options)
-  - [API](#api-2)
-  - [Benchmarking CSV](#benchmarking-csv)
-    - [glazer vs rusty\_csv](#glazer-vs-rusty_csv)
 - [JSON Schema validation](#json-schema-validation)
   - [Quick start](#quick-start)
-  - [Reading a schema from a file](#reading-a-schema-from-a-file)
-  - [Schema registry](#schema-registry)
-  - [Standards compliance](#standards-compliance)
-    - [Formats](#formats)
-    - [Regular expressions](#regular-expressions)
-    - [Deviations](#deviations)
 - [Big integers](#big-integers)
-  - [API](#api-3)
+  - [API](#api)
 - [Limitations](#limitations)
   - [Scope](#scope)
   - [Nesting depth](#nesting-depth)
-- [Performance Optimization Details](#performance-optimization-details)
+  - [Schema validation](#schema-validation)
 - [License](#license)
 
-## [Features](#table-of-contents)
+## Features
 
-### [JSON](#table-of-contents)
+### JSON
 
 - Decoding straight to Erlang terms: maps, lists, binaries, integers
   (including bignums), floats, booleans, and `null`
@@ -90,13 +57,13 @@ formats.
   (`encode_integer/1`, `decode_integer/1`, `try_decode_integer/1`)
 - `query/2,3`: run a [jq](https://jqlang.org/) filter over a JSON
   document, returning decoded Erlang terms (requires `glazer` to be built
-  with `libjq` available — see [jq filter support](#jq-filter-support))
+  with `libjq` available — see [jq filter support](guides/json.md#jq-filter-support))
 - `glazer:find/2` and `glazer:compile_path/1`: look up value(s) in a
   decoded term using a small subset of jq path syntax (`.a.b[].c[0]`),
   with no `libjq` dependency
 - Support native Erlang and Elixir API via `glazer_json` and `Glazer.JSON` modules
 
-### [YAML](#table-of-contents)
+### YAML
 
 - Decoding YAML mappings/sequences/scalars to Erlang maps/lists/scalars,
   including big integers
@@ -105,7 +72,7 @@ formats.
   optional YAML 1.1 boolean compatibility (`yes`/`no`/`on`/`off`)
 - Support native Erlang and Elixir API via `glazer_yaml` and `Glazer.YAML` modules
 
-### [CSV](#table-of-contents)
+### CSV
 
 - RFC 4180 CSV encoding/decoding via `decode/1,2` and `encode/1,2`,
   with optional header-row support
@@ -116,6 +83,8 @@ formats.
 ## [Installation](#table-of-contents)
 
 **Erlang (`rebar.config`)**:
+
+**Erlang**
 
 ```erlang
 {deps, [
@@ -168,21 +137,26 @@ plain `-O3` build by 5–15% on realistic JSON workloads.
 described above, so the same C++23 compiler requirement applies.
 Once compiled, call it via the `:glazer` module from Elixir:
 
-**Erlang:**
+**Erlang**
+
 ```erlang
 1> glazer_json:decode(~"{\"a\":1,\"b\":[true,null,3.5]}")
 #{<<"a">> => 1,<<"b">> => [true,null,3.5]}
+2> :glazer_json.encode(#{"a" => 1, "b" => [true, :null, 3.5]})
+"{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
-**Elixir:**
+**Elixir**
+
 ```elixir
-iex> :glazer_json.encode(%{"a" => 1, "b" => [true, :null, 3.5]})
+iex> Glazer.JSON.decode!(~s({"a":1,"b":[true,null,3.5]}))
+%{"a" => 1, "b" => [true, nil, 3.5]}
+> Glazer.JSON.encode(%{"a" => 1, "b" => [true, nil, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
 Use the `use_nil`/`{null, nil}` option (see
-[Null term configuration](#null-term-configuration) below) to get idiomatic
-Elixir `nil` instead of the atom `:null`.
+[Null term configuration](guides/json.md#null-term-configuration) below) to get idiomatic Elixir `nil` instead of the atom `:null`.
 
 ### [Testing](#table-of-contents)
 
@@ -192,22 +166,15 @@ make test
 
 runs the EUnit test suite via `rebar3 eunit`.
 
-### Benchmarking
+## Performance
 
-Benchmarking:
-- [Benchmarking JSON](#benchmarking-json)
-- [Benchmarking YAML](#benchmarking-yaml)
-- [Benchmarking CSV](#benchmarking-csv)
-
-## [Performance](#table-of-contents)
-
-- **[JSON](#benchmarking-json)**: faster than almost every library benchmarked on
+- **[JSON](guides/json.md#benchmarking-json)**: faster than almost every library benchmarked on
   both encoding and decoding. It's competitive with `torque` (Rust `sonic-rs` NIF)
   JSON-only library, and well ahead of `simdjsone`, `jiffy`, and the
   pure-Elixir libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`.
-- **[YAML](#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
+- **[YAML](guides/yaml.md#benchmarking-yaml)**: 2–7× faster than `yaml_rustler` and
   `fast_yaml`, and ~25–75× faster than the pure-Erlang `yamerl`/`ymlr`.
-- **[CSV](#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
+- **[CSV](guides/csv.md#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
   hundreds of times faster than `csv` and `erl_csv` (which time out on
   large inputs).
 
@@ -220,621 +187,52 @@ decode and encode on a representative small/medium/large file. Charts are
 generated from the tables below via `scripts/gen_bench_charts.py`.
 
 Benchmarking data tables:
-- [Benchmarking JSON](#benchmarking-json)
-- [Benchmarking YAML](#benchmarking-yaml)
-- [Benchmarking CSV](#benchmarking-csv)
+- [Benchmarking JSON](guides/json.md#benchmarking-json)
+- [Benchmarking YAML](guides/yaml.md#benchmarking-yaml)
+- [Benchmarking CSV](guides/csv.md#benchmarking-csv)
 
 ## [JSON](#table-of-contents)
 
-### [Usage](#table-of-contents)
+Fast JSON encoding and decoding, with streaming, options, jq filters and Elixir
+protocol support. The full reference is in [guides/json.md](guides/json.md).
 
 **Erlang**
 
 ```erlang
 1> glazer_json:decode(<<"{\"a\":1,\"b\":[true,null,3.5]}">>).
 #{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
-
-2> glazer_json:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
-<<"{\"a\":1,\"b\":[true,null,3.5]}">>
-
-3> glazer_json:encode(#{a => 1}, [pretty]).
-<<"{\n  \"a\": 1\n}">>
-
-4> glazer_json:minify(<<" { \"a\" : 1 } ">>).
-{ok, <<"{\"a\":1}">>}
-
-5> glazer_json:prettify(<<"{\"a\":1}">>).
-{ok, <<"{\n  \"a\": 1\n}">>}
 ```
 
 **Elixir**
 
 ```elixir
-iex(1)> Glazer.JSON.decode!(<<"{\"a\":1,\"b\":[true,null,3.5]}">>)
+iex> Glazer.JSON.decode!(~s({"a":1,"b":[true,null,3.5]}))
 %{"a" => 1, "b" => [true, nil, 3.5]}
-
-iex(2)> Glazer.JSON.encode!(%{"a" => 1, "b" => [true, nil, 3.5]})
-"{\"a\":1,\"b\":[true,null,3.5]}"
-
-iex(3)> Glazer.JSON.encode!(%{a: 1}, [:pretty])
-"{\n   \"a\": 1\n}"
-
-iex(4)> Glazer.JSON.minify!(" { \"a\" : 1 } ")
-"{\"a\":1}"
-
-iex(5)> Glazer.JSON.prettify!("{\"a\":1}")
-"{\n   \"a\": 1\n}"
-```
-
-### [Streaming](#table-of-contents)
-
-For input that arrives in chunks — e.g. reading a large document
-incrementally, or consuming newline-delimited JSON (NDJSON) from a
-socket or file — `decode_start/3` provides a small stateful
-wrapper that buffers partial input and decodes each JSON value as soon
-as it's complete, without re-parsing bytes you've already seen.
-`decode_continue/2` returns `{Value, Acc, Rest::binary()}` if a `Value` is
-complete and parsed, or `{continue, State}` if the value cannot be parsed given
-the available data. Once the input is exhausted, call `stream_eof/1` to flush
-any trailing bare scalar (numbers, strings, etc. have no closing
-delimiter of their own) and surface an error if the buffer holds an
-incomplete value:
-
-```erlang
-1> {continue, State} = glazer_json:decode_start(~"{\"a\":", ok, []).
-2> {#{~"a" := 1}, ok, NextBin = ~"[2]"} = glazer_json:decode_continue(<<"1}[2]">>, State).
-3> {[2], ok, ~""} = glazer_json:decode_start(NextBin, ok, []).
-```
-
-`glazer_json:decode_start/3` accepts the same options as `decode/2` (e.g.
-`{keys, atom}`, `use_nil`) and applies them to every decoded value.
-
-A typical read loop calls `decode_start/3` for each chunk while more data
-may still arrive, and `decode_continue/2` once the socket closes to flush any
-trailing value:
-
-```erlang
--spec recv_json(inet:socket(), list()) -> {ok, term(), binary()} | {error, term()}.
-recv_json(Socket, Opts) ->
-  loop(Socket, undefined, Opts).
-
-loop(Socket, State, Opts) ->
-  case gen_tcp:recv(Socket, 0) ->
-    {ok, Chunk} ->
-      case next_json(Chunk, State, Opts) of
-        {Value, nil, Rest}   -> {ok, Value, Rest};
-        {continue, NewState} -> loop(Socket, NewState, Opts)
-      end;
-    {error, Reason} ->
-        {error, Reason}
-  end.
-
-next_json(Chunk, undefined, Opts) -> glazer_json:decode_start(Chunk, nil, Opts);
-next_json(Chunk, State,    _Opts) -> glazer_json:decode_continue(Chunk, State).
-
-```
-
-#### [Efficiency](#table-of-contents)
-
-`decode_start/3` only scans for value *boundaries* incrementally —
-the scanner carries a small resumable cursor (`scan_state()`) that
-remembers how far it has already looked (nesting depth, whether it's
-inside a string, escape state, …), so each call to `scan/2` resumes
-from where the previous one left off rather than re-walking the whole
-buffer from byte zero. Once a complete value's end offset is known,
-that slice is decoded exactly once via the same NIF-backed decoder
-used by `decode/2` — there's no intermediate tokenization or tree
-representation, and no byte is ever scanned or decoded twice. The only
-buffering cost is concatenating newly-arrived chunks onto the
-not-yet-complete tail of the input.
-
-This makes `decode_start/3` well suited to byte-at-a-time or
-small-chunk feeding (e.g. consuming a `gen_tcp`/`gen_statem` socket
-buffer as it fills) without the quadratic-rescan cost a naive
-"concatenate and retry full decode" loop would incur on large or
-slow-arriving documents.
-
-Under the hood, `decode_start/3` is built on `scan/1,2` — a low-level
-primitive that scans a buffer for the byte offset where the next JSON
-value ends (or reports that more input is needed) without doing a full
-decode. It's exposed directly for callers that want to implement their
-own framing/buffering strategy:
-
-```erlang
-1> glazer_json:scan(<<"{\"a\":1} {\"b\":2}">>).
-{complete, 7}
-
-2> glazer_json:scan(<<"{\"a\":">>).
-{incomplete, ScanState}
-
-3> glazer_json:scan(<<"{\"a\":1}">>, ScanState).
-{complete, 7}
-```
-
-`stream_decoder/0,1`, `stream_feed/2`, `stream_eof/1` and
-`scan/1,2` are JSON-only — see [YAML streaming](#streaming-1) and
-[CSV streaming](#streaming-2) below for the other formats.
-
-### [Null term configuration](#table-of-contents)
-
-By default, JSON/YAML `null` decodes to (and `null` encodes from) the atom
-`null`, and this same atom is used as the default null term throughout the
-library (e.g. for the CSV `on_failure => null` field option). This can be
-overridden:
-
-- Application-wide, via the `null` environment key — set this once in
-  the application's config and every call uses it as the default:
-
-  **Erlang** (`rebar.config`):
-  ```erlang
-  {glazer, [{null, nil}]}
-  ```
-
-  **Elixir** (`config.exs`):
-  ```erlang
-  config :glazer, null: nil
-  ```
-
-- Per call, with the `use_nil` shorthand or the `{null, Atom}`
-  option (see [Decode options](#decode-options-glazer_jsondecode2) below).
-  Per-call options always take precedence over the application-wide
-  default.
-
-### [JSON decode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `object_as_tuple` | Decode JSON objects as `{[{Key, Value}]}` proplist tuples (jiffy-style) instead of maps (default) |
-| `use_nil` | Use the atom `nil` for JSON `null` |
-| `{null, Atom}` | Use `Atom` for JSON `null` |
-| `{keys, atom}` | Decode object keys as atoms (via `binary_to_atom/2`-equivalent) |
-| `{keys, existing_atom}` | Decode object keys as existing atoms, falling back to binaries for unknown atoms |
-| `{keys, binary}` | Decode object keys as binaries (default) |
-| `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
-| `copy_strings` | Always allocate a fresh binary for each decoded string, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
-| `return_trailer` | Allow trailing non-whitespace data after the decoded value instead of rejecting it; on a match, return `{has_trailer, Term, Rest}` with `Rest` as a zero-copy sub-binary of the unconsumed remainder |
-
-```erlang
-1> glazer_json:decode(<<"{\"a\":1}">>, [object_as_tuple]).
-{[{<<"a">>, 1}]}
-
-2> glazer_json:decode(<<"{\"a\":1}">>, [{keys, atom}]).
-#{a => 1}
-
-3> glazer_json:decode(<<"null">>, [use_nil]).
-nil
-
-4> glazer_json:decode(<<"null">>, [{null, undefined}]).
-undefined
-
-5> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>).
-#{<<"a">> => 2}
-
-6> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple]).
-{[{<<"a">>, 1}, {<<"a">>, 2}]}
-
-7> glazer_json:decode(<<"{\"a\":1,\"a\":2}">>, [object_as_tuple, dedupe_keys]).
-{[{<<"a">>, 2}]}
-
-8> glazer_json:decode(<<"1 2">>, [return_trailer]).
-{has_trailer, 1, <<"2">>}
-```
-
-> [!NOTE]
-> A JSON object with duplicate keys cannot be represented as an Erlang map,
-> so decoding to maps (the default) and `{keys, atom | existing_atom}` always
-> dedupe duplicate keys, last value wins, regardless of `dedupe_keys`. With
-> `object_as_tuple`, duplicate keys are preserved as-is unless `dedupe_keys`
-> is given.
-
-### [JSON encode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `pretty` | Pretty-print the JSON output with two-space indentation |
-| `uescape` | Escape non-ASCII characters as `\uXXXX` sequences |
-| `force_utf8` | Replace invalid UTF-8 byte sequences with U+FFFD before encoding |
-| `use_nil` | Encode the atom `nil` as JSON `null` |
-| `{null, Atom}` | Encode `Atom` as JSON `null` |
-
-```erlang
-1> glazer_json:encode(#{a => 1}, [pretty]).
-<<"{\n  \"a\": 1\n}">>
-
-2> glazer_json:encode(<<"héllo"/utf8>>, [uescape]).
-<<"\"h\\u00e9llo\"">>
-
-3> glazer_json:encode(nil, [use_nil]).
-<<"null">>
-```
-
-**Option `force_utf8`:**
-
-> [!NOTE]
-> `force_utf8` is an *encode*-only option. `decode/1,2` does not validate
-> that JSON strings in the input are valid UTF-8 — bytes are copied through
-> to the resulting binaries as-is, regardless of options.
-
-Binaries may contain arbitrary bytes, including byte sequences that are not
-valid UTF-8. By default, such bytes are copied into the output verbatim,
-which can produce a result that is not valid UTF-8/JSON:
-
-```erlang
-1> glazer_json:encode(<<"a", 128, "b">>).
-<<"\"a", 128, "b\"">>
-```
-
-With `force_utf8`, each invalid byte (or byte sequence) is replaced with the
-Unicode replacement character `U+FFFD` (encoded as `0xEF 0xBF 0xBD`):
-
-```erlang
-2> glazer_json:encode(<<"a", 128, "b">>, [force_utf8]).
-<<"\"a", 239, 191, 189, "b\"">>
-```
-
-A literal `U+FFFD` already present in the input is left untouched (it is
-not re-replaced). Combining `force_utf8` with `uescape` further escapes the
-replacement character as `\ufffd`:
-
-```erlang
-3> glazer_json:encode(<<"a", 128, "b">>, [force_utf8, uescape]).
-<<"\"a\\ufffdb\"">>
-```
-
-### [jq filter support](#table-of-contents)
-
-If [`libjq`](https://jqlang.org/) and its headers (`jq.h`/`jv.h`) are
-available when `glazer` is built, `query/2,3` runs a jq filter
-program against a JSON document and returns one Erlang term per value
-produced by the filter (decoded using the same options as
-`decode/2`):
-
-```erlang
-1> glazer_json:query(<<"{\"a\":[1,2,3]}">>, <<".a[]">>).
-{ok, [1, 2, 3]}
-
-2> glazer_json:query(<<"{\"a\":1}">>, <<".b">>).
-{ok, [null]}
-
-3> glazer_json:query(<<"{\"a\":{\"b\":2}}">>, <<".">>, [{keys, atom}]).
-{ok, [#{a => #{b => 2}}]}
-
-4> glazer_json:query(<<"not json">>, <<".">>).
-{error, invalid_input}
-
-5> glazer_json:query(<<"{\"a\":1}">>, <<"bad syntax (((">>).
-{error, jq_decode_error}
-```
-
-If `libjq` was not available at build time, `query/2,3` returns
-`{error, jq_not_available}`. Build detection is automatic — `make` probes
-for `jq.h`/`libjq` and only enables this feature if found, so `glazer`
-still builds and works without `libjq` installed.
-
-### [Elixir Protocol Support](#table-of-contents)
-
-`glazer_json` can serve as the backend for Elixir protocol implementations,
-such as `Jason.Encoder` or custom protocols. This allows Elixir users to
-filter struct fields at compile-time using the `@derive` annotation.
-
-#### Using with `Jason.Encoder`
-
-Elixir users can create a wrapper module in their project that derives
-`Jason.Encoder` and uses `glazer_json:encode/2` as the backend:
-
-```elixir
-# lib/my_app/glazer_encoder.ex
-defimpl Jason.Encoder, for: Any do
-  defmacro __deriving__(module, struct, opts) do
-    fields = fields_to_encode(struct, opts)
-
-    quote do
-      defimpl Jason.Encoder, for: unquote(module) do
-        def encode(value, _opts) do
-          filtered = Map.take(value, unquote(fields))
-          :glazer_json.encode(filtered, [use_nil])
-        end
-      end
-    end
-  end
-
-  defp fields_to_encode(struct, opts) do
-    all_fields = Map.keys(struct) -- [:__struct__]
-
-    cond do
-      only = Keyword.get(opts, :only) -> only
-      except = Keyword.get(opts, :except) -> all_fields -- except
-      true -> all_fields
-    end
-  end
-end
-```
-
-Then use `@derive` in your Ecto schema:
-
-```elixir
-defmodule MyApp.GustSecrets do
-  use Ecto.Schema
-
-  @derive {Jason.Encoder, only: [:id, :name, :value_type, :inserted_at, :updated_at]}
-  schema "gust_secrets" do
-    field :name, :string
-    field :value, Gust.Encrypted.Binary, redact: true
-    field :value_type, Ecto.Enum, values: [:string, :json]
-
-    timestamps()
-  end
-end
-```
-
-This ensures that only the specified fields are encoded to JSON, with the
-sensitive `:value` field automatically excluded.
-
-#### Why this works
-
-- **Compile-time filtering**: The `@derive` annotation uses the `__deriving__`
-  macro to generate field-filtering code at compile time, with zero runtime cost
-- **Zero-copy protocol dispatch**: Elixir's protocol system ensures the correct
-  `encode/2` implementation is called at runtime
-- **Erlang backend**: `glazer_json:encode/2` provides the fast NIF-based JSON
-  encoding, significantly faster than pure-Elixir implementations
-
-#### API functions for protocol implementations
-
-The following functions are explicitly named to match protocol conventions:
-
-- `encode_to_iodata/1` - encode a term to JSON iodata (identical to `encode/1`)
-- `encode_to_iodata/2` - encode a term to JSON iodata with options (identical to `encode/2`)
-
-These are aliases for discoverability; they help protocol wrapper code match
-the naming convention used in `Jason.Encoder` and similar frameworks.
-
-### [Elixir's Phoenix `json_library()` compliance](#table-of-contents)
-
-Phoenix supports a pluggable `:json_library` configuration
-(see [phoenix](https://phoenix.hexdocs.pm/1.8.8/Phoenix.html#json_library/0))
-that lets applications swap in an alternative JSON implementation for
-Phoenix's JSON API module by configuring a module that exports:
-
-- `decode!/1`
-- `encode!/1`
-- `encode_to_iodata!/1`
-
-`glazer_json` exports these under the equivalent (quoted) Erlang names —
-`'decode!'/1`, `'encode!'/1`, and `'encode_to_iodata!'/1` — as thin aliases
-for `decode/1` and `encode/1`, so `glazer_json` can be configured directly
-as a `json_library()`. To match Elixir's `JSON` module, where `null` decodes
-to/from `nil` rather than the atom `:null`, these three functions automatically
-apply `use_nil` — no extra configuration is needed:
-
-```elixir
-config :phoenix, :json_library, :glazer_json
-```
-
-```erlang
-1> glazer_json:'decode!'(<<"{\"a\":1,\"b\":null}">>).
-#{<<"a">> => 1, <<"b">> => nil}
-
-2> glazer_json:'encode!'(#{<<"a">> => 1, <<"b">> => nil}).
-<<"{\"a\":1,\"b\":null}">>
-
-3> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1, <<"b">> => nil}).
-<<"{\"a\":1,\"b\":null}">>
-```
-
-```erlang
-1> glazer_json:'decode!'(<<"{\"a\":null}">>).
-#{<<"a">> => nil}
-
-2> glazer_json:'encode!'(#{<<"a">> => nil}).
-<<"{\"a\":null}">>
-```
-
-### [API](#table-of-contents)
-
-All functions below are in `glazer_json`.
-
-| Function | Description |
-|---|---|
-| `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
-| `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
-| `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary; raises `{encode_error, {Msg, Term}}` on failure |
-| `'decode!'/1` | Decode a JSON binary or iolist to an Erlang term (alias for `decode/1`) |
-| `'encode!'/1` | Encode an Erlang term to a JSON binary (alias for `encode/1`) |
-| `'encode_to_iodata!'/1` | Encode an Erlang term to JSON as iodata (alias for `encode/1`) |
-| `minify/1` | Remove unnecessary whitespace from a JSON document |
-| `prettify/1` | Pretty-print a JSON document with two-space indentation |
-| `read_file/1`, `read_file/2` | Read a file and decode its contents as JSON |
-| `write_file/2`, `write_file/3` | Encode a term to JSON and write it to a file |
-| `scan/1`, `scan/2` | Scan a buffer for the end offset of the next complete JSON value |
-| `stream_decoder/0`, `stream_decoder/1` | Create an incremental-decode state for chunked input |
-| `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
-| `stream_eof/1` | Flush a stream decoder at end-of-input |
-| `query/2`, `query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
-
-### [Benchmarking JSON](#table-of-contents)
-
-A comparison benchmark against other JSON libraries (`simdjsone`,
-`jiffy`, `jason`, `thoas`, `euneus`, OTP's built-in `json`, and
-`torque`) is available via:
-
-```sh
-$ make bench-json
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
-
-(numbers in µs)
-JSON           twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
-               decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
-----------------------------------------------------------------------------------------------------------------
-glazer         3056.7   1139.8     2802.2   1803.3        8.0      6.0        4.7      4.3        0.8      1.0
-glazer+utf8    3350.4   1003.8     3452.9   1744.7        8.2      7.6        5.9      3.2        1.8      1.5
-torque         2391.9    998.8     3107.5   2603.9        7.4      4.9        5.9      3.2        1.2      0.7
-simdjsone      3688.8   2833.0     6742.6   6016.7       15.8     18.8       11.9     13.2        2.1      6.6
-jiffy          5468.8   2642.9     6875.0   6505.4       20.8     22.3       12.0     10.6        2.9      3.8
-jason          8667.0   7668.1    14350.8  19042.8       32.4     29.0       15.7     15.0        3.2      4.7
-json           7793.3   5741.3    15210.0  12957.5       22.1     16.8       11.7      9.6        3.4      2.3
-thoas          8710.0   9141.5    20712.9  22007.2       32.5     35.4       17.1     21.9        3.0      2.4
-euneus         7183.1   6743.2    16592.7  16423.2       23.3     21.4       14.7     13.6        3.1      2.4
-```
-
-(requires the `bench`/`dev` Mix dependencies — see `mix.exs`).
-
-To further illustrate performance of `glazer`, here's a benchmark comparison to
-some leading Golang libraries (the lower numbers the better):
-
-```sh
-$ test/bench-go/run.sh
-
-numbers in µs)
-GO-JSON           twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
-                  decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
--------------------------------------------------------------------------------------------------------------------
-sonic             2301.0   1184.0     3812.0   1986.0       12.0      7.0        5.0      3.0        1.0      0.0
-goccy/go-json     3594.0   3103.0     5963.0   5490.0       19.0     13.0       11.0      7.0        2.0      1.0
-jsoniter          4029.0   1832.0     6655.0   3012.0       16.0     11.0        8.0      6.0        1.0      1.0
-jsony                n/a   3866.0        n/a   6913.0        n/a     15.0        n/a      9.0        n/a      1.0
-stdlib/json       6751.0   4048.0     8328.0   7894.0       19.0     16.0       12.0      8.0        2.0      2.0
 ```
 
 ## [YAML](#table-of-contents)
 
-### [Usage](#table-of-contents)
-
-`decode/1,2` decodes a YAML document to an Erlang term — mappings
-become maps, sequences become lists, and scalars become the matching
-Erlang type (binaries, numbers, booleans, or `null`):
+YAML decoding and encoding, with the same option style as JSON. The full
+reference is in [guides/yaml.md](guides/yaml.md).
 
 **Erlang**
 
 ```erlang
 1> glazer_yaml:decode(<<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>).
 #{<<"a">> => 1, <<"b">> => [true, null, 3.5]}
-
-2> glazer_yaml:encode(#{<<"a">> => 1, <<"b">> => [true, null, 3.5]}).
-<<"a: 1\nb:\n  - true\n  - null\n  - 3.5\n">>
 ```
 
 **Elixir**
 
 ```elixir
-iex(1)> Glazer.YAML.decode!("a: 1\nb:\n  - true\n  - null\n  - 3.5\n")
+iex> Glazer.YAML.decode!("a: 1\nb:\n  - true\n  - null\n  - 3.5\n")
 %{"a" => 1, "b" => [true, :null, 3.5]}
-
-iex(2)> Glazer.YAML.encode!(%{"a" => 1, "b" => [true, :null, 3.5]})
-"a: 1\nb:\n- true\n- null\n- 3.5\n"
-```
-
-`encode/1,2` encodes an Erlang term to YAML in block style
-(2-space indentation, sequences at the same indentation as the mapping
-key that owns them). Raises `{encode_error, {Msg, Term}}` if the data
-contains a value that cannot be represented as YAML.
-
-### [Streaming](#table-of-contents)
-
-There is no incremental YAML decoder. YAML's block styles have no
-closing delimiter — a mapping or sequence simply ends at a dedent or
-end-of-input — so there is no way to scan a partial buffer for "is this
-value complete yet?" the way [`scan/1,2`](#efficiency) does for
-JSON's bracket-balanced syntax. Decode full YAML documents with
-`decode/1,2` once they are fully buffered.
-
-### [YAML decode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `use_nil` | Use the atom `nil` for YAML `null`/`~`/empty values |
-| `{null, Atom}` | Use `Atom` for YAML `null`/`~`/empty values |
-| `{keys, atom}` | Decode mapping keys as atoms |
-| `{keys, existing_atom}` | Decode mapping keys as existing atoms, falling back to binaries for unknown atoms |
-| `{keys, binary}` | Decode mapping keys as binaries (default) |
-| `yaml_1_1_bools` | Additionally treat `yes`/`no`/`on`/`off` (and case variants) as booleans, per the YAML 1.1 core schema. By default (YAML 1.2 core schema) only `true`/`false` are recognized as booleans |
-| `copy_strings` | Always allocate a fresh binary for each decoded scalar, instead of a zero-copy sub-binary of the input for single-line plain scalars (see [Performance Optimization Details](#performance-optimization-details)) |
-
-```erlang
-1> glazer_yaml:decode(<<"a: ~\n">>, [use_nil]).
-#{<<"a">> => nil}
-
-2> glazer_yaml:decode(<<"a: 1\n">>, [{keys, atom}]).
-#{a => 1}
-
-3> glazer_yaml:decode(<<"a: yes\n">>, [yaml_1_1_bools]).
-#{<<"a">> => true}
-```
-
-### [YAML encode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `use_nil` | Treat the atom `nil` as YAML `null` |
-| `{null, Atom}` | Treat `Atom` as YAML `null` |
-
-```erlang
-1> glazer_yaml:encode(#{<<"a">> => nil}, [use_nil]).
-<<"a: null\n">>
-```
-
-### [API](#table-of-contents)
-
-All functions below are in `glazer_yaml`.
-
-| Function | Description |
-|---|---|
-| `decode/1`, `decode/2` | Decode a YAML binary or iolist to an Erlang term |
-| `try_decode/1`, `try_decode/2` | Decode YAML, returning `{ok, Term}` or `{error, Msg}` instead of raising |
-| `encode/1`, `encode/2` | Encode an Erlang term to a YAML binary in block style; raises `{encode_error, {Msg, Term}}` on failure |
-| `read_file/1`, `read_file/2` | Read a file and decode its contents as YAML |
-| `write_file/2`, `write_file/3` | Encode a term to YAML and write it to a file |
-
-### [Benchmarking YAML](#table-of-contents)
-
-```sh
-$ PARALLEL=2 make bench-yaml
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
-
-(numbers in µs)
-YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
-                decode   encode     decode   encode     decode   encode
--------------------------------------------------------------------------
-glazer            24.6      8.2       18.7      4.8        2.4      1.2
-yaml_rustler     136.5      n/a       83.1      n/a       13.3      n/a
-fast_yaml        169.2     72.9       96.4     36.8       18.3      7.5
-yamerl          1545.3      n/a     1176.9      n/a      585.4      n/a
-ymlr               n/a     50.1        n/a     50.1        n/a      5.3
 ```
 
 ## [CSV](#table-of-contents)
 
-### [Usage](#table-of-contents)
-
-`decode/1,2` decodes an RFC 4180 CSV document to `#{headers => nil|[...],
-data => Rows}`, where `Rows` is a list of rows, each row a list of binary
-fields by default:
-
-**Erlang**
-
-```erlang
-1> glazer_csv:decode(<<"name,age\nAlice,30\nBob,25\n">>).
-#{headers => nil,
-  data    => [[<<"name">>,<<"age">>],[<<"Alice">>,<<"30">>],[<<"Bob">>,<<"25">>]]}
-
-2> glazer_csv:encode([[<<"name">>, <<"age">>], [<<"Alice">>, 30]]).
-<<"name,age\r\nAlice,30\r\n">>
-```
-
-**Elixir**
-
-```elixir
-iex(1)> Glazer.CSV.decode!("name,age\nAlice,30\nBob,25\n")
-%{data: [["name", "age"], ["Alice", "30"], ["Bob", "25"]], headers: nil}
-
-iex(2)> Glazer.CSV.encode!([["name", "age"], ["Alice", "30"], ["Bob", "25"]])
-"name,age\r\nAlice,30\r\nBob,25\r\n"
-```
-
-With the `headers` option, the first row is captured as column names in
-`headers` and each subsequent row decodes to a map when combined with
-`{return, map}`; `encode/2` with `headers` does the reverse, deriving the
-header row from the first map's keys:
+CSV decoding and encoding, with headers, typed fields and streaming. The full
+reference is in [guides/csv.md](guides/csv.md).
 
 **Erlang**
 
@@ -842,241 +240,23 @@ header row from the first map's keys:
 1> glazer_csv:decode(<<"name,age\nAlice,30\n">>, [headers, {return, map}]).
 #{headers => [<<"name">>,<<"age">>],
   data    => [#{<<"name">> => <<"Alice">>, <<"age">> => <<"30">>}]}
-
-2> glazer_csv:encode([#{<<"name">> => <<"Alice">>, <<"age">> => 30}], [headers]).
-<<"age,name\r\n30,Alice\r\n">>
 ```
 
 **Elixir**
 
 ```elixir
-iex(1)> Glazer.CSV.decode!("name,age\nAlice,30\n", [:headers, return: :map])
-%{data: [%{"age" => "30", "name" => "Alice"}], headers: ["name", "age"]}
-
-iex(2)> Glazer.CSV.encode!([%{"name" => "Alice", "age" => "30"}], [:headers])
-"age,name\r\n30,Alice\r\n"
+iex> Glazer.CSV.decode!("name,age\nAlice,30\n", [:headers, {:return, :map}])
+%{headers: ["name", "age"], data: [%{"name" => "Alice", "age" => "30"}]}
 ```
 
-Fields containing the delimiter, a double quote, or a line break are
-quoted automatically on encode (with embedded quotes doubled), and
-unquoted on decode. The delimiter defaults to `,` and can be changed via
-`{delimiter, Char}`; the encoded line ending defaults to `\r\n` per
-RFC 4180 and can be changed to `\n` via `{line_ending, lf}`.
+## [JSON Schema validation](#table-of-contents)
 
-### [Streaming](#table-of-contents)
-
-For input that arrives in chunks — e.g. reading a large document
-incrementally, or consuming CSV from a
-socket or file — `decode_start/3` provides a small stateful
-wrapper that buffers partial input and decodes each CSV record as soon
-as it's complete, without re-parsing bytes you've already seen.
-`decode_continue/2` returns `{Value, Acc, Rest::binary()}` if a `Value` is
-complete and parsed, or `{continue, State}` if the value cannot be parsed given
-the available data. Once the input is exhausted, call `stream_eof/1` to flush
-any trailing bare scalar (numbers, strings, etc. have no closing
-delimiter of their own) and surface an error if the buffer holds an
-incomplete value:
-
-```erlang
-1> {[<<"a">>,<<"b">>], ok, Bin1} = glazer_csv:decode_start(~"a,b\n1,2\n3,", ok, []).
-%% Bin = <<"1,2\n3,">>
-2> {[<<"1">>,<<"2">>], ok, Bin2} = glazer_csv:decode_start(Bin1, ok, []).
-%% Bin = <<"3,">>
-3> {continue, State} = glazer_csv:decode_start(Bin2, ok, []).
-4> glazer_csv:decode_continue(~"4\n", State).
-{[<<"3">>,<<"4">>],ok,<<>>}
-```
-
-`glazer_csv:decode_start/3` accepts the same options as `decode/2` (e.g.
-`{keys, atom}`, `use_nil`) and applies them to every decoded value.
-
-### [CSV decode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `{delimiter, Char}` | Field delimiter (default `$,`) |
-| `headers` | Treat the first row as column names (shorthand for `{headers, binary}`) |
-| `{headers, [Name, ...]}` | Use the given list of atoms or binaries as column names; the first data row is **not** consumed as a header |
-| `{headers, binary}` | First row is binary column names (same as bare `headers`) |
-| `{headers, string}` | Alias for `{headers, binary}` |
-| `{headers, atom}` | First row → atom column names (via `binary_to_atom/2`-equivalent) |
-| `{headers, existing_atom}` | First row → existing-atom column names, falling back to binaries for unknown atoms |
-| `{headers, charlist}` | First row → column names as lists of Unicode codepoints |
-| `{return, list}` | Data rows are lists of field values (default) |
-| `{return, tuple}` | Data rows are tuples of field values |
-| `{return, map}` | Data rows are maps keyed by column names; requires `headers` or `{headers, ...}`. Raises `duplicate_header` on duplicate column names |
-| `{fields, Specs}` | Convert each column's field from a binary, positionally — see [Field type conversion](#field-type-conversion) |
-| `{skip, N}` | Skip the first `N` data rows (after any header row) |
-| `{skip, {From, To}}` | Process only data rows `From..To` (1-based inclusive); equivalent to `{skip, From-1}` plus `{limit, To-From+1}` |
-| `{limit, N}` | Process at most `N` data rows (after skipping) |
-| `{null, Atom}` | Use `Atom` as the value produced by `on_failure => null` (default `null`) |
-| `copy_strings` | Always allocate a fresh binary for each decoded field, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](#performance-optimization-details)) |
-
-### [Field type conversion](#table-of-contents)
-
-The `{fields, Specs}` decode option converts each column's field from a
-binary to the given Erlang type. `Specs` is a list applied positionally —
-the Nth spec applies to the Nth column, regardless of whether `headers` is
-set. Columns beyond the end of `Specs` are left as binaries.
-
-```erlang
-1> glazer_csv:decode(<<"name,age,active,joined\nAlice,30,true,2024-01-15T10:30:00Z\n">>,
-..                    [headers, {fields, [binary, integer, boolean,
-..                                         {datetime, <<"%Y-%m-%dT%H:%M:%SZ">>}]}]).
-[#{<<"name">> => <<"Alice">>, <<"age">> => 30, <<"active">> => true,
-   <<"joined">> => 1705314600}]
-```
-
-Each element of `Specs` is either a `Type` directly, or a map
-`#{type => Type, default => Term, on_failure => OnFailure}` for more
-control (see below). `Type` is one of:
-
-| Type | Description |
-|---|---|
-| `integer` | Parse the field as an integer |
-| `{float, Precision}` | Parse the field as a float, rounded to `Precision` decimal digits |
-| `boolean` | Parse `"true"`/`"false"` (any case) as `true`/`false` |
-| `{datetime, InputFormat}` | Parse with a `strptime`-like format string and convert to Unix epoch seconds (UTC) |
-| `binary` | Leave the field as a binary (default) |
-| `charlist` | Convert the field to a list of Unicode code points |
-| `existing_atom` | Convert to an existing atom, falling back to a binary if no such atom exists |
-| `{atom, ExistingAtoms}` | Convert to an atom only if the field's text matches (and exists as) one of `ExistingAtoms`, falling back to a binary otherwise |
-
-`InputFormat` supports the directives `%Y %y %m %d %H %M %S %f %z` (and
-`%%` for a literal `%`); any other character must match the input
-literally, and a space matches a run of one-or-more whitespace characters.
-`%z` accepts `Z`, `+HHMM`, or `+HH:MM`-style offsets; fractional seconds
-(`%f`) are parsed but discarded. The result is always in UTC.
-
-#### [`default` and `on_failure`](#table-of-contents)
-
-Using the map form `#{type => Type, default => Term, on_failure => OnFailure}`:
-
-- `default` (when given) is used in place of the converted value whenever
-  the raw CSV field is empty.
-- `on_failure` controls what happens when a *non-empty* field fails to
-  convert to `Type` (default `binary`):
-
-  | `on_failure` | Behavior |
-  |---|---|
-  | `binary` | Leave the field as the original binary (default) |
-  | `raise` | Raise `{invalid_field_value, Row, Column}` (1-based), or return `{error, Reason}` from `try_decode/2` |
-  | `default` | Use the spec's `default` value (falls back to `binary` if no `default` is given) |
-  | `null` | Use the configured null term: `{null, Atom}` if given, otherwise the library-wide null term (see [Null term configuration](#null-term-configuration) and `{null, Atom}` below) |
-
-```erlang
-1> glazer_csv:decode(<<"1\nbad\n">>,
-..                    [{fields, [#{type => integer, on_failure => raise}]}]).
-** exception error: {invalid_field_value,2,1}
-
-2> glazer_csv:decode(<<"1\nbad\n">>,
-..                    [{fields, [#{type => integer, default => 0, on_failure => default}]}]).
-[[1],[0]]
-
-3> glazer_csv:decode(<<"1\nbad\n">>,
-..                    [{null, nil},
-..                     {fields, [#{type => integer, on_failure => null}]}]).
-[[1],[nil]]
-```
-
-`{null, Atom}` only affects `on_failure => null` for that call. Without
-it, `on_failure => null` falls back to the library-wide null term — `null`
-by default, or whatever atom is configured via the
-[Null term configuration](#null-term-configuration)
-application env var (`{glazer, [{null, Atom}]}`).
-
-### [CSV Encode options](#table-of-contents)
-
-| Option | Description |
-|---|---|
-| `{delimiter, Char}` | Field delimiter (default `$,`) |
-| `headers` | Input is a list of maps; the first map's keys become the header row, and subsequent maps are encoded as rows in that column order (missing keys produce empty fields) |
-| `{headers, [Name, ...]}` | Input is a list of maps; uses the given list of atoms or binaries (matching the maps' key type) as the column order and header row, instead of deriving it from the first map's keys (missing keys produce empty fields) |
-| `{line_ending, lf \| crlf}` | Line terminator (default `crlf`, per RFC 4180) |
-
-### [API](#table-of-contents)
-
-All functions below are in `glazer_csv`.
-
-| Function | Description |
-|---|---|
-| `decode/1`, `decode/2` | Decode a CSV binary or iolist to a list of rows (or maps with `headers`) |
-| `try_decode/1`, `try_decode/2` | Decode CSV, returning `{ok, Rows}` or `{error, Reason}` instead of raising |
-| `encode/1`, `encode/2` | Encode a list of rows (or maps with `headers`) to a CSV binary; raises `{encode_error, {Msg, Term}}` on failure |
-| `read_file/1`, `read_file/2` | Read a file and decode its contents as CSV |
-| `write_file/2`, `write_file/3` | Encode rows to CSV and write them to a file |
-| `stream_decoder/0`, `stream_decoder/1` | Create an incremental CSV decode state for chunked input |
-| `stream_feed/2` | Feed a chunk to a CSV stream decoder, returning completed rows |
-| `stream_eof/1` | Flush a CSV stream decoder at end-of-input |
-
-### [Benchmarking CSV](#table-of-contents)
-
-```sh
-$ PARALLEL=2 make bench-csv
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
-
-(numbers in µs)
-CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
-                decode     encode       decode     encode       decode     encode
------------------------------------------------------------------------------------
-glazer             8.8        5.0        917.9      428.4      26411.7     9596.2
-rusty_csv         34.3        n/a       1167.0        n/a      33518.3        n/a
-nimble_csv        35.5       34.6       6042.9     3355.5     180571.7   110273.4
-csv               69.6      219.8       5874.3    14229.1     325996.6   521524.7
-erl_csv           16.7       21.3       1528.7     1574.8      55473.9    71353.1
-```
-
-#### [glazer vs rusty_csv](#table-of-contents)
-
-> Note: [`rusty_csv`](https://hex.pm/packages/rusty_csv) is a Rust NIF (via
-`rustler`) and the closest performance comparison for glazer's CSV
-decoder — both use SIMD (AVX2/SSE2) to scan for delimiters/quotes and
-return zero-copy sub-binaries for unescaped fields. It's excluded from the
-default `make bench-csv` table above because it can't be `deps.get`'d
-alongside `yaml_rustler` (incompatible `rustler` version constraints — see
-the `BENCH_SET` note in the Makefile); run it explicitly with
-`make bench-csv BENCH_SET=csv`:
->
-```sh
-$ PARALLEL=2 make bench-csv BENCH_SET=csv
-```
->
-> The benchmarking table above has the merged results of running with `BENCH_SET=csv`
-and without.
->
-> (`rusty_csv` has no CSV encoder, so its encode column is `n/a`.)
-
-Decode is within a few percent either way across file sizes — small-input
-overhead favors glazer (no per-call Rust/NIF marshalling layer beyond
-`rustler`'s own), and medium/large decode is close to a tie, with the
-remainder being run-to-run noise rather than a structural gap. Profiling
-glazer's large-file decode (3.4 MB / 25K rows / 150K fields) by
-incrementally stubbing out parts of the pipeline shows where the time
-actually goes:
-
-| Stage | Share of decode time |
-|---|---|
-| SIMD scan (find delimiters/quotes) | ~7% |
-| `enif_make_sub_binary` per field | ~31% |
-| `enif_make_list_from_array` per row | ~26% |
-| Remaining bookkeeping (field/row vectors, outer list) | ~34% |
-
-Scanning is a small fraction of the total; the dominant cost is the NIF
-term-construction calls inherent to the `[[field, ...], ...]` row-of-lists
-shape both libraries return — `rusty_csv` pays the same `enif_make_sub_binary`
-and list-construction costs per field/row, just batched at the end of a
-two-phase scan-then-extract design instead of interleaved during scanning
-like glazer. There's no scanning-strategy change available that would close
-the remaining gap without changing the output term shape itself (e.g.
-`{return, tuple}`, which avoids rebuilding a list per row).
-
-## JSON Schema validation
-
-Glazer validates terms against [JSON Schema 2020-12](https://json-schema.org/specification). Compile a schema once, then validate as many values as you like against it.
-
-See the [JSON Schema validation guide](guides/json-validation.md) for keywords, formats, error shapes, options and limits.
+Compile and validate JSON and YAML documents against JSON Schema 2020-12, with
+a schema registry. The full guide is in [guides/json-validation.md](guides/json-validation.md).
 
 ### Quick start
+
+**Erlang**
 
 ```erlang
 Schema = #{
@@ -1093,115 +273,37 @@ ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann"}),
   glazer_schema:validate(Compiled, #{~"name" => ~""}).
 ```
 
-### Reading a schema from a file
+**Elixir**
 
-`glazer_schema:compile_schema_file/1,2` reads a schema file, decodes it and compiles it with the same options as `compile_schema/2`. The format comes from the extension: `.json` is decoded as JSON, and `.yaml` or `.yml` as YAML. Here is `schemas/user.json`:
-
-```json
-{
-  "$id": "https://example.com/user.json",
-  "type": "object",
-  "required": ["name"],
-  "properties": {
-    "name": {"type": "string", "minLength": 1}
-  }
+```elixir
+schema = %{
+  "type"       => "object",
+  "required"   => ["name"],
+  "properties" => %{"name" => %{"type" => "string", "minLength" => 1}}
 }
+
+{:ok, compiled} = Glazer.Schema.compile(schema)
+:ok = Glazer.Schema.validate(compiled, %{"name" => "Ann"})
+{:error, {:path, ["name"], {:string_too_short, ""}}} = Glazer.Schema.validate(compiled, %{"name" => ""})
 ```
 
-```erlang
-{ok, Compiled} = glazer_schema:compile_schema_file("schemas/user.json"),
-ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann"}),
-
-%% The $id names the schema in the registry, so it can also be used by name
-ok = glazer_schema:validate(~"https://example.com/user.json", #{~"name" => ~"Ann"}),
-
-%% Errors: the file cannot be read, or its contents are not JSON
-{error, {read_failed, "missing.json", enoent}} = glazer_schema:compile_schema_file("missing.json"),
-{error, {invalid_json, "schemas/bad.json", _}} = glazer_schema:compile_schema_file("schemas/bad.json"),
-
-%% The same schema as YAML: the extension selects the decoder
-{ok, _} = glazer_schema:compile_schema_file("schemas/user.yaml").
-```
-
-### Schema registry
-
-Compiled schemas are registered by default. A schema with a top-level `$id` is registered under that `$id`, so other schemas can `$ref` it and it can be validated by name:
-
-```erlang
-{ok, _} = glazer_schema:compile_schema(#{~"$id" => ~"https://example.com/user.json",
-                                       ~"type" => ~"object"}),
-ok = glazer_schema:validate(~"https://example.com/user.json", #{}).
-```
-
-See the guide for `glazer_schema`, the `name` and `registry` options, and the registry's storage and limits.
-
-### Standards compliance
-
-Schema validation targets [JSON Schema 2020-12](https://json-schema.org/specification): the core, applicator, validation and unevaluated vocabularies. Compliance is checked against the official [JSON-Schema-Test-Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite), pinned at commit `38dea93`. Every in-scope test passes (709 of 709): groups whose `compatibility` covers 2020-12 and that use no legacy keywords. Run it with `make test-jsts`.
-
-Out of scope, and so not claimed: other drafts (draft 3 to 2019-09 keyword forms), the suite's `optional/` and proposal groups, decimals with more precision than a double, and ECMAScript-only regex syntax. Integers of any size are exact (see the bignum note under Deviations). Groups excluded for an upstream issue (json-schema-org/JSON-Schema-Test-Suite#1277) are listed in `test/json_schema_suite.es`.
-
-#### Formats
-
-`format` is asserted by default (see [deviations](#deviations) below).
-
-| `format` | Standard | Notes |
-|---|---|---|
-| `date-time` | RFC 3339 §5.6 | Leap second `23:59:60` accepted only where it is a valid UTC instant. RFC 9557 bracketed suffixes accepted (an extension). |
-| `date` | RFC 3339 §5.6 (`full-date`) | Valid day for the month, leap years included |
-| `time` | RFC 3339 §5.6 (`full-time`) | Leap seconds rejected |
-| `duration` | ISO 8601 as profiled by JSON Schema | Contiguous unit run; weeks (`P2W`) accepted |
-| `email` | RFC 5321 (`Mailbox`, ASCII) | Quoted local parts and IP-literal domains |
-| `idn-email` | RFC 6531 | UTF-8 local part; domain checked as `idn-hostname` |
-| `hostname` | RFC 1123 | 1–63 octets per label, 253 in total |
-| `idn-hostname` | RFC 5890, 5891, 5892, 5893 (IDNA2008); RFC 3492 (Punycode); UTS #46 mapping; UAX #15 (NFC) | Mapping, NFC, label rules (RFC 5892 appendix A), and the RFC 5893 bidi rule across the domain |
-| `ipv4` | RFC 2673 (dotted quad) | Octets as RFC 3986 `dec-octet`: no leading zeros |
-| `ipv6` | RFC 4291 §2.2 | Text forms, including an embedded IPv4 tail |
-| `uri` | RFC 3986 | Absolute URI |
-| `uri-reference` | RFC 3986 | Absolute or relative reference |
-| `iri` | RFC 3987 | Absolute IRI |
-| `iri-reference` | RFC 3987 | IRI or relative reference |
-| `uuid` | RFC 9562 (canonical form, as in RFC 4122) | 8-4-4-4-12 hexadecimal, case-insensitive |
-| `json-pointer` | RFC 6901 | |
-| `relative-json-pointer` | draft-handrews-relative-json-pointer (not an RFC) | |
-| `uri-template` | RFC 6570 | |
-| `regex` | ECMA-262 syntax | Valid when it compiles with the engine in use (see below) |
-
-Unknown format names pass, as the specification requires for annotations. Custom formats can be defined with the `formats` compile option (`#{Name => Pattern}`, matched as a regular expression). This is an extension; it is not part of any standard.
-
-#### Regular expressions
-
-`pattern`, `patternProperties` and the `regex` format use ECMA-262 syntax, as 2020-12 requires. The matching engine is PCRE2 when `libpcre2-8` is available, otherwise [SRELL](https://github.com/upa-url/srell); `glazer:info/0` reports which one (`regex_engine`). Both are close to ECMA-262 but are not the same implementation: check unusual patterns with the engine you deploy.
-
-#### Deviations
-
-These are the places where behaviour differs from the specification on purpose or where the specification leaves a choice:
-
-- **`format` is asserted by default.** 2020-12 treats `format` as an annotation by default. Glazer enforces it; pass `{format_assertion, false}` to keep the specification's default.
-- **`date-time` accepts RFC 9557 suffixes**, which RFC 3339 does not define.
-- **`$ref` never fetches documents.** References resolve from the schema itself, from the `refs` option, or from the [schema registry](#schema-registry). Unknown references fail at compile time.
-- **Decimals beyond double precision.** Integers of any size are compared exactly, but decimal numbers in JSON text are decoded as doubles, so digits beyond double precision are not compared.
-- **Floating-point `multipleOf`** uses a relative tolerance of 1e-9 on the quotient, so a value slightly off a multiple can be accepted. An overflowing quotient is tested exactly instead.
-- **Regex engine failures are errors, not mismatches.** They are reported as `regex_error` with the engine's code. SRELL reports only exceptions, so its code is `-1`. The regex engine is PCRE2 or SRELL, which are close to ECMA-262 but not identical.
-- **`timeout_ms`** is not part of any standard. When it stops a validation early, the result is an error, never `ok`.
-- **The schema registry** is not part of any standard.
+Decoded JSON uses `nil` for `null`, so set `config :glazer, null: nil` to validate such data (see the moduledoc).
 
 ## [Big integers](#table-of-contents)
 
 JSON/YAML/CSV numbers that don't fit into a 64-bit integer are decoded as
 Erlang big integers (and big integers are encoded back to their exact
-decimal representation).
+decimal representation). The conversion routines are also available on their own.
 
-### [API](#table-of-contents)
+### API
 
-| Function | Description |
-|---|---|
-| `encode_integer/1` | Encode an integer to its JSON decimal-string representation |
-| `decode_integer/1` | Decode a JSON number string to an Erlang integer, raising on invalid input |
-| `try_decode_integer/1` | Decode a JSON number string to an Erlang integer, returning `{ok, Int}` or `{error, invalid_number_format}` |
+| Erlang | Elixir | Description |
+|---|---|---|
+| `glazer:encode_integer/1` | `Glazer.encode_integer!/1` | Encode an integer to its decimal string (raises `ArgumentError` in Elixir for a non-integer). |
+| `glazer:decode_integer/1` | `Glazer.decode_integer!/1` | Decode a decimal string to an integer, raising on invalid input (`Glazer.ParseError` in Elixir). |
+| `glazer:try_decode_integer/1` | `Glazer.decode_integer/1` | Decode a decimal string, returning `{ok, Int}` or `{error, invalid_number_format}` (`{:ok, int}` or `{:error, :invalid_number_format}` in Elixir). |
 
-`encode_integer/1` and `decode_integer/1`/`try_decode_integer/1` expose the
-same conversion routines directly, independent of JSON/YAML/CSV parsing/encoding:
+**Erlang**
 
 ```erlang
 1> glazer:encode_integer(123456789012345678901234567890).
@@ -1214,12 +316,25 @@ same conversion routines directly, independent of JSON/YAML/CSV parsing/encoding
 {error, invalid_number_format}
 ```
 
-See the module's documentation (`src/glazer.erl`) for full type
+**Elixir**
+
+```elixir
+iex> Glazer.encode_integer!(123456789012345678901234567890)
+"123456789012345678901234567890"
+
+iex> Glazer.decode_integer!("123456789012345678901234567890")
+123456789012345678901234567890
+
+iex> Glazer.decode_integer("not a number")
+{:error, :invalid_number_format}
+```
+
+See the module's documentation (`src/glazer.erl`, and `lib/glazer.ex` for Elixir) for full type
 specs and details.
 
 ## [Limitations](#table-of-contents)
 
-### [Scope](#table-of-contents)
+### Scope
 
 `glazer` targets formats that map naturally onto a tree of Erlang
 maps/lists/scalars — JSON and YAML both fit this model directly, so a
@@ -1233,7 +348,7 @@ that are already trees of scalars and collections. Erlang's standard
 library already ships `xmerl` for XML; there's little value in
 duplicating it here with a different, opinionated term shape.
 
-### [Nesting depth](#table-of-contents)
+### Nesting depth
 
 The JSON and YAML decoders both cap recursion at **256 levels** of nesting
 (arrays/objects for JSON; mappings/sequences for YAML). Inputs that exceed
@@ -1250,123 +365,13 @@ deliberately not configurable, because the limit exists to protect the
 Erlang VM process (the NIF runs on the scheduler thread) from runaway
 recursive descent on adversarial input.
 
-## [Performance Optimization Details](#table-of-contents)
+### Schema validation
 
-`glazer` is faster than the majority of competitors on both encoding and
-decoding in all data formats - JSON/YAML/CSV. On JSON decoding it is comparable
-to `torque` (Rust `sonic-rs` NIF), though on large payload `torque` performs
-around 20% better. The performance depends on the OS and hardware architecture -
-Intel and ARM produce different results. Both `torque` and `glazer` sit well
-ahead of the remaining contenders (`simdjsone`, `jiffy`, and the pure-Elixir
-libraries `jason`, `thoas`, `euneus`, and OTP's built-in `json`). On CSV it's
-close competitor is also Rust-backended `rusty_csv` project, though that project
-is missing encoding implementation. Here are some observations about `glazer`'s
-design:
+The known gaps of schema validation (decimals beyond double precision, float `multipleOf`
+tolerance, and regex engine differences) are in
+[guides/json-validation.md](guides/json-validation.md#limits-known-issues-and-what-is-not-supported).
 
-- **No tuple-of-binaries intermediate representation.** `glazer` decodes
-  straight to native Erlang terms (maps, lists, binaries, numbers) and
-  encodes straight from them, in a single pass, with no generic JSON-tree
-  staging step — minimizing allocation and copying on both the decode and
-  encode paths.
-- **Big integer support.** numbers that overflow 64 bits decode to
-  Erlang bignums (and encode back to their exact decimal form) — see
-  [Big integers](#big-integers).
-- **No external C++ dependencies.** The NIF is fully self-contained —
-  no CMake, no vendored third-party library to pull at build time, so it's
-  easier to use as a dependency since it doesn't have reliance on other
-  toolchains such as `sonic-rs` by other libraries that use Rust.
-
-A few implementation techniques in `c_src/glazer_nif.cpp` account for most
-of the gap over the slower contenders:
-
-- **Single-pass, zero-copy decode/encode.** As noted above, there's no
-  intermediate generic JSON tree — the decoder builds Erlang terms directly
-  from the input bytes and the encoder writes JSON bytes directly from
-  Erlang terms. This removes a whole staging allocate-and-copy pass that
-  tree-based decoders pay for.
-
-- **Sub-binary string/field values (zero allocation on decode).** Shared
-  across the JSON, YAML, and CSV decoders: unescaped scalars are returned as
-  `enif_make_sub_binary` terms — a slice of the original input binary —
-  rather than newly allocated copies. No `memcpy` or heap allocation occurs
-  for the common case (JSON strings with no `\` escapes, CSV fields without
-  embedded quotes, single-line YAML plain scalars). Only values that need
-  unescaping or reassembly (escaped JSON strings, quoted/folded YAML
-  scalars, CSV fields with doubled quotes) pay the copy cost. The
-  `copy_strings` decode option opts back into copying for every value when
-  decoded results are long-lived and the input is large (keeping one
-  sub-binary alive would otherwise pin the entire input buffer in memory).
-
-- **Inline, growable output buffer (`OutBuf`).** Encoding writes into a
-  4 KB stack-allocated buffer first; only documents that exceed that spill
-  to the heap, growing geometrically via `malloc`/`realloc` (the latter
-  resizes in place when possible, avoiding a copy on every growth — a
-  plain `new[]`/`delete[]` doubling strategy can't do this).
-
-- **Pre-reserved worst-case output, raw-pointer inner loop.** Before
-  encoding any string, `json_escape_string` and `emit_double_quoted`
-  (YAML) call `out.ensure(len * 6 + 2)` once — the absolute worst case
-  of six output bytes per input byte (`\uXXXX`) plus two quote characters.
-  After that single reservation the inner loop writes through a raw `char*`
-  pointer with no further bounds checks or `ensure()` calls. This removes
-  a branch and a potential realloc from every character in the hot path.
-
-- **Dense escape table (`ESCAPE_TAB`).** Instead of a per-character
-  `switch` statement, a 256-entry `constexpr` table maps each byte to an
-  `{len, seq[7]}` struct. Emitting an escape sequence is a single indexed
-  table load followed by one `memcpy(dst, e.seq, e.len)` — branch-free
-  and inlined by the compiler. The same table is shared by the JSON and
-  YAML encoders via `glazer_common.hpp`.
-
-- **Key cache for repeated object keys (`KeyCache`).** Real-world JSON
-  documents reuse the same small set of key strings heavily (e.g. a
-  Twitter feed has ~13K key occurrences across only ~94 distinct keys).
-  `KeyCache` is an open-addressed hash table (power-of-two size, linear
-  probing, FNV-1a hash with a precomputed-hash fast-reject before the
-  `memcmp`) that lets a repeated key reuse the same already-built
-  `ERL_NIF_TERM` binary instead of paying `enif_make_new_binary` + `memcpy`
-  again. It's only engaged for inputs above a size threshold
-  (`KEY_CACHE_MIN_SIZE`), since small payloads (RPC-sized messages) rarely
-  repeat keys enough to amortize the lookup cost.
-
-- **Epoch-counter lazy clearing.** Both `KeyCache` and the scratch buffers
-  it touches need to start "empty" on every decode call, but
-  zero-initializing a multi-KB table for every single call — including
-  tiny documents that never populate it — would cost more than the cache
-  saves. Instead each cache entry carries a generation/`epoch` tag; a slot
-  is considered live only if its `epoch` matches the cache's current
-  `m_epoch` (itself seeded from a process-wide monotonically-increasing
-  counter, so leftover garbage from a prior stack frame can never
-  coincidentally look live). This makes cache construction effectively
-  free, regardless of table size.
-
-- **SIMD string scanning (NEON / AVX2 / SSE2).** A shared `find_escape_pos`
-  function in `glazer_common.hpp` scans for `"`, `\`, and control
-  characters (`c < 0x20`) using an architecture cascade: AArch64 NEON
-  (16 bytes/iter), x86 AVX2 (32 bytes/iter), SSE2 (16 bytes/iter), then a
-  byte-table scalar fallback. Control-character detection uses a bias trick —
-  XOR with `0x80` shifts the unsigned `< 0x20` range into a region where a
-  single signed `vclt`/`cmpgt` instruction covers all 32 values at once,
-  avoiding 32 separate equality checks. The same scanner is used by both
-  the JSON and YAML string encoders. Separate SIMD scanners handle
-  format-specific stop sets: `find_break` (YAML line-break scanner),
-  `find_dq_special` (YAML `"` / `\` / LF / CR), `find_field_end` (CSV
-  `delimiter | LF | CR`), and `find_csv_special` (CSV quoting check) — all
-  with NEON, AVX2, and SSE2 paths.
-
-- **SWAR whitespace skipping.** `skip_ws` checks the next byte before
-  paying for any wider load, then — for runs of whitespace — scans 8 bytes
-  at a time using branch-free bit-twiddling ("SIMD within a register") to
-  find the first non-whitespace byte. Minified JSON (the overwhelmingly
-  common case) has little or no structural whitespace, so the single-byte
-  fast path dominates; the 8-byte path handles pretty-printed inputs.
-
-- **Fast integer formatting.** Integers are written to JSON using a
-  lookup-table-based digit-pair algorithm (avoiding division for small
-  values) with a vendored `lltoa` fallback for larger numbers — faster
-  than routing every integer through `snprintf`.
-
-## [License](#table-of-contents)
+## License
 
 Glazer uses [MIT License](LICENSE). You can use the source code freely
 in any project, including commercial applications, as long as you give
