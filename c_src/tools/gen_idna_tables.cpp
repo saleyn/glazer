@@ -309,21 +309,38 @@ int main() {
   }
   delete idna;
 
-  std::vector<uint32_t> useq, uoff;
+  // Consecutive code points with the same DISALLOWED or IGNORED status share
+  // one entry, start..end (most of the table is unassigned code points). A
+  // MAPPED entry covers one code point, since each has its own sequence.
+  // Code points outside every entry are VALID and unchanged.
+  struct Range { uint32_t start, end, type; std::vector<uint32_t> seq; };
+  std::vector<Range> ranges;
   for (auto& e : uts) {
+    if (e.type != UTS_MAPPED && !ranges.empty() && ranges.back().type == e.type &&
+        ranges.back().end + 1 == e.cp) {
+      ranges.back().end = e.cp;
+      continue;
+    }
+    ranges.push_back({e.cp, e.cp, e.type, e.seq});
+  }
+
+  std::vector<uint32_t> useq, uoff;
+  for (auto& r : ranges) {
     uoff.push_back(static_cast<uint32_t>(useq.size()));
-    useq.insert(useq.end(), e.seq.begin(), e.seq.end());
+    useq.insert(useq.end(), r.seq.begin(), r.seq.end());
   }
   uoff.push_back(static_cast<uint32_t>(useq.size()));
-  std::printf("inline constexpr uint32_t kUts46Cp[] = {\n");
-  for (auto& e : uts) std::printf("  0x%X,\n", e.cp);
+  std::printf("inline constexpr uint32_t kUts46Start[] = {\n");
+  for (auto& r : ranges) std::printf("  0x%X,\n", r.start);
+  std::printf("};\n\ninline constexpr uint32_t kUts46End[] = {\n");
+  for (auto& r : ranges) std::printf("  0x%X,\n", r.end);
   std::printf("};\n\ninline constexpr uint32_t kUts46Type[] = {\n");
-  for (auto& e : uts) std::printf("  %u,\n", e.type);
+  for (auto& r : ranges) std::printf("  %u,\n", r.type);
   std::printf("};\n\ninline constexpr uint32_t kUts46Off[] = {\n");
   for (auto o : uoff) std::printf("  %u,\n", o);
   std::printf("};\n\ninline constexpr uint32_t kUts46Seq[] = {\n");
   for (auto c : useq) std::printf("  0x%X,\n", c);
-  std::printf("};\n\ninline constexpr uint32_t kUts46Count = %zu;\n\n", uts.size());
+  std::printf("};\n\ninline constexpr uint32_t kUts46Count = %zu;\n\n", ranges.size());
 
   std::printf("} // namespace glz::idna\n");
   std::fprintf(stderr, "ccc runs: %zu, decompositions: %zu, composition pairs: %zu, uts46 entries: %zu\n",

@@ -61,7 +61,7 @@ register(Name, Schema) ->
   register(Name, Schema, []).
 
 -doc """
-Compile `Schema` with `CompileOpts` (see `glazer_json:compile_schema/2`) and
+Compile `Schema` with `CompileOpts` (see `glazer_schema:compile_schema/2`) and
 store it under `Name`.
 
 Returns `{ok, Version}`:
@@ -72,7 +72,7 @@ Returns `{ok, Version}`:
   start at 1 and increase by 1 on each change of the same name).
 
 On a compile error nothing is stored, and `{error, Message}` is returned with
-the message from the compiler, as in `glazer_json:compile_schema/1`.
+the message from the compiler, as in `glazer_schema:compile_schema/1`.
 """.
 -spec register(name(), map() | boolean(), list()) -> {ok, pos_integer()} | {error, binary()}.
 register(Name, Schema, CompileOpts) ->
@@ -193,7 +193,7 @@ unregister(Name) ->
 
 -doc """
 Fetch the compiled schema registered under `Name`, as `{schema, Resource}`
-(the form `glazer_json:validate/2` takes). This is a single lookup and copies
+(the form `glazer_schema:validate/2` takes). This is a single lookup and copies
 no schema data.
 """.
 -spec fetch(name()) -> {ok, {schema, reference()}} | {error, not_found}.
@@ -271,7 +271,7 @@ resolve_refs(Schema, Options) ->
 -doc """
 Compile `Schema` with `Opts` and return the stored handle, if one exists for
 the same schema and options; otherwise compile it and store it. This is what
-`glazer_json:compile_schema/2` uses for schemas without a `$id`. Interned
+`glazer_schema:compile_schema/2` uses for schemas without a `$id`. Interned
 schemas are keyed by their content and are not part of the name index, so
 `list/0` does not show them.
 
@@ -297,7 +297,7 @@ intern(Schema, Opts0) ->
   end.
 
 -doc """
-Remove every schema stored by `intern/2` (the default `glazer_json:compile_schema`
+Remove every schema stored by `intern/2` (the default `glazer_schema:compile_schema`
 path). Named registrations are not affected. Returns the number removed.
 """.
 -spec clear_interned() -> non_neg_integer().

@@ -454,14 +454,20 @@ inline bool valid_hostname_label(std::string_view label, std::vector<uint32_t>* 
 enum : uint32_t { UTS_MAPPED = 1, UTS_IGNORED = 2, UTS_DISALLOWED = 3 };
 
 // Appends the UTS 46 mapping of cp to out. False when cp is disallowed.
+// Entries are ranges start..end, sorted and non-overlapping; a code point
+// outside every range is valid and unchanged.
 inline bool uts46_map(uint32_t cp, std::vector<uint32_t>& out) {
-  const uint32_t* end = kUts46Cp + kUts46Count;
-  const uint32_t* it = std::lower_bound(kUts46Cp, end, cp);
-  if (it == end || *it != cp) {   // valid: not listed
+  const uint32_t* end = kUts46Start + kUts46Count;
+  const uint32_t* it = std::upper_bound(kUts46Start, end, cp);
+  if (it == kUts46Start) {   // below the first entry: valid
     out.push_back(cp);
     return true;
   }
-  size_t i = static_cast<size_t>(it - kUts46Cp);
+  size_t i = static_cast<size_t>(it - kUts46Start) - 1;
+  if (cp > kUts46End[i]) {   // in a gap between entries: valid
+    out.push_back(cp);
+    return true;
+  }
   switch (kUts46Type[i]) {
     case UTS_IGNORED:
       return true;
