@@ -5,6 +5,8 @@
 //-----------------------------------------------------------------------------
 #pragma once
 
+#include "glazer_utf8.hpp"
+
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -23,6 +25,34 @@
 #endif
 
 namespace glz {
+
+// Switch key for a name: its first 8 bytes packed into an integer. Names that
+// share their first 8 bytes share a key, so a case must still compare the full
+// name when it matters (see the keyword and format dispatch).
+// The bytes after the first 8, which str_to_u64 does not cover. Two names with
+// equal keys are equal when their tails are equal too.
+inline constexpr std::string_view str_tail8(std::string_view s) {
+  return s.size() > 8 ? s.substr(8) : std::string_view{};
+}
+
+// For use after a switch on str_to_u64(kw), when kw's key equals that of the
+// literal s: is kw the same name? A literal of at most 8 bytes is fully covered
+// by its key, so kw only has to be no longer. A longer literal also compares the
+// bytes after the first 8.
+template <size_t N>
+bool str_cmp_tail8(std::string_view kw, const char (&s)[N]) {
+  if constexpr (N - 1 <= 8)
+    return kw.size() <= 8;
+  else
+    return str_tail8(kw) == str_tail8(std::string_view(s, N - 1));
+}
+
+inline constexpr uint64_t str_to_u64(std::string_view s) {
+  uint64_t result = 0;
+  for (size_t i = 0; i < 8 && i < s.size(); ++i)
+    result = (result << 8) | static_cast<uint8_t>(s[i]);
+  return result;
+}
 
 // Calculate `a` raised to the power of `b`.
 template <typename T>
@@ -582,43 +612,6 @@ static constexpr auto NEEDS_ESCAPE_TAB = [] {
   return tab;
 }();
 
-// Decode one UTF-8 sequence starting at p (p < end). Returns the code point
-// and advances p past the sequence. On invalid/truncated input, returns the
-// Unicode replacement character (U+FFFD) and advances p by one byte.
-inline uint32_t decode_utf8(const char*& p, const char* end)
-{
-  auto c    = (unsigned char)*p;
-  auto cont = [&](const char* q) {
-    return q < end && ((unsigned char)*q & 0xC0) == 0x80;
-  };
-
-  if (c < 0x80) [[likely]] { ++p; return c; }
-
-  if ((c & 0xE0) == 0xC0 && cont(p+1)) {
-    auto cp = (uint32_t(c & 0x1F) << 6)
-            | (uint32_t((unsigned char)p[1]) & 0x3F);
-    p += 2;
-    return cp >= 0x80 ? cp : 0xFFFD;
-  }
-  if ((c & 0xF0) == 0xE0 && cont(p+1) && cont(p+2)) {
-    auto cp = (uint32_t(c & 0x0F) << 12)
-            | (uint32_t((unsigned char)p[1] & 0x3F) << 6)
-            |  uint32_t((unsigned char)p[2] & 0x3F);
-    p += 3;
-    return (cp >= 0x800 && (cp < 0xD800 || cp > 0xDFFF)) ? cp : 0xFFFD;
-  }
-  if ((c & 0xF8) == 0xF0 && cont(p+1) && cont(p+2) && cont(p+3)) {
-    auto cp = (uint32_t(c & 0x07) << 18)
-            | (uint32_t((unsigned char)p[1] & 0x3F) << 12)
-            | (uint32_t((unsigned char)p[2] & 0x3F) << 6)
-            |  uint32_t((unsigned char)p[3] & 0x3F);
-    p += 4;
-    return (cp >= 0x10000 && cp <= 0x10FFFF) ? cp : 0xFFFD;
-  }
-
-  ++p;
-  return 0xFFFD;
-}
 
 //-----------------------------------------------------------------------------
 // SIMD byte scanner — shared by the JSON, YAML, and CSV modules.

@@ -18,9 +18,9 @@ A **high-performance JSON schema validator** implemented as a C++ NIF for the Gl
 ┌─────────────────────────────────────────────┐
 │         Erlang/Elixir Application           │
 │                                             │
-│  glazer_json:compile_schema/1              │
-│  glazer_json:validate/2,3                  │
-│  glazer_json:validate_term/2,3             │
+│  glazer_schema:compile_schema/1              │
+│  glazer_schema:validate/2,3                  │
+│  glazer_schema:validate_term/2,3             │
 └──────────────────┬──────────────────────────┘
                    │
                    ▼
@@ -250,25 +250,34 @@ mix test test/glazer_json_schema_test.erl -v
 ### Compile Schema
 
 ```erlang
-{ok, {schema, CompiledSchema}} = glazer_json:compile_schema(SchemaMap)
+{ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(SchemaMap)
   | {error, ErrorMsg}
+
+% With options
+{ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(SchemaMap, [
+  {registry, true},                  % default: add to the schema registry
+  {name, <<"user">>},                % registry name, when SchemaMap has no $id
+  {refs, #{Uri => Schema}},          % documents for $ref; override the registry
+  {format_assertion, true}           % default: format is enforced
+])
 ```
 
 **Input**: Map with JSON Schema keywords
-**Output**: Opaque resource for repeated validation
-**Time**: ~1-5ms for typical schemas
+**Output**: Opaque resource for repeated validation. By default the schema is registered: under its top-level `$id` (without any fragment), or, without `$id`, by content (or under `name`). Compiling the same schema again returns the same handle.
+**Time**: ~1-5ms for typical schemas; a registry hit is a lookup
+**Errors**: `{error, Message}`, including a `name` that differs from the `$id`
 
 ### Validate (Against Compiled Schema)
 
 ```erlang
-ok = glazer_json:validate(CompiledSchema, Term)
+ok = glazer_schema:validate(CompiledSchema, Term)
   | {error, {path, [...], reason}}
 
 % With options (fail-fast)
-ok = glazer_json:validate(CompiledSchema, Term, [fail_fast])
+ok = glazer_schema:validate(CompiledSchema, Term, [fail_fast])
 
 % With options (collect all errors)
-{error, [{path, [...], reason}, ...]} = glazer_json:validate(
+{error, [{path, [...], reason}, ...]} = glazer_schema:validate(
   CompiledSchema,
   Term,
   [collect_all_errors, {max_errors, 10}]
@@ -280,15 +289,27 @@ ok = glazer_json:validate(CompiledSchema, Term, [fail_fast])
 - `collect_all_errors` — Collect all errors (up to max_errors)
 - `{max_depth, N}` — Limit recursion depth (default: 128)
 - `{max_errors, N}` — Max errors to collect (default: unlimited)
-- `{timeout_ms, N}` — Abort if validation exceeds N milliseconds
+- `{timeout_ms, N}` — Stop after N milliseconds; the result is `{error, {path, Path, {timeout, N}}}`, never `ok`
+
+### Schema Registry
+
+```erlang
+{ok, 1} = glazer_schema:register(SchemaMapWithId),   % named by $id
+{ok, 1} = glazer_schema:register(<<"user">>, SchemaMap),
+ok = glazer_schema:validate(<<"user">>, Data),
+{ok, Compiled} = glazer_schema:fetch(<<"user">>),
+ok = glazer_schema:unregister(<<"user">>).
+```
+
+Process-free: entries live in `persistent_term`. Writes are serialized and trigger a global GC; reads are a single lookup. See `guides/json-validation.md`.
 
 ### Validate Inline (Compile + Validate)
 
 ```erlang
-ok = glazer_json:validate_term(SchemaMap, Term)
+ok = glazer_schema:validate_term(SchemaMap, Term)
   | {error, ...}
 
-ok = glazer_json:validate_term(SchemaMap, Term, Options)
+ok = glazer_schema:validate_term(SchemaMap, Term, Options)
 ```
 
 **Use case**: One-off validation without schema reuse
@@ -327,7 +348,7 @@ ok = glazer_json:validate_term(SchemaMap, Term, Options)
 - ❌ Schema composition (`anyOf`, `oneOf`, `allOf`, `not`)
 - ❌ Schema references (`$ref`, `$defs`)
 - ❌ Conditional validation (`if`/`then`/`else`)
-- ❌ Format validation (`email`, `uri`, `date`, etc.)
+- ✅ Format validation (now implemented; see `guides/json-validation.md`)
 - ❌ Advanced keywords (`prefixItems`, `dependentRequired`)
 
 ### Design Limitations

@@ -41,9 +41,7 @@ custom Elixir protocol on top of Glazer's Erlang encoding functions.
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
          decode_start/2, decode_start/3, decode_continue/2,
          'decode!'/1, 'encode!'/1, 'encode_to_iodata!'/1,
-         encode_to_iodata/1, encode_to_iodata/2,
-         json_compile_schema/1, json_validate/2, json_validate/3,
-         json_validate_term/2, json_validate_term/3]).
+         encode_to_iodata/1, encode_to_iodata/2]).
 
 -deprecated({'encode!',           1, "use Glazer.JSON.encode!/1 instead"}).
 -deprecated({'decode!',           1, "use Glazer.JSON.decode!/1 instead"}).
@@ -1112,19 +1110,3 @@ decode_one_value(Buf, Opts, Acc, ScanState) ->
         acc = Acc
       }}
   end.
-
-%% JSON Schema Validation (NIF stubs)
-json_compile_schema(_Schema) ->
-  erlang:nif_error(not_loaded).
-
-json_validate(_CompiledSchema, _Data) ->
-  erlang:nif_error(not_loaded).
-
-json_validate(_CompiledSchema, _Data, _Options) ->
-  erlang:nif_error(not_loaded).
-
-json_validate_term(_Schema, _Data) ->
-  erlang:nif_error(not_loaded).
-
-json_validate_term(_Schema, _Data, _Options) ->
-  erlang:nif_error(not_loaded).
