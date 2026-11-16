@@ -524,34 +524,13 @@ Phoenix's JSON API module by configuring a module that exports:
 - `encode!/1`
 - `encode_to_iodata!/1`
 
-`glazer_json` exports these under the equivalent (quoted) Erlang names —
-`'decode!'/1`, `'encode!'/1`, and `'encode_to_iodata!'/1` — as thin aliases
-for `decode/1` and `encode/1`, so `glazer_json` can be configured directly
+`Glazer.JSON` exports these, so `glazer_json` can be configured directly
 as a `json_library()`. To match Elixir's `JSON` module, where `null` decodes
 to/from `nil` rather than the atom `:null`, these three functions automatically
 apply `use_nil` — no extra configuration is needed:
 
 ```elixir
-config :phoenix, :json_library, :glazer_json
-```
-
-**Erlang**
-
-```erlang
-1> glazer_json:'decode!'(<<"{\"a\":1,\"b\":null}">>).
-#{<<"a">> => 1, <<"b">> => nil}
-
-2> glazer_json:'encode!'(#{<<"a">> => 1, <<"b">> => nil}).
-<<"{\"a\":1,\"b\":null}">>
-
-3> glazer_json:'encode_to_iodata!'(#{<<"a">> => 1, <<"b">> => nil}).
-<<"{\"a\":1,\"b\":null}">>
-
-4> glazer_json:'decode!'(<<"{\"a\":null}">>).
-#{<<"a">> => nil}
-
-5> glazer_json:'encode!'(#{<<"a">> => nil}).
-<<"{\"a\":null}">>
+config :phoenix, :json_library, Glazer.JSON
 ```
 
 **Elixir**
@@ -575,16 +554,15 @@ iex> Glazer.JSON.encode!(%{"a" => nil})
 
 ## API
 
-All functions below are in `glazer_json`.
+**Erlang**
+
+All functions below are in `glazer_json`:
 
 | Function | Description |
 |---|---|
 | `decode/1`, `decode/2` | Decode a JSON binary or iolist to an Erlang term |
 | `try_decode/1`, `try_decode/2` | Decode a JSON binary or iolist, returning `{ok, Term}` or `{error, {parse_error, Msg}}` instead of raising |
 | `encode/1`, `encode/2` | Encode an Erlang term to a JSON binary; raises `{encode_error, {Msg, Term}}` on failure |
-| `'decode!'/1` | Decode a JSON binary or iolist to an Erlang term (alias for `decode/1`) |
-| `'encode!'/1` | Encode an Erlang term to a JSON binary (alias for `encode/1`) |
-| `'encode_to_iodata!'/1` | Encode an Erlang term to JSON as iodata (alias for `encode/1`) |
 | `minify/1` | Remove unnecessary whitespace from a JSON document |
 | `prettify/1` | Pretty-print a JSON document with two-space indentation |
 | `read_file/1`, `read_file/2` | Read a file and decode its contents as JSON |
@@ -594,6 +572,26 @@ All functions below are in `glazer_json`.
 | `stream_feed/2` | Feed a chunk to a stream decoder, returning completed values |
 | `stream_eof/1` | Flush a stream decoder at end-of-input |
 | `query/2`, `query/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning `{ok, [Term]}` (requires `libjq`) |
+
+**Elixir**
+
+`Glazer.JSON` exports the following functions:
+
+| Function | Description |
+|---|---|
+| `decode/1`, `decode/2` | Decode a JSON binary or iolist, returning `{:ok, term}` or `{:error, reason}`. `null` becomes `nil` |
+| `decode!/1` | Decode a JSON binary or iolist, raising `Glazer.ParseError` on invalid input |
+| `encode!/1`, `encode!/2` | Encode an Elixir term to a JSON binary, raising `Glazer.ParseError` if it cannot be encoded |
+| `encode_to_iodata!/1` | Encode an Elixir term to JSON as iodata, raising `ArgumentError` if it cannot be encoded |
+| `encode_ndjson/1`, `encode_ndjson/2` | Encode a list of terms as newline-delimited JSON |
+| `minify!/1` | Remove all unnecessary whitespace from a JSON binary or iolist |
+| `prettify!/1` | Pretty-print a JSON binary or iolist with indentation |
+| `read_file!/1`, `read_file!/2` | Read a file and decode its contents as JSON |
+| `write_file!/2`, `write_file!/3` | Encode a term to JSON and write it to a file, overwriting any existing file |
+| `query!/2`, `query!/3` | Run a [jq](https://jqlang.org/) filter over a JSON document, returning one term per filter result |
+| `scan!/1`, `scan!/2` | Locate the end of the next complete top-level JSON value without decoding it |
+| `decode_start/2`, `decode_start/3` | Start incremental (streaming) decoding of a JSON value |
+| `decode_continue/2` | Resume incremental decoding with more data, or signal end of input with `:end_of_input` |
 
 ## Benchmarking JSON
 

@@ -134,6 +134,39 @@ GLAZER_VERSION     := $(shell git -C $(APP_DIR) describe --tags --dirty --always
 GLAZER_APP_VERSION := $(shell sed -nE 's/.*\{vsn, *"([^"]+)".*/\1/p' $(BASEDIR)/src/*.app.src | head -n1)
 CXXFLAGS += -DGLAZER_VERSION='"$(GLAZER_VERSION)"' -DGLAZER_APP_VERSION='"$(GLAZER_APP_VERSION)"'
 
+# PGO choice. A prod profile gets PGO; dev and test builds don't. The profile
+# reaches this Makefile from rebar3 as the last component of REBAR_BUILD_DIR
+# (_build/prod), and from mix as MIX_ENV. Both carry through when glazer is
+# built as a dependency of a consuming project. GLAZER_PGO=1 or 0 overrides
+# this (CI sets 1). PGO is skipped on Windows (MinGW) by default: GCC mangles
+# the absolute profile directory (drive letter), so profile generation fails.
+# OPTIMIZE=1 still forces it there.
+PROD_PROFILE := $(filter prod,$(REBAR_PROFILE) $(notdir $(REBAR_BUILD_DIR)) $(MIX_ENV))
+ifeq ($(GLAZER_PGO),1)
+  PGO_WANTED := 1
+else ifeq ($(GLAZER_PGO),0)
+  PGO_WANTED := 0
+else
+  PGO_WANTED := $(if $(PROD_PROFILE),1,0)
+endif
+ifneq (,$(findstring .dll,$(EXT)))
+  PGO_DEFAULT := 0
+else
+  PGO_DEFAULT := $(PGO_WANTED)
+endif
+
+# Optimisation level. Release and PGO builds use -O3 with LTO. Dev builds and
+# tests use -O1 without LTO, which compiles much faster.
+ifneq (,$(or $(PROD_PROFILE),$(filter 1,$(GLAZER_PGO)),$(filter generate use,$(PGO))))
+  OPT_LEVEL := O3
+else
+  OPT_LEVEL := O1
+endif
+
+# The object is rebuilt whenever the optimisation mode changes (e.g. switching
+# between a dev and a prod build). The stamp's name encodes the mode.
+OPT_STAMP := $(OBJ_DIR)/.build-$(OPT_LEVEL)-pgo$(PGO)-asan$(ASAN)
+
 ifeq ($(ASAN),1)
   # Compile with ASan instrumentation but do NOT link -fsanitize=address.
   # Linking it would embed or reference the runtime inside the NIF .so; when
@@ -142,7 +175,11 @@ ifeq ($(ASAN),1)
   # from the runtime preloaded via LD_PRELOAD (Linux only — see Makefile).
   CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer -DGLAZER_OPT_LEVEL='"O1"'
 else
-  CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native -fdata-sections -ffunction-sections $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
+  ifeq ($(OPT_LEVEL),O3)
+    CXXFLAGS += -O3 -DNDEBUG -march=native -mtune=native -fdata-sections -ffunction-sections $(LTO_FLAGS) -DGLAZER_OPT_LEVEL='"O3"'
+  else
+    CXXFLAGS += -O1 -DNDEBUG -march=native -mtune=native -fdata-sections -ffunction-sections -DGLAZER_OPT_LEVEL='"O1"'
+  endif
   ifeq ($(shell uname -s),Darwin)
     LDFLAGS += $(LINK_FLAGS) -Wl,-dead_strip
   else
@@ -170,16 +207,11 @@ endif
 
 all: compile
 
-# PGO is skipped on Windows (MinGW) by default: GCC mangles the absolute
-# profile directory (drive letter), so profile generation fails. Set
-# OPTIMIZE=1 to force it there.
-ifneq (,$(findstring .dll,$(EXT)))
-  PGO_DEFAULT := no
-else
-  PGO_DEFAULT := yes
-endif
+SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(filter 0,$(OPTIMIZE)),no,$(if $(filter 1,$(PGO_DEFAULT)),yes,no)))
 
-SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(if $(filter 0,$(OPTIMIZE)),no,$(PGO_DEFAULT)),no))
+ifeq ($(PGO),0)
+$(info ===> glazer NIF: $(if $(filter yes,$(SHOULD_OPTIMIZE)),PGO,no PGO), $(OPT_LEVEL))
+endif
 
 ifeq ($(SHOULD_OPTIMIZE),yes)
 compile: optimize
@@ -197,7 +229,7 @@ optimize:
 	  echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"; \
 	  echo "===> PGO step 1/3: build instrumented binary"; \
 	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all; \
-	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); \
+	  if [ -z "$$REBAR_BUILD_DIR" ]; then cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); fi; \
 	  echo "===> PGO step 2/3: collect profile data"; \
 	  ERL_LIBS= REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(BASEDIR)/bin/pgo-profile.es; \
 	  if [ -n "$(IS_CLANG)" ]; then \
@@ -222,7 +254,7 @@ optimize:
 	  echo "===> PGO step 3/3: rebuild with profile data"; \
 	  rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so; \
 	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all; \
-	  cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(if $(strip $(MIX_ENV)),as $(strip $(MIX_ENV)),) $(COMPILE); \
+	  if [ -z "$$REBAR_BUILD_DIR" ]; then cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(if $(strip $(MIX_ENV)),as $(strip $(MIX_ENV)),) $(COMPILE); fi; \
 	  echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"; \
 	fi
 
@@ -279,8 +311,14 @@ $(TARGET): $(OBJ) | $(PRIV_DIR)
 # absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
 # GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
 $(OBJ): $(SRC) $(wildcard *.hpp) $(SRELL_DEPS) $(if $(filter use,$(PGO)),force) \
-        $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
+        $(OPT_STAMP) $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Stamp recipe for OPT_STAMP (defined above the object rule). Creating a new
+# stamp, newer than the object, makes the object rebuild when the mode changes.
+$(OPT_STAMP): | $(OBJ_DIR)
+	@rm -f $(OBJ_DIR)/.build-*
+	@touch $@
 
 $(PRIV_DIR) $(OBJ_DIR) $(PGO_DIR):
 	@mkdir -p $@

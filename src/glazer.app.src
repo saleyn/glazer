@@ -1,6 +1,6 @@
 {application, glazer,
- [{description, "Erlang NIF JSON encoder/decoder using the glaze C++ library"},
-  {vsn, "1.2.0"},
+ [{description, "Erlang and Elixir NIF library for JSON, YAML and CSV, with JSON Schema 2020-12 validation"},
+  {vsn, "1.2.1"},
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, [

@@ -76,7 +76,7 @@ jobs:
             sudo apt-get install -y --no-install-recommends "llvm-$LLVM_VER" || sudo apt-get install -y --no-install-recommends "llvm-tools-$LLVM_VER" || sudo apt-get install -y --no-install-recommends llvm-tools || true
           fi
       - name: Build
-        run:  make compile
+        run:  make release
       - name: Cache Dialyzer PLT
         uses: actions/cache@v4
         with:

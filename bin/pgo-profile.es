@@ -8,18 +8,8 @@
 %%-----------------------------------------------------------------------------
 
 main(_Args) ->
-  Root   = filename:dirname(filename:dirname(escript:script_name())),
-  DefEnv = os:getenv("MIX_ENV", "default"),
-  case os:getenv("REBAR_BARE_COMPILER_OUTPUT_DIR") of
-    Res when Res == undefined; Res == "" ->
-      EbinGlob = filename:join([Root, "_build", DefEnv, "lib", "*", "ebin"]),
-      %% io:format(standard_error, "==> Not bare compiled: ~p\n", [EbinGlob]),
-      [code:add_pathz(P) || P <- filelib:wildcard(EbinGlob)];
-    EnvPath ->
-      Dir = filename:join(EnvPath, "ebin"),
-      %% io:format(standard_error, "==> Bare compiled: ~s\n", [Dir]),
-      code:add_patha(Dir)
-  end,
+  Root = filename:dirname(filename:dirname(escript:script_name())),
+  add_build_paths(Root),
 
   DataDir = filename:join(Root, "test/data"),
   Files = ["small.json", "openrtb.json", "esad.json", "twitter.json", "twitter2.json"],
@@ -37,6 +27,31 @@ main(_Args) ->
 
   [run(Name, Bin) || {Name, Bin} <- Inputs],
   ok.
+
+%% Put the beams of the build being profiled on the code path. Under rebar3
+%% the hook gets REBAR_BUILD_DIR (e.g. _build/prod), and REBAR_BARE_COMPILER_OUTPUT_DIR
+%% only during the bare compile. Under mix, MIX_ENV selects _build/$MIX_ENV.
+%% Empty variables count as unset (rebar sets MIX_ENV to "" for `as prod`).
+add_build_paths(Root) ->
+  case {getenv("REBAR_BARE_COMPILER_OUTPUT_DIR"), getenv("REBAR_BUILD_DIR")} of
+    {Bare, _} when Bare =/= undefined ->
+      code:add_patha(filename:join(Bare, "ebin"));
+    {undefined, Build} when Build =/= undefined ->
+      add_ebins(filename:join([Build, "lib", "*", "ebin"]));
+    _ ->
+      Env = case getenv("MIX_ENV") of undefined -> "default"; E -> E end,
+      add_ebins(filename:join([Root, "_build", Env, "lib", "*", "ebin"]))
+  end.
+
+add_ebins(Glob) ->
+  [code:add_pathz(P) || P <- filelib:wildcard(Glob)].
+
+getenv(Name) ->
+  case os:getenv(Name) of
+    false -> undefined;
+    ""    -> undefined;
+    Value -> Value
+  end.
 
 run(Name, Bin) ->
   Iterations = iterations(byte_size(Bin)),

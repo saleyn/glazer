@@ -12,7 +12,6 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
-#include <regex>
 #include <string>
 #include <string_view>
 #include <tuple>

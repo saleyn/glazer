@@ -14,6 +14,7 @@ defmodule Glazer.MixProject do
       elixirc_paths:         elixirc_paths(Mix.env()),
       # Exclude bench_*.ex files from compilation outside of :bench env
       docs:                  docs(),
+      package:               package(),
       test_coverage:         test_coverage()
     ]
   end
@@ -117,6 +118,16 @@ defmodule Glazer.MixProject do
         :"Elixir.Jason.Encoder",
         :"Elixir.Jason.Encoder.Any"
       ]
+    ]
+  end
+
+  defp package do
+    [
+      description: "Erlang and Elixir NIF library for JSON, YAML and CSV, with JSON Schema 2020-12 validation",
+      licenses:    ["MIT"],
+      links:       %{"GitHub" => "https://github.com/saleyn/glazer"},
+      files:       ~w(src bin c_src lib test guides Makefile rebar.config rebar.lock
+                      mix.exs mix.lock README.md RELEASE.md LICENSE assets)
     ]
   end
 
