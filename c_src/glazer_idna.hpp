@@ -19,6 +19,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -45,35 +46,49 @@ struct Props {
 };
 
 inline Props props(uint32_t cp) {
-  const uint32_t* first = kRunStart;
-  const uint32_t* pos = std::upper_bound(first, first + kRuns, cp);
-  uint32_t v = kRunValue[(pos - first) - 1];
+  const uint32_t* first = s_run_start;
+  const uint32_t* pos = std::upper_bound(first, first + s_runs, cp);
+  uint32_t v = s_run_value[(pos - first) - 1];
   return Props{v & 7u, (v >> 3) & 7u, (v >> 6) & 7u, (v >> 9) & 1u, (v >> 10) & 15u, (v >> 14) & 1u};
 }
 
 // ---- RFC 3492 Punycode -----------------------------------------------------
 
-inline constexpr uint32_t kBase = 36, kTmin = 1, kTmax = 26, kSkew = 38, kDamp = 700;
-inline constexpr uint32_t kInitialBias = 72, kInitialN = 128;
+inline constexpr uint32_t s_base = 36, s_t_min = 1, s_t_max = 26, s_skew = 38, s_damp = 700;
+inline constexpr uint32_t s_initial_bias = 72, s_initial_n = 128;
 
 inline uint32_t adapt(uint32_t delta, uint32_t numpoints, bool firsttime) {
-  delta = firsttime ? delta / kDamp : delta / 2;
+  delta = firsttime ? delta / s_damp : delta / 2;
   delta += delta / numpoints;
   uint32_t k = 0;
-  while (delta > ((kBase - kTmin) * kTmax) / 2) {
-    delta /= kBase - kTmin;
-    k += kBase;
+  while (delta > ((s_base - s_t_min) * s_t_max) / 2) {
+    delta /= s_base - s_t_min;
+    k += s_base;
   }
-  return k + (kBase - kTmin + 1) * delta / (delta + kSkew);
+  return k + (s_base - s_t_min + 1) * delta / (delta + s_skew);
 }
 
 inline char digit_char(uint32_t d) { return static_cast<char>(d < 26 ? 'a' + d : '0' + (d - 26)); }
 
+// Punycode digit values (RFC 3492 section 5): a-z and A-Z are 0-25, 0-9 are
+// 26-35. Every other byte maps to 0xFF.
+namespace detail {
+  constexpr std::array<uint8_t, 256> make_digit_value_table() {
+    std::array<uint8_t, 256> t{};
+    for (auto& v : t) v = 0xFF;
+    for (uint32_t c = 'a'; c <= 'z'; ++c) t[c] = static_cast<uint8_t>(c - 'a');
+    for (uint32_t c = 'A'; c <= 'Z'; ++c) t[c] = static_cast<uint8_t>(c - 'A');
+    for (uint32_t c = '0'; c <= '9'; ++c) t[c] = static_cast<uint8_t>(c - '0' + 26);
+    return t;
+  }
+}  // namespace detail
+
+inline constexpr std::array<uint8_t, 256> s_digit_value = detail::make_digit_value_table();
+
 inline bool digit_value(char c, uint32_t& d) {
-  if (c >= 'a' && c <= 'z') d = static_cast<uint32_t>(c - 'a');
-  else if (c >= 'A' && c <= 'Z') d = static_cast<uint32_t>(c - 'A');
-  else if (c >= '0' && c <= '9') d = static_cast<uint32_t>(c - '0' + 26);
-  else return false;
+  const uint8_t v = s_digit_value[static_cast<unsigned char>(c)];
+  if (v == 0xFF) return false;
+  d = v;
   return true;
 }
 
@@ -88,19 +103,19 @@ inline bool punycode_decode(std::string_view in, std::vector<uint32_t>& out) {
     }
   }
   size_t pos = (b == std::string_view::npos) ? 0 : b + 1;
-  uint32_t n = kInitialN, i = 0, bias = kInitialBias;
+  uint32_t n = s_initial_n, i = 0, bias = s_initial_bias;
   while (pos < in.size()) {
     uint32_t oldi = i, w = 1;
-    for (uint32_t k = kBase;; k += kBase) {
+    for (uint32_t k = s_base;; k += s_base) {
       if (pos >= in.size()) return false;
       uint32_t d = 0;
       if (!digit_value(in[pos++], d)) return false;
       if (d > (UINT32_MAX - i) / w) return false;
       i += d * w;
-      uint32_t t = k <= bias ? kTmin : (k >= bias + kTmax ? kTmax : k - bias);
+      uint32_t t = k <= bias ? s_t_min : (k >= bias + s_t_max ? s_t_max : k - bias);
       if (d < t) break;
-      if (w > UINT32_MAX / (kBase - t)) return false;
-      w *= kBase - t;
+      if (w > UINT32_MAX / (s_base - t)) return false;
+      w *= s_base - t;
     }
     uint32_t len = static_cast<uint32_t>(out.size()) + 1;
     bias = adapt(i - oldi, len, oldi == 0);
@@ -121,7 +136,7 @@ inline std::string punycode_encode(const std::vector<uint32_t>& cps) {
     if (cp < 0x80) { out += static_cast<char>(cp); ++b; }
   uint32_t h = b;
   if (b > 0) out += '-';
-  uint32_t n = kInitialN, delta = 0, bias = kInitialBias;
+  uint32_t n = s_initial_n, delta = 0, bias = s_initial_bias;
   while (h < cps.size()) {
     uint32_t m = UINT32_MAX;
     for (uint32_t cp : cps)
@@ -132,11 +147,11 @@ inline std::string punycode_encode(const std::vector<uint32_t>& cps) {
       if (cp < n) ++delta;
       if (cp == n) {
         uint32_t q = delta;
-        for (uint32_t k = kBase;; k += kBase) {
-          uint32_t t = k <= bias ? kTmin : (k >= bias + kTmax ? kTmax : k - bias);
+        for (uint32_t k = s_base;; k += s_base) {
+          uint32_t t = k <= bias ? s_t_min : (k >= bias + s_t_max ? s_t_max : k - bias);
           if (q < t) break;
-          out += digit_char(t + (q - t) % (kBase - t));
-          q = (q - t) / (kBase - t);
+          out += digit_char(t + (q - t) % (s_base - t));
+          q = (q - t) / (s_base - t);
         }
         out += digit_char(q);
         bias = adapt(delta, h + 1, h == b);
@@ -152,31 +167,31 @@ inline std::string punycode_encode(const std::vector<uint32_t>& cps) {
 
 // ---- NFC (UAX #15) -----------------------------------------------------------
 
-inline constexpr uint32_t kSBase = 0xAC00, kLBase = 0x1100, kVBase = 0x1161, kTBase = 0x11A7;
-inline constexpr uint32_t kLCount = 19, kVCount = 21, kTCount = 28;
-inline constexpr uint32_t kNCount = kVCount * kTCount, kSCount = kLCount * kNCount;
+inline constexpr uint32_t s_s_base = 0xAC00, s_l_base = 0x1100, s_v_base = 0x1161, s_t_base = 0x11A7;
+inline constexpr uint32_t s_l_count = 19, s_v_count = 21, s_t_count = 28;
+inline constexpr uint32_t s_n_count = s_v_count * s_t_count, s_s_count = s_l_count * s_n_count;
 
 // Canonical combining class (0 for starters)
 inline uint32_t ccc_of(uint32_t cp) {
-  const uint32_t* first = kCccStart;
-  const uint32_t* pos = std::upper_bound(first, first + kCccRuns, cp);
-  return kCccValue[(pos - first) - 1];
+  const uint32_t* first = s_ccc_start;
+  const uint32_t* pos = std::upper_bound(first, first + s_ccc_runs, cp);
+  return s_ccc_value[(pos - first) - 1];
 }
 
 // Full canonical decomposition of one code point (Hangul is algorithmic)
 inline void decompose_into(uint32_t cp, std::vector<uint32_t>& out) {
-  if (cp >= kSBase && cp < kSBase + kSCount) {
-    uint32_t s = cp - kSBase;
-    out.push_back(kLBase + s / kNCount);
-    out.push_back(kVBase + (s % kNCount) / kTCount);
-    if (uint32_t t = s % kTCount) out.push_back(kTBase + t);
+  if (cp >= s_s_base && cp < s_s_base + s_s_count) {
+    uint32_t s = cp - s_s_base;
+    out.push_back(s_l_base + s / s_n_count);
+    out.push_back(s_v_base + (s % s_n_count) / s_t_count);
+    if (uint32_t t = s % s_t_count) out.push_back(s_t_base + t);
     return;
   }
-  const uint32_t* end = kDecompCp + kDecompCount;
-  const uint32_t* it = std::lower_bound(kDecompCp, end, cp);
+  const uint32_t* end = s_decomp_cp + s_decomp_count;
+  const uint32_t* it = std::lower_bound(s_decomp_cp, end, cp);
   if (it != end && *it == cp) {
-    size_t i = static_cast<size_t>(it - kDecompCp);
-    for (uint32_t k = kDecompOff[i]; k < kDecompOff[i + 1]; ++k) out.push_back(kDecompSeq[k]);
+    size_t i = static_cast<size_t>(it - s_decomp_cp);
+    for (uint32_t k = s_decomp_off[i]; k < s_decomp_off[i + 1]; ++k) out.push_back(s_decomp_seq[k]);
     return;
   }
   out.push_back(cp);
@@ -184,19 +199,19 @@ inline void decompose_into(uint32_t cp, std::vector<uint32_t>& out) {
 
 // Primary composite of a starter and a following character, if any
 inline bool compose_pair(uint32_t a, uint32_t b, uint32_t& c) {
-  if (a >= kLBase && a < kLBase + kLCount && b >= kVBase && b < kVBase + kVCount) {
-    c = kSBase + ((a - kLBase) * kVCount + (b - kVBase)) * kTCount;
+  if (a >= s_l_base && a < s_l_base + s_l_count && b >= s_v_base && b < s_v_base + s_v_count) {
+    c = s_s_base + ((a - s_l_base) * s_v_count + (b - s_v_base)) * s_t_count;
     return true;
   }
-  if (a >= kSBase && a < kSBase + kSCount && (a - kSBase) % kTCount == 0 && b > kTBase && b < kTBase + kTCount) {
-    c = a + (b - kTBase);
+  if (a >= s_s_base && a < s_s_base + s_s_count && (a - s_s_base) % s_t_count == 0 && b > s_t_base && b < s_t_base + s_t_count) {
+    c = a + (b - s_t_base);
     return true;
   }
   uint64_t key = (static_cast<uint64_t>(a) << 21) | b;
-  const uint64_t* end = kCompKey + kCompCount;
-  const uint64_t* it = std::lower_bound(kCompKey, end, key);
+  const uint64_t* end = s_comp_key + s_comp_count;
+  const uint64_t* it = std::lower_bound(s_comp_key, end, key);
   if (it != end && *it == key) {
-    c = kCompValue[it - kCompKey];
+    c = s_comp_value[it - s_comp_key];
     return true;
   }
   return false;
@@ -457,22 +472,22 @@ enum : uint32_t { UTS_MAPPED = 1, UTS_IGNORED = 2, UTS_DISALLOWED = 3 };
 // Entries are ranges start..end, sorted and non-overlapping; a code point
 // outside every range is valid and unchanged.
 inline bool uts46_map(uint32_t cp, std::vector<uint32_t>& out) {
-  const uint32_t* end = kUts46Start + kUts46Count;
-  const uint32_t* it = std::upper_bound(kUts46Start, end, cp);
-  if (it == kUts46Start) {   // below the first entry: valid
+  const uint32_t* end = s_uts46_start + s_uts46_count;
+  const uint32_t* it = std::upper_bound(s_uts46_start, end, cp);
+  if (it == s_uts46_start) {   // below the first entry: valid
     out.push_back(cp);
     return true;
   }
-  size_t i = static_cast<size_t>(it - kUts46Start) - 1;
-  if (cp > kUts46End[i]) {   // in a gap between entries: valid
+  size_t i = static_cast<size_t>(it - s_uts46_start) - 1;
+  if (cp > s_uts46_end[i]) {   // in a gap between entries: valid
     out.push_back(cp);
     return true;
   }
-  switch (kUts46Type[i]) {
+  switch (s_uts46_type[i]) {
     case UTS_IGNORED:
       return true;
     case UTS_MAPPED:
-      for (uint32_t k = kUts46Off[i]; k < kUts46Off[i + 1]; ++k) out.push_back(kUts46Seq[k]);
+      for (uint32_t k = s_uts46_off[i]; k < s_uts46_off[i + 1]; ++k) out.push_back(s_uts46_seq[k]);
       return true;
     default:
       return false;

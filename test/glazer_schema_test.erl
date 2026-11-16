@@ -300,6 +300,25 @@ no_name_and_no_id_is_stored_by_content_test() ->
   _ = glazer_schema:clear_interned(),
   ok.
 
+%% Charlist keys ("type") used to be ignored, so every document validated.
+%% They are now rejected at compile time; binary and atom keys behave as before.
+charlist_schema_keys_rejected_test() ->
+  CharlistSchema = #{"type" => "object", "required" => ["name"],
+                     "properties" => #{"name" => #{"type" => "string", "minLength" => 1}}},
+  ?assertMatch({error, <<"schema key must be a binary or atom", _/binary>>},
+               glazer_schema:compile(CharlistSchema, [{registry, false}])),
+  ?assertMatch({error, <<"property names must be strings or atoms">>},
+               glazer_schema:compile(#{<<"properties">> => #{"name" => #{}}}, [{registry, false}])),
+  ?assertMatch({error, <<"schema key must be a binary or atom", _/binary>>},
+               glazer_schema:validate_term(#{"type" => "string"}, <<"x">>)),
+  BinarySchema = #{<<"type">> => <<"object">>, <<"required">> => [<<"name">>],
+                   <<"properties">> => #{<<"name">> => #{<<"type">> => <<"string">>,
+                                                          <<"minLength">> => 1}}},
+  {ok, C} = glazer_schema:compile(BinarySchema, [{registry, false}]),
+  ?assertMatch({error, {path, [<<"name">>], {string_too_short, <<>>}}},
+               glazer_schema:validate(C, #{<<"name">> => <<"">>})),
+  ok.
+
 %% compile_schema_file/1,2
 
 compile_schema_file_test() ->

@@ -23,7 +23,7 @@ void schema_resource_cleanup(ErlNifEnv* env, void* obj) {
 //   [{refs, #{Uri => Schema}}]   documents that $ref may name by URI
 //   [{format_assertion, true}]   assert `format` (default: annotation only)
 // Returns false (and sets error) on a malformed option.
-static bool apply_compile_options(
+[[maybe_unused]] static bool apply_compile_options(
   ErlNifEnv* env,
   ERL_NIF_TERM opts,
   SchemaCompiler& compiler,
@@ -228,9 +228,9 @@ bool parse_validation_options(
 // job. With allow_dispatch set, heavy or large work is re-queued on a dirty
 // CPU scheduler, which calls back into this function with allow_dispatch
 // cleared so it runs inline there.
-static ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+inline ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
-static ERL_NIF_TERM validate_impl(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[], bool allow_dispatch) {
+inline ERL_NIF_TERM validate_impl(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[], bool allow_dispatch) {
   if (argc < 2 || argc > 3) [[unlikely]]
     return enif_make_badarg(env);
 
@@ -287,7 +287,7 @@ static ERL_NIF_TERM validate_impl(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
   return success ? result_term : enif_make_tuple2(env, AM_ERROR, result_term);
 }
 
-static ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+inline ERL_NIF_TERM nif_validate_dirty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   return validate_impl(env, argc, argv, false);
 }
 

@@ -721,7 +721,7 @@ bool SchemaValidator::check_max_length(ERL_NIF_TERM term, size_t max_len, Valida
 }
 
 // The error for a regex engine failure (not a mismatch): the engine's code is the detail
-static ValidationError regex_failure(ErlNifEnv* env, ERL_NIF_TERM term, int code) {
+inline ValidationError regex_failure(ErlNifEnv* env, ERL_NIF_TERM term, int code) {
   return ValidationError{
     .reason        = ErrorReason::REGEX_ERROR,
     .reason_detail = enif_make_int(env, code),
@@ -909,7 +909,7 @@ bool SchemaValidator::get_string(ERL_NIF_TERM term, std::string& out) {
 }
 
 // Snake-case atom naming each ErrorReason (the Erlang-visible reason tag)
-static ERL_NIF_TERM reason_atom(ErrorReason r) {
+[[maybe_unused]] static ERL_NIF_TERM reason_atom(ErrorReason r) {
   switch (r) {
     case ErrorReason::TYPE_MISMATCH:            return AM_TYPE_MISMATCH;
     case ErrorReason::VALUE_TOO_SMALL:          return AM_VALUE_TOO_SMALL;
@@ -1184,7 +1184,7 @@ bool SchemaValidator::check_required(
 
 // The first pattern that matches or fails (an engine error stops the search);
 // NoMatch when none does
-static RegexMatch matches_any_pattern_impl(std::string_view text, const std::vector<size_t>& patterns,
+inline RegexMatch matches_any_pattern_impl(std::string_view text, const std::vector<size_t>& patterns,
                                            const std::vector<std::shared_ptr<SchemaRegex>>& all) {
   for (size_t idx : patterns) {
     if (idx >= all.size()) continue;

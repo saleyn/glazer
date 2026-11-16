@@ -230,6 +230,8 @@ overridden:
 | `dedupe_keys` | With `object_as_tuple`, eliminate duplicate object keys, keeping the last occurrence's value (and position) |
 | `copy_strings` | Always allocate a fresh binary for each decoded string, instead of a zero-copy sub-binary of the input (see [Performance Optimization Details](performance.md#performance-optimization-details)) |
 | `return_trailer` | Allow trailing non-whitespace data after the decoded value instead of rejecting it; on a match, return `{has_trailer, Term, Rest}` with `Rest` as a zero-copy sub-binary of the unconsumed remainder |
+| `validate_utf8` | Validate UTF-8 in JSON strings (the default). Invalid UTF-8 is a parse error |
+| `skip_utf8_validation` | Accept invalid UTF-8 in JSON strings and copy the bytes through unchanged |
 
 **Erlang**
 
@@ -333,26 +335,20 @@ iex> Glazer.JSON.encode!(nil)                        # nil is JSON null in Elixi
 **Option `force_utf8`:**
 
 > [!NOTE]
-> `force_utf8` is an *encode*-only option. `decode/1,2` does not validate
-> that JSON strings in the input are valid UTF-8 — bytes are copied through
-> to the resulting binaries as-is, regardless of options.
+> Decoding validates UTF-8 by default: a JSON string with invalid UTF-8 is a
+> parse error. Pass `skip_utf8_validation` to accept such bytes unchanged.
+> `force_utf8` is an *encode*-only option; it replaces invalid bytes instead
+> of raising.
 
 Binaries may contain arbitrary bytes, including byte sequences that are not
-valid UTF-8. By default, such bytes are copied into the output verbatim,
-which can produce a result that is not valid UTF-8/JSON:
+valid UTF-8. By default, encoding such a binary (as a value or an object key)
+raises an encode error, so the output is always valid UTF-8/JSON:
 
 **Erlang**
 
 ```erlang
 1> glazer_json:encode(<<"a", 128, "b">>).
-<<"\"a", 128, "b\"">>
-```
-
-**Elixir**
-
-```elixir
-iex> Glazer.JSON.encode!(<<"a", 128, "b">>)
-<<34, 97, 128, 98, 34>>                              # the raw byte 128 is kept
+** exception error: {encode_error,{<<"invalid UTF-8 in string">>,<<"a\x80b">>}}
 ```
 
 With `force_utf8`, each invalid byte (or byte sequence) is replaced with the
@@ -601,21 +597,21 @@ A comparison benchmark against other JSON libraries (`simdjsone`,
 
 ```sh
 $ make bench-json
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
+===> Running benchmarks (optimization: O3 - PGO)
 
 (numbers in µs)
 JSON           twitter (616.7K)   twitter2 (758.0K)     openrtb (1.2K)       esad (1.3K)         small (0.1K)
                decode   encode     decode   encode     decode   encode     decode   encode     decode   encode
 ----------------------------------------------------------------------------------------------------------------
-glazer         3056.7   1139.8     2802.2   1803.3        8.0      6.0        4.7      4.3        0.8      1.0
-glazer+utf8    3350.4   1003.8     3452.9   1744.7        8.2      7.6        5.9      3.2        1.8      1.5
-torque         2391.9    998.8     3107.5   2603.9        7.4      4.9        5.9      3.2        1.2      0.7
-simdjsone      3688.8   2833.0     6742.6   6016.7       15.8     18.8       11.9     13.2        2.1      6.6
-jiffy          5468.8   2642.9     6875.0   6505.4       20.8     22.3       12.0     10.6        2.9      3.8
-jason          8667.0   7668.1    14350.8  19042.8       32.4     29.0       15.7     15.0        3.2      4.7
-json           7793.3   5741.3    15210.0  12957.5       22.1     16.8       11.7      9.6        3.4      2.3
-thoas          8710.0   9141.5    20712.9  22007.2       32.5     35.4       17.1     21.9        3.0      2.4
-euneus         7183.1   6743.2    16592.7  16423.2       23.3     21.4       14.7     13.6        3.1      2.4
+glazer         1784.7    677.8     1839.2   1192.0        3.9      3.0        2.6      1.7        0.6      0.6
+torque         1228.6    631.8     2005.2   1082.0        4.1      2.7        2.8      1.6        0.6      0.5
+jiffy          3910.3   1712.1     4020.9   3690.0        8.2      8.2        5.4      4.9        1.6      1.7
+jason          6392.7   4980.6    10102.4   8844.4       15.7     13.8       10.1     10.0        2.0      1.6
+json           4585.6   3380.5     7385.4   6270.6       12.1      9.4        6.1      5.8        1.7      1.3
+thoas          6041.2   5410.3    10328.8   9667.1       13.4     14.3        9.2     10.9        1.8      1.6
+euneus         4777.0   3463.8     7704.7   6439.0       13.5      9.9        6.9      7.0        2.2      1.9
+===> Running benchmarks (optimization: O3 - PGO)
+===> Process niceness: 0 (lower is higher priority)
 ```
 
 (requires the `bench`/`dev` Mix dependencies — see `mix.exs`).

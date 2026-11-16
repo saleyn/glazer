@@ -848,9 +848,13 @@ timeout_is_never_reported_as_valid_test() ->
   % collect mode: the timeout is among the reported errors
   ?assertMatch({error, [{path, [], {timeout, 1}}]},
                glazer_schema:validate(S, Big, [collect_all_errors, {timeout_ms, 1}])),
-  % inside not: the deadline applies there too, and a cut-short branch is not a match
+  % inside not: the deadline applies there too, and a cut-short branch is not a match.
+  % The branch must walk the whole array to be decided: every item is an integer,
+  % so the branch matches only once all 2M items are checked. (A branch that fails
+  % on the first item would be decided at once, before any deadline, and is a
+  % genuine answer, so it cannot test the timeout.)
   {ok, {schema, N}} = glazer_schema:compile(
-      #{<<"not">> => #{<<"items">> => #{<<"type">> => <<"string">>}}}),
+      #{<<"not">> => #{<<"items">> => #{<<"type">> => <<"integer">>}}}),
   ?assertMatch({error, {path, [], {timeout, 1}}},
                glazer_schema:validate(N, Big, [{timeout_ms, 1}])),
   % no timeout reached: a generous limit gives the normal result

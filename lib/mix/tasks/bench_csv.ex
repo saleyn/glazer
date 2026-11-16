@@ -35,7 +35,7 @@ defmodule Mix.Tasks.BenchCsv do
   ]
 
   @impl Mix.Task
-  def run(args) do
+  def run(_args) do
     Mix.env() != :bench && Mix.raise("mix bench-csv must be run with MIX_ENV=bench")
 
     # Ensure all deps are started so NIFs get loaded.
@@ -47,10 +47,10 @@ defmodule Mix.Tasks.BenchCsv do
     if files == [] do
       Mix.shell().error("No CSV test data files found in test/data/")
     else
-      workers = Mix.Tasks.Bench.Common.parallelism(args)
+      Mix.Tasks.Bench.Common.announce()
 
       files_data = Enum.map(files, fn {label, bin} ->
-        results = run_file(bin, suites, workers)
+        results = run_file(bin, suites)
         {label, results}
       end)
 
@@ -161,45 +161,26 @@ defmodule Mix.Tasks.BenchCsv do
     Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
   end
 
-  defp run_file(bin, suites, parallelism) do
+  defp run_file(bin, suites) do
     n       = iterations(byte_size(bin))
-    parent  = self()
-    ref     = make_ref()
     timeout = n * 500 + 10_000
 
-    suites
-    |> Enum.chunk_every(parallelism)
-    |> Enum.flat_map(fn chunk ->
-      tasks = Enum.map(chunk, fn {name, decode, encode} ->
-        pid = spawn(fn ->
-          result =
-            try do
-              dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
-              et =
-                if is_function(encode) do
-                  decoded = decode.(bin)
-                  Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
-                else
-                  :na
-                end
-              {:ok, dt, et}
-            rescue
-              e -> {:error, Exception.message(e)}
-            catch
-              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-            end
-          send(parent, {ref, name, result})
-        end)
-        {name, pid}
-      end)
-
-      Enum.map(tasks, fn {name, _pid} ->
-        receive do
-          {^ref, ^name, result} -> {name, result}
-        after
-          timeout -> {name, {:error, "timeout"}}
-        end
-      end)
+    Mix.Tasks.Bench.Common.run_each(suites, timeout, fn {_name, decode, encode} ->
+      try do
+        dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
+        et =
+          if is_function(encode) do
+            decoded = decode.(bin)
+            Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
+          else
+            :na
+          end
+        {:ok, dt, et}
+      rescue
+        e -> {:error, Exception.message(e)}
+      catch
+        kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+      end
     end)
   end
 

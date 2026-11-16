@@ -28,10 +28,26 @@
 #  include <arm_neon.h>
 #endif
 
-#include "fast_float.hpp"
+#include "vendors/glazer_atof.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
 #include "glazer_common.hpp"
+#include "glazer_utf8_validate.hpp"
+#include "vendors/glazer_ftoa.hpp"
+
+// The encoder's string tail may do one 16-byte load that reads past the end of
+// the string (never past a 4 KiB block, so never off a mapped page). Sanitizers
+// flag that read, so under AddressSanitizer and MemorySanitizer the tail uses
+// the bounded word path only. Define GLAZER_TAIL_BOUNDED to force it in any build.
+#ifndef GLAZER_TAIL_BOUNDED
+#  if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_MEMORY__)
+#    define GLAZER_TAIL_BOUNDED 1
+#  elif defined(__has_feature)
+#    if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer)
+#      define GLAZER_TAIL_BOUNDED 1
+#    endif
+#  endif
+#endif
 
 namespace glz {
 
@@ -55,8 +71,9 @@ struct JSONDecodeOpts {
   // callers split a value off a buffer without a separate scan() pass.
   bool         return_trailer      = false;
   // When true, validate that JSON strings contain valid UTF-8 sequences.
-  // Disabled by default for backward compatibility. Use validate_utf8 option to enable.
-  bool         validate_utf8       = false;
+  // On by default: invalid UTF-8 in a string is a decode error. Use
+  // skip_utf8_validation to accept such bytes unchecked.
+  bool         validate_utf8       = true;
 };
 
 struct JSONEncodeOpts {
@@ -71,7 +88,7 @@ struct JSONEncodeOpts {
 // Option parsing
 //-----------------------------------------------------------------------------
 
-static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts& opts)
+inline bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -100,7 +117,7 @@ static bool parse_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONDecodeOpts&
   return true;
 }
 
-static bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONEncodeOpts& opts)
+inline bool parse_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, JSONEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -144,6 +161,16 @@ static constexpr auto JSON_ESCAPE_CHAR_TABLE = [] {
 // Zero-copy JSON decoder — parses raw bytes, emits Erlang terms directly
 //-----------------------------------------------------------------------------
 
+// Offset of the first invalid UTF-8 byte, or UTF8_OK when the input is valid.
+// Validity is decided by the vector validator (glazer_utf8_validate.hpp); the offset
+// is only computed when the input is invalid.
+inline constexpr size_t UTF8_OK = static_cast<size_t>(-1);
+inline size_t first_invalid_utf8(const char* s, size_t len)
+{
+  if (glz::utf8::valid(s, len)) return UTF8_OK;
+  return glz::utf8::first_invalid(s, len);
+}
+
 struct JSONDecoder {
   // Below this input size, documents rarely repeat enough keys to amortize
   // the cache's lookup-scan cost — skip it entirely (helps small payloads
@@ -156,7 +183,7 @@ struct JSONDecoder {
   // spare for the rest of each frame, across compilers (gcc/clang) and
   // under AddressSanitizer (whose redzones and shadow-memory checks inflate
   // each frame considerably compared to a normal build).
-  static constexpr unsigned MAX_DEPTH = 256;
+  static constexpr unsigned MAX_DEPTH = 128;
 
   JSONDecoder(ErlNifEnv*   e,    const JSONDecodeOpts& o,
               const char*  data, size_t size,
@@ -172,6 +199,11 @@ struct JSONDecoder {
   // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
   std::tuple<bool, ERL_NIF_TERM> decode(const char* data, size_t size)
   {
+    if (m_opts.validate_utf8) [[unlikely]] {
+      const size_t bad = first_invalid_utf8(data, size);
+      if (bad != UTF8_OK)
+        return std::make_tuple(false, make_binary(m_env, "invalid UTF-8 in JSON string at offset " + std::to_string(bad)));
+    }
     m_p = data; m_end = data + size; m_beg = data;
     std::string scratch;
     ERL_NIF_TERM result = parse_value(scratch);
@@ -200,6 +232,9 @@ private:
   ERL_NIF_TERM      m_input_bin; // original binary term — used for zero-copy sub_binary
   KeyCache          m_key_cache;
   bool              m_use_key_cache;
+  // Shared per-call stacks for container members (see parse_object/parse_array).
+  SmallTermVec<64>  m_stk_keys;
+  SmallTermVec<64>  m_stk_vals;
   unsigned          m_depth = 0;
   std::string       m_err;
 
@@ -231,7 +266,11 @@ private:
     // none at all). Check the first byte before paying for an 8-byte load
     // and SWAR bit-twiddling — avoids that cost on the overwhelmingly common
     // "no whitespace here" case.
-    if (m_p >= m_end || !is_ws(*m_p)) return;
+    // One test for the common case: end of input, or a byte above 0x20 (never
+    // whitespace), or a control byte that is not whitespace.
+    if (m_p >= m_end) return;
+    const unsigned char c = static_cast<unsigned char>(*m_p);
+    if (c > 0x20 || !is_ws(static_cast<char>(c))) return;
     while (m_p + 8 <= m_end) {
       uint64_t w;
       memcpy(&w, m_p, 8);
@@ -273,6 +312,25 @@ private:
   // On return m_p is at the first potential special byte or in the scalar
   // cleanup zone (fewer than one chunk-width from m_end).
   void bulk_skip_to_special() noexcept {
+#if defined(__ARM_NEON__)
+    // NEON (16 B/iter), same tier as find_escape_pos on Apple Silicon/ARM64.
+    {
+      const uint8x16_t vq = vdupq_n_u8('"');
+      const uint8x16_t vb = vdupq_n_u8('\\');
+      while (m_p + 16 <= m_end) {
+        uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(m_p));
+        uint8x16_t hit = vorrq_u8(vceqq_u8(v, vq), vceqq_u8(v, vb));
+        uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+        uint64_t   lo  = vgetq_lane_u64(h64, 0);
+        uint64_t   hi  = vgetq_lane_u64(h64, 1);
+        if (lo | hi) {
+          m_p += lo ? (__builtin_ctzll(lo) >> 3) : 8 + (__builtin_ctzll(hi) >> 3);
+          return;
+        }
+        m_p += 16;
+      }
+    }
+#endif
 #if defined(__AVX2__)
     {
       const __m256i vq = _mm256_set1_epi8('"');
@@ -312,6 +370,56 @@ private:
   // If has_escape is set the caller must unescape before using as binary.
   // Bulk-scans with SIMD (AVX2→SSE2→SWAR); scalar fallback only for the
   // few bytes around each '"' or '\'.
+  // Scans to the first '"' or '\\' and reports which one it is: 1 = quote at
+  // m_p, 2 = backslash at m_p, 0 = end of input first. The quote-vs-backslash
+  // decision comes from the same SIMD masks that located the byte, so the
+  // caller does not re-read it.
+  int scan_special() noexcept {
+#if defined(__AVX2__)
+    {
+      const __m256i vq = _mm256_set1_epi8('"');
+      const __m256i vb = _mm256_set1_epi8('\\');
+      while (m_p + 32 <= m_end) {
+        __m256i  v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(m_p));
+        uint32_t mq = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vq));
+        uint32_t mb = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vb));
+        uint32_t m  = mq | mb;
+        if (m) {
+          unsigned i = __builtin_ctz(m);
+          m_p += i;
+          return ((mq >> i) & 1u) ? 1 : 2;
+        }
+        m_p += 32;
+      }
+    }
+#endif
+#if defined(__SSE2__)
+    {
+      const __m128i vq = _mm_set1_epi8('"');
+      const __m128i vb = _mm_set1_epi8('\\');
+      while (m_p + 16 <= m_end) {
+        __m128i  v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_p));
+        unsigned mq = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, vq));
+        unsigned mb = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, vb));
+        unsigned m  = mq | mb;
+        if (m) {
+          unsigned i = __builtin_ctz(m);
+          m_p += i;
+          return ((mq >> i) & 1u) ? 1 : 2;
+        }
+        m_p += 16;
+      }
+    }
+#endif
+    while (m_p < m_end) {
+      char c = *m_p;
+      if (c == '"') return 1;
+      if (c == '\\') return 2;
+      ++m_p;
+    }
+    return 0;
+  }
+
   bool read_string_raw(const char*& begin_out, size_t& len_out, bool& has_escape)
   {
     if (m_p >= m_end || *m_p != '"')
@@ -321,14 +429,10 @@ private:
     const char* s = m_p;
     has_escape = false;
     for (;;) {
-      bulk_skip_to_special();
-      while (m_p < m_end) {
-        char c = *m_p;
-        if (c == '"') { begin_out = s; len_out = m_p - s; ++m_p; return true; }
-        if (c == '\\') [[unlikely]] { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; break; }
-        ++m_p;
-      }
-      if (m_p >= m_end) return false; // unterminated string
+      int k = scan_special();
+      if (k == 1) { begin_out = s; len_out = static_cast<size_t>(m_p - s); ++m_p; return true; }
+      if (k == 2) [[unlikely]] { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; continue; }
+      return false;  // unterminated string
     }
   }
 
@@ -382,93 +486,7 @@ private:
     return buf;
   }
 
-  // Optimized UTF-8 validation using SWAR and lookup tables
-  static bool is_valid_utf8(const char* s, size_t len)
-  {
-    const char* end = s + len;
-    const char* p = s;
-
-    // Fast path: scan for ASCII using SWAR (SIMD-within-a-register)
-    // Process 8 bytes at a time, checking for any byte with high bit set
-    while (p + 8 <= end) {
-      uint64_t chunk;
-      std::memcpy(&chunk, p, 8);
-      // If any byte has high bit set, we found non-ASCII
-      if (chunk & 0x8080808080808080ULL) break;
-      p += 8;
-    }
-
-    // Skip remaining ASCII bytes in scalar fashion
-    while (p < end && static_cast<unsigned char>(*p) < 0x80) ++p;
-
-    // Now handle non-ASCII bytes (the uncommon case) with lookup table
-    while (p < end) {
-      unsigned char c = static_cast<unsigned char>(*p++);
-
-      if (c < 0x80) continue; // ASCII (shouldn't happen due to fast path above)
-
-      // Lookup table for UTF-8 sequence validation
-      // Value meanings: 0=ASCII, 1=2-byte, 2=3-byte, 3=4-byte, 9=invalid
-      static constexpr unsigned char utf8_lookup[256] = {
-        // 0x00-0x7F: ASCII
-        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-        // 0x80-0xBF: continuation bytes (invalid as start)
-        9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9,
-        9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9, 9,9,9,9,9,9,9,9,
-        // 0xC0-0xC1: overlong 2-byte sequences (invalid)
-        9,9,
-        // 0xC2-0xDF: valid 2-byte sequences
-        1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,
-        // 0xE0-0xEF: 3-byte sequences
-        2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2,
-        // 0xF0-0xF4: valid 4-byte sequences
-        3,3,3,3,3,
-        // 0xF5-0xFF: invalid (would encode > U+10FFFF)
-        9,9,9,9,9,9,9,9, 9,9,9
-      };
-
-      unsigned char seq_len = utf8_lookup[c];
-      if (seq_len == 9) return false; // Invalid start byte
-
-      // Check we have enough remaining bytes
-      if (p + seq_len > end) return false;
-
-      // Validate continuation bytes and check special cases
-      switch (seq_len) {
-        case 1: { // 2-byte sequence: C2-DF 80-BF
-          unsigned char c1 = static_cast<unsigned char>(*p++);
-          if ((c1 & 0xC0) != 0x80) return false;
-          break;
-        }
-        case 2: { // 3-byte sequence: E0-EF 80-BF 80-BF
-          unsigned char c1 = static_cast<unsigned char>(*p++);
-          unsigned char c2 = static_cast<unsigned char>(*p++);
-          if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80)) return false;
-
-          // Special validation for 3-byte sequences
-          if (c == 0xE0 && c1 < 0xA0) return false; // overlong: E0 80-9F
-          if (c == 0xED && c1 >= 0xA0) return false; // surrogate: ED A0-BF
-          break;
-        }
-        case 3: { // 4-byte sequence: F0-F4 80-BF 80-BF 80-BF
-          unsigned char c1 = static_cast<unsigned char>(*p++);
-          unsigned char c2 = static_cast<unsigned char>(*p++);
-          unsigned char c3 = static_cast<unsigned char>(*p++);
-          if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80) || ((c3 & 0xC0) != 0x80))
-            return false;
-
-          // Special validation for 4-byte sequences
-          if (c == 0xF0 && c1 < 0x90) return false; // overlong: F0 80-8F
-          if (c == 0xF4 && c1 >= 0x90) return false; // > U+10FFFF: F4 90-BF
-          break;
-        }
-      }
-    }
-    return true;
-  }
+  static bool is_valid_utf8(const char* s, size_t len) { return glz::utf8::valid(s, len); }
 
   // Make an Erlang binary from a JSON string span (handles escapes).
   // Default (copy_strings == false): unescaped strings are returned as
@@ -478,14 +496,8 @@ private:
   // GC to reclaim the input buffer independently of the decoded results.
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (!has_escape) [[likely]] {
-      // Validate UTF-8 if enabled
-      if (m_opts.validate_utf8 && !is_valid_utf8(s, len)) {
-        m_err = "invalid UTF-8 in JSON string";
-        return 0;
-      }
+    if (!has_escape) [[likely]]
       return make_span_term(m_env, m_input_bin, m_beg, m_end, std::string_view(s, len), m_opts.copy_strings);
-    }
 
     // For escaped strings, unescape first then validate the result
     std::string_view unescaped = unescape(s, len, buf);
@@ -507,8 +519,8 @@ private:
       sv = std::string_view(s, len);
     }
 
-    // Validate UTF-8 if enabled
-    if (m_opts.validate_utf8 && !is_valid_utf8(sv.data(), sv.size())) {
+    // Raw key bytes were checked with the whole input; escaped keys are checked here.
+    if (has_escape && m_opts.validate_utf8 && first_invalid_utf8(sv.data(), sv.size()) != UTF8_OK) {
       m_err = "invalid UTF-8 in JSON string";
       return 0;
     }
@@ -543,8 +555,16 @@ private:
     bool neg = (*m_p == '-');
     if (neg) ++m_p;
 
-    // Integer part
-    while (m_p < m_end && *m_p >= '0' && *m_p <= '9') ++m_p;
+    // Integer part. Digits are accumulated in this same pass, so integers do
+    // not rescan them. At most 18 digits fit in uint64_t; longer runs take the
+    // bigint path below.
+    const char* digits = m_p;
+    uint64_t acc = 0;
+    while (m_p < m_end && *m_p >= '0' && *m_p <= '9') {
+      acc = acc * 10 + static_cast<uint64_t>(*m_p - '0');
+      ++m_p;
+    }
+    const size_t ndigits = static_cast<size_t>(m_p - digits);
 
     bool is_float = false;
     if (m_p < m_end && *m_p == '.') { is_float = true; ++m_p; while (m_p < m_end && *m_p >= '0' && *m_p <= '9') ++m_p; }
@@ -557,26 +577,18 @@ private:
     if (is_float) {
       double d;
       // std::from_chars for floating-point isn't available on all platforms
-      // (e.g. older Apple libc++), so use vendored fast_float here.
-      auto [ep, ec] = glz::fast_float::from_chars(start, m_p, d);
+      // (e.g. older Apple libc++), so use glazer_atof.hpp here.
+      auto [ep, ec] = glz::fp::from_chars(start, m_p, d);
       if (ec != std::errc{}) return 0;
       return enif_make_double(m_env, d);
     }
 
-    // Integer: try int64/uint64 first, bigint fallback
-    if (neg) {
-      int64_t v = 0;
-      auto [ep, ec] = std::from_chars(start + 1, m_p, v);
-      if (ec == std::errc{})
-        return enif_make_int64(m_env, -v);
-      // Could be uint64_t range negative? no — fall through to bigint
-    } else {
-      uint64_t v = 0;
-      auto [ep, ec] = std::from_chars(start, m_p, v);
-      if (ec == std::errc{})
-        return v <= uint64_t(INT64_MAX) ? enif_make_int64(m_env, int64_t(v))
-                                        : enif_make_uint64(m_env, v);
+    // Integer: 1..18 digits were accumulated above and always fit in int64.
+    if (ndigits >= 1 && ndigits <= 18) [[likely]] {
+      int64_t v = static_cast<int64_t>(acc);
+      return enif_make_int64(m_env, neg ? -v : v);
     }
+    // Empty or longer than 18 digits: bigint fallback (below).
     // Bigint
     ERL_NIF_TERM r = glz::BigInt::decode(m_env, start, m_p);
     return r ? r : (ERL_NIF_TERM)0;
@@ -630,7 +642,7 @@ private:
     DepthGuard guard(this);
     if (!guard.check()) [[unlikely]] return 0;
 
-    SmallTermVec<16> items;
+    const size_t base = m_stk_vals.size();
     if (m_p < m_end && *m_p == ']') {
       ++m_p;
       return enif_make_list_from_array(m_env, nullptr, 0);
@@ -639,14 +651,17 @@ private:
     for (;;) {
       auto v = parse_value(scratch);
       if (!v) [[unlikely]] return 0;
-      items.push_back(v);
+      m_stk_vals.push_back(v);
       skip_ws();
       if (m_p >= m_end) [[unlikely]] return 0;
       if (*m_p == ']')  { ++m_p; break; }
       if (*m_p != ',')  [[unlikely]] return 0;
       ++m_p;
     }
-    return enif_make_list_from_array(m_env, items.data(), unsigned(items.size()));
+    const size_t n = m_stk_vals.size() - base;
+    ERL_NIF_TERM list = enif_make_list_from_array(m_env, m_stk_vals.data() + base, unsigned(n));
+    m_stk_vals.set_size(base);
+    return list;
   }
 
   // Remove earlier duplicate {Key, Val} pairs in-place, keeping each key's
@@ -672,6 +687,33 @@ private:
         pairs.data()[out++] = pairs.data()[i];
     }
     pairs.set_size(out);
+  }
+
+  // Build a map from n parallel key/value terms. Same result as
+  // SmallTermVec::to_erl_map: duplicate keys fall back to put-in-order (last wins),
+  // and dedupe_keys rebuilds the map through put.
+  ERL_NIF_TERM make_map(const ERL_NIF_TERM* keys, const ERL_NIF_TERM* vals, size_t n)
+  {
+    ERL_NIF_TERM map = 0;
+    if (!enif_make_map_from_arrays(m_env, const_cast<ERL_NIF_TERM*>(keys),
+                                   const_cast<ERL_NIF_TERM*>(vals), unsigned(n), &map)) [[unlikely]] {
+      map = enif_make_new_map(m_env);
+      for (size_t i = 0; i < n; ++i) {
+        ERL_NIF_TERM next;
+        enif_make_map_put(m_env, map, keys[i], vals[i], &next);
+        map = next;
+      }
+    }
+    if (m_opts.dedupe_keys && map) {
+      ERL_NIF_TERM deduped = enif_make_new_map(m_env);
+      for (size_t i = 0; i < n; ++i) {
+        ERL_NIF_TERM next;
+        enif_make_map_put(m_env, deduped, keys[i], vals[i], &next);
+        deduped = next;
+      }
+      return deduped;
+    }
+    return map;
   }
 
   ERL_NIF_TERM parse_object(std::string& scratch)
@@ -724,8 +766,8 @@ private:
     // Map path: build the key/value arrays once and hand them to the native
     // `enif_make_map_from_arrays` fast path, which avoids the repeated map
     // rehash / mutation cost of `enif_make_map_put` in a per-entry loop.
-    SmallTermVec<32> keys;
-    SmallTermVec<32> vals;
+    const size_t base = m_stk_keys.size();   // members of this object start here
+    const size_t vbase = m_stk_vals.size();
 
     if (m_p < m_end && *m_p == '}') {
       ++m_p;
@@ -733,8 +775,7 @@ private:
     }
 
     for (;;) {
-      if (m_p >= m_end || *m_p != '"') [[unlikely]] return 0;
-
+      // read_string_raw checks for end of input and the opening quote itself.
       const char* kstr;
       size_t      klen;
       bool        kesc;
@@ -744,7 +785,7 @@ private:
 
       auto key = make_key_term(kstr, klen, kesc, scratch);
       if (!key) [[unlikely]] return 0;
-      keys.push_back(key);
+      m_stk_keys.push_back(key);
       skip_ws();
 
       if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
@@ -752,7 +793,7 @@ private:
 
       auto val = parse_value(scratch);
       if (!val) [[unlikely]] return 0;
-      vals.push_back(val);
+      m_stk_vals.push_back(val);
       skip_ws();
 
       if (m_p >= m_end) [[unlikely]] return 0;
@@ -762,9 +803,13 @@ private:
       skip_ws();
     }
 
-    if (m_opts.dedupe_keys)
-      return vals.to_erl_map<true>(m_env, keys);
-    return vals.to_erl_map(m_env, keys);
+    // Members are complete: build the map from this object's slice of each stack,
+    // then pop it. Nested containers have already popped back to these bases.
+    const size_t n = m_stk_vals.size() - vbase;
+    ERL_NIF_TERM map = make_map(m_stk_keys.data() + base, m_stk_vals.data() + vbase, n);
+    m_stk_keys.set_size(base);
+    m_stk_vals.set_size(vbase);
+    return map;
   }
 };
 
@@ -926,36 +971,10 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
 
 // find_escape_pos is defined in glazer_common.hpp and shared with glazer_yaml.hpp.
 
-inline bool is_valid_utf8(std::string_view sv)
-{
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(sv.data());
-  const unsigned char* e = p + sv.size();
-  while (p < e) {
-    unsigned char c = *p++;
-    if (c < 0x80) continue;
-    if (c >= 0xC2 && c <= 0xDF) {
-      if (p == e || (p[0] & 0xC0) != 0x80) return false;
-      ++p;
-    } else if (c >= 0xE0 && c <= 0xEF) {
-      if (p + 1 >= e || (p[0] & 0xC0) != 0x80 || (p[1] & 0xC0) != 0x80) return false;
-      if (c == 0xE0 && (p[0] < 0xA0)) return false;
-      if (c == 0xED && (p[0] >= 0xA0)) return false;
-      p += 2;
-    } else if (c >= 0xF0 && c <= 0xF4) {
-      if (p + 2 >= e || (p[0] & 0xC0) != 0x80 || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) return false;
-      if (c == 0xF0 && (p[0] < 0x90)) return false;
-      if (c == 0xF4 && (p[0] >= 0x90)) return false;
-      p += 3;
-    } else {
-      return false;
-    }
-  }
-  return true;
-}
 
 // Fast valid-UTF8 escape path for the common case where there are no forced
 // unicode replacements or escapes beyond JSON's standard control-char quoting.
-static inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
+inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
 {
   // Valid UTF-8 strings only need escaping for control chars, quotes, backslashes,
   // and optional slash; all non-ASCII bytes are already encoded as UTF-8 sequences.
@@ -998,7 +1017,7 @@ static inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
 // further ensure() calls inside the loop.  find_escape_pos bulk-skips clean
 // runs (NEON/AVX2/SSE2/table); ESCAPE_TAB handles special bytes with a
 // single indexed load + memcpy instead of a switch branch.
-static inline void json_escape_string(std::string_view sv, OutBuf& out)
+inline void json_escape_string(std::string_view sv, OutBuf& out)
 {
   // Common case: long strings are mostly plain ASCII. Copy whole SIMD words
   // directly into the output buffer until the first byte that requires escaping,
@@ -1062,7 +1081,7 @@ static inline void json_escape_string(std::string_view sv, OutBuf& out)
 }
 
 // JSON-escape a UTF-8 byte sequence with optional forward slash escaping
-static void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool escape_fwd_slash)
+inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool escape_fwd_slash)
 {
   out.ensure(sv.size() * 2 + 2);
 
@@ -1133,7 +1152,7 @@ static void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
 // JSON-escape a UTF-8 byte sequence, additionally escaping every non-ASCII
 // code point as \uXXXX (uescape), and/or replacing invalid UTF-8 byte
 // sequences with U+FFFD before escaping (force_utf8).
-static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
+inline void json_escape_string_unicode(std::string_view sv, OutBuf& out,
                                        bool uescape, bool force_utf8, bool escape_fwd_slash = false)
 {
   out.reserve(sv.size() * 6 + 2);
@@ -1188,6 +1207,95 @@ static void json_escape_string_unicode(std::string_view sv, OutBuf& out,
   out.push('"');
 }
 
+//-----------------------------------------------------------------------------
+// Word helpers for short strings (see escape_string). A byte needs escaping
+// when it is below 0x20, or is '"' or '\\'. Each test is exact for "some byte
+// matches". Unused lanes are padded with 'a', which needs no escape.
+//-----------------------------------------------------------------------------
+static inline uint64_t short_word_needs_escape(uint64_t v) {
+  constexpr uint64_t ones = 0x0101010101010101ull, highs = 0x8080808080808080ull;
+  const uint64_t below_20 = (v - ones * 0x20) & ~v & highs;
+  const uint64_t qv = v ^ (ones * '"');
+  const uint64_t bv = v ^ (ones * '\\');
+  const uint64_t q_zero = (qv - ones) & ~qv & highs;
+  const uint64_t b_zero = (bv - ones) & ~bv & highs;
+  return below_20 | q_zero | b_zero;
+}
+static inline uint64_t short_load(const char* p, size_t k) {  // k = 4 or 8
+  if (k == 8) { uint64_t w; memcpy(&w, p, 8); return w; }
+  uint32_t w; memcpy(&w, p, 4); return w;
+}
+// True when the n bytes (1 <= n <= 16) at p contain a byte that needs escaping.
+static inline bool short_needs_escape(const char* p, size_t n) {
+  if (n >= 8)
+    return (short_word_needs_escape(short_load(p, 8)) | short_word_needs_escape(short_load(p + n - 8, 8))) != 0;
+  if (n >= 4)
+    return (short_word_needs_escape(short_load(p, 4) | 0x6161616100000000ull) |
+            short_word_needs_escape(short_load(p + n - 4, 4) | 0x6161616100000000ull)) != 0;
+  // n is 1..3: the first, middle and last bytes cover every position.
+  const uint64_t w = static_cast<uint64_t>(static_cast<unsigned char>(p[0]))
+                   | (static_cast<uint64_t>(static_cast<unsigned char>(p[n / 2])) << 8)
+                   | (static_cast<uint64_t>(static_cast<unsigned char>(p[n - 1])) << 16)
+                   | 0x6161616161000000ull;
+  return short_word_needs_escape(w) != 0;
+}
+// True when any of the n bytes (1 <= n <= 16) has its high bit set.
+static inline bool short_any_high_bit(const char* p, size_t n) {
+  constexpr uint64_t highs = 0x8080808080808080ull;
+  if (n >= 8)
+    return ((short_load(p, 8) | short_load(p + n - 8, 8)) & highs) != 0;
+  if (n >= 4)
+    return ((short_load(p, 4) | short_load(p + n - 4, 4)) & 0x80808080ull) != 0;
+  return ((static_cast<unsigned char>(p[0]) | static_cast<unsigned char>(p[n / 2]) |
+           static_cast<unsigned char>(p[n - 1])) & 0x80) != 0;
+}
+// One test for 1..16 bytes: true when any byte needs escaping or has its high
+// bit set (the two conditions short_needs_escape and short_any_high_bit check
+// separately). The words are loaded once and the length is dispatched once.
+static inline bool short_bad(const char* p, size_t n)
+{
+  constexpr uint64_t ones = 0x0101010101010101ull, highs = 0x8080808080808080ull;
+  auto bad = [&](uint64_t v) {
+    const uint64_t qv = v ^ (ones * '"');
+    const uint64_t bv = v ^ (ones * '\\');
+    return (((v - ones * 0x20) & ~v) | ((qv - ones) & ~qv) | ((bv - ones) & ~bv) | v) & highs;
+  };
+  uint64_t a, b;
+  if (n >= 8) {
+    a = short_load(p, 8);
+    b = short_load(p + n - 8, 8);
+  } else if (n >= 4) {
+    a = short_load(p, 4) | 0x6161616100000000ull;
+    b = short_load(p + n - 4, 4) | 0x6161616100000000ull;
+  } else {  // 1..3: first, middle and last bytes cover every position
+    a = static_cast<uint64_t>(static_cast<unsigned char>(p[0]))
+      | (static_cast<uint64_t>(static_cast<unsigned char>(p[n / 2])) << 8)
+      | (static_cast<uint64_t>(static_cast<unsigned char>(p[n - 1])) << 16)
+      | 0x6161616161000000ull;
+    b = a;
+  }
+  return (bad(a) | bad(b)) != 0;
+}
+
+// Copy n (1 <= n <= 16) bytes with at most two moves of 4 or 8 bytes.
+static inline void short_copy(char* dst, const char* src, size_t n) {
+  if (n >= 8) {
+    uint64_t a, b;
+    memcpy(&a, src, 8);
+    memcpy(&b, src + n - 8, 8);
+    memcpy(dst, &a, 8);
+    memcpy(dst + n - 8, &b, 8);
+  } else if (n >= 4) {
+    uint32_t a, b;
+    memcpy(&a, src, 4);
+    memcpy(&b, src + n - 4, 4);
+    memcpy(dst, &a, 4);
+    memcpy(dst + n - 4, &b, 4);
+  } else {
+    for (size_t i = 0; i < n; ++i) dst[i] = src[i];
+  }
+}
+
 struct JSONEncoder {
   JSONEncoder(ErlNifEnv* env, const JSONEncodeOpts& opts, OutBuf& out)
     : m_env(env), m_opts(opts), m_out(out), m_err(nullptr), m_err_term(0)
@@ -1197,13 +1305,115 @@ struct JSONEncoder {
   const char*  err()       const { return m_err;      }
   ERL_NIF_TERM err_term()  const { return m_err_term; }
 
+  // Output budget in bytes. The normal scheduler encodes with a budget; once
+  // the output would exceed it, encoding stops and the NIF reruns the call on a
+  // dirty scheduler (unlimited budget). SIZE_MAX means no limit.
+  void set_budget(size_t budget) { m_budget = budget; }
+  bool budget_exceeded() const   { return m_over_budget; }
+
+  // A plain-ASCII binary with nothing to escape is written straight to the
+  // output, in one pass that copies 16-byte blocks as it checks them. Anything
+  // else (a byte that needs escaping, a high bit, or uescape/escape_fwd_slash)
+  // returns false, and the caller takes the general path, which validates and
+  // escapes. Valid in both value and key position. Output only changes on commit,
+  // so a false return leaves the buffer as it was.
+  bool emit_plain(const char* data, size_t n)
+  {
+    if (n == 0 || m_opts.uescape || m_opts.escape_fwd_slash) return false;
+    if (n <= 16) {
+#if defined(__SSE2__)
+      // One 16-byte check and copy for a short string, when the load stays inside
+      // one 4 KiB block (same guard and sanitizer switch as the tail below). The
+      // bytes past n are masked out of the check and are overwritten by the quote.
+#if defined(GLAZER_TAIL_BOUNDED)
+      constexpr bool short_wide_ok = false;
+#else
+      constexpr bool short_wide_ok = true;
+#endif
+      if (short_wide_ok && (reinterpret_cast<uintptr_t>(data) & 4095) <= 4096 - 16) {
+        const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data));
+        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(_mm_set1_epi8(-96), _mm_xor_si128(v, _mm_set1_epi8(-128))),
+                                                          _mm_cmpeq_epi8(v, _mm_set1_epi8('"'))),
+                                             _mm_or_si128(_mm_cmpeq_epi8(v, _mm_set1_epi8('\\')), v));
+        if (_mm_movemask_epi8(special) & ((1u << n) - 1)) return false;
+        m_out.ensure(n + 18);
+        char* const base = m_out.tail();
+        base[0] = '"';
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1), v);
+        base[n + 1] = '"';
+        m_out.commit(n + 2);
+        return true;
+      }
+#endif
+      if (short_bad(data, n)) return false;
+      m_out.ensure(n + 2);
+      m_out.unsafe_push('"');
+      short_copy(m_out.tail(), data, n);
+      m_out.commit(n);
+      m_out.unsafe_push('"');
+      return true;
+    }
+#if defined(__SSE2__)
+    m_out.ensure(n + 2 + 16);          // +16: the tail may store a full 16-byte block
+    char* const base = m_out.tail();   // base[0] is the opening quote
+    const __m128i vq    = _mm_set1_epi8('"');
+    const __m128i vbs   = _mm_set1_epi8('\\');
+    const __m128i vbias = _mm_set1_epi8(-128);
+    const __m128i vcmp  = _mm_set1_epi8(-96);   // control bytes after the bias trick
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+      const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
+      const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)),
+                                                        _mm_cmpeq_epi8(v, vq)),
+                                           _mm_or_si128(_mm_cmpeq_epi8(v, vbs), v));  // v: high bits
+      if (_mm_movemask_epi8(special) != 0) return false;
+      _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
+    }
+    const size_t r = n - i;
+    if (r > 0) {
+      // Tail of 1..15 bytes. When a 16-byte load from the tail start stays inside
+      // one 4 KiB block, it cannot leave the page holding the string, so one load
+      // checks and copies the tail (the bytes past r are masked out, and the store
+      // lands in reserved output space). Otherwise, the bounded word path.
+#if defined(GLAZER_TAIL_BOUNDED)
+      constexpr bool wide_tail_ok = false;
+#else
+      constexpr bool wide_tail_ok = true;
+#endif
+      if (wide_tail_ok && (reinterpret_cast<uintptr_t>(data + i) & 4095) <= 4096 - 16) {
+        const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
+        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)),
+                                                          _mm_cmpeq_epi8(v, vq)),
+                                             _mm_or_si128(_mm_cmpeq_epi8(v, vbs), v));
+        if (_mm_movemask_epi8(special) & ((1u << r) - 1)) return false;
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
+      } else {
+        if (short_needs_escape(data + i, r) || glz::utf8::short_any_high_bit(data + i, r)) return false;
+        short_copy(base + 1 + i, data + i, r);
+      }
+    }
+    base[0] = '"';
+    base[n + 1] = '"';
+    m_out.commit(n + 2);
+    return true;
+#else
+    return false;
+#endif
+  }
+
   bool encode(ERL_NIF_TERM term)
   {
+    if (over_budget(0)) [[unlikely]] return budget_error(term);
     switch (enif_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
-        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
+        if (over_budget(bin.size)) [[unlikely]] return budget_error(term);
+        const char* data = reinterpret_cast<const char*>(bin.data);
+        if (emit_plain(data, bin.size)) return true;
+        if (!m_opts.force_utf8 && first_invalid_utf8(data, bin.size) != UTF8_OK) [[unlikely]]
+          return error("invalid UTF-8 in string", term);
+        return escape_string({data, bin.size});
       }
 
       case ERL_NIF_TERM_TYPE_INTEGER:
@@ -1242,6 +1452,30 @@ private:
   const char*           m_err;
   ERL_NIF_TERM          m_err_term;
 
+  // Nesting depth of encode_map/encode_list. Same cap as the decoder, so a
+  // term that decodes can always be encoded back, and so deep terms fail with
+  // an error instead of exhausting the C stack.
+  static constexpr unsigned MAX_DEPTH = 128;
+  unsigned              m_depth = 0;
+
+
+  struct DepthScope {
+    unsigned& d;
+    explicit DepthScope(unsigned& d) : d(d) { ++d; }
+    ~DepthScope() { --d; }
+  };
+
+  size_t m_budget = SIZE_MAX;
+  bool   m_over_budget = false;
+
+  // True if writing `extra` more bytes would pass the budget; records it.
+  bool over_budget(size_t extra) {
+    if (m_out.view().size() + extra <= m_budget) return false;
+    m_over_budget = true;
+    return true;
+  }
+  bool budget_error(ERL_NIF_TERM term) { return error("output budget exceeded", term); }
+
   bool escape_string(std::string_view sv)
   {
     if (sv.empty()) {
@@ -1249,9 +1483,26 @@ private:
       return true;
     }
 
+    // Short strings with the default options: decide with word tests and copy
+    // with overlapping moves. No per-byte loop, no branch per byte, no libc call.
+    if (sv.size() <= 16 && !m_opts.uescape && !m_opts.escape_fwd_slash) {
+      const char* p = sv.data();
+      const size_t n = sv.size();
+      // With force_utf8, a string with a non-ASCII byte is left to the validating path.
+      if (!short_needs_escape(p, n) && !(m_opts.force_utf8 && short_any_high_bit(p, n))) {
+        m_out.ensure(n + 2);
+        m_out.unsafe_push('"');
+        short_copy(m_out.tail(), p, n);
+        m_out.commit(n);
+        m_out.unsafe_push('"');
+        return true;
+      }
+    }
+
     const char* p = sv.data();
     const char* end = p + sv.size();
-    if (!m_opts.uescape && !m_opts.force_utf8) {
+    const bool force = m_opts.force_utf8 && first_invalid_utf8(p, sv.size()) != UTF8_OK;
+    if (!m_opts.uescape && !force) {
       if (!m_opts.escape_fwd_slash) {
         if (find_escape_pos(p, end) == end) {
           m_out.push_quoted(sv);
@@ -1267,8 +1518,8 @@ private:
       }
     }
 
-    if (m_opts.uescape || m_opts.force_utf8)
-      json_escape_string_unicode(sv, m_out, m_opts.uescape, m_opts.force_utf8, m_opts.escape_fwd_slash);
+    if (m_opts.uescape || force)
+      json_escape_string_unicode(sv, m_out, m_opts.uescape, force, m_opts.escape_fwd_slash);
     else if (m_opts.escape_fwd_slash)
       json_escape_string_fwd_slash(sv, m_out, true);
     else
@@ -1276,8 +1527,37 @@ private:
     return true;
   }
 
+  // Atom names and charlist keys hold Latin-1 code points (0..255). Emit them as
+  // UTF-8, so a code point such as 0xE9 becomes the two bytes C3 A9.
+  static bool has_high_byte(const char* s, size_t n)
+  {
+    for (size_t i = 0; i < n; ++i)
+      if (static_cast<unsigned char>(s[i]) >= 0x80) return true;
+    return false;
+  }
+
+  bool escape_latin1(const char* s, size_t n)
+  {
+    if (!has_high_byte(s, n))
+      return escape_string({s, n});
+    std::string utf8;
+    utf8.reserve(n * 2);
+    for (size_t i = 0; i < n; ++i) {
+      const unsigned char c = static_cast<unsigned char>(s[i]);
+      if (c < 0x80) {
+        utf8 += static_cast<char>(c);
+      } else {
+        utf8 += static_cast<char>(0xC0 | (c >> 6));
+        utf8 += static_cast<char>(0x80 | (c & 0x3F));
+      }
+    }
+    return escape_string(utf8);
+  }
+
   bool append_escaped_latin1_atom(const char* s, size_t len)
   {
+    if (has_high_byte(s, len))
+      return escape_latin1(s, len);
     if (len == 0) {
       m_out.push("\"\"", 2);
       return true;
@@ -1325,6 +1605,12 @@ private:
 
   bool encode_integer(ERL_NIF_TERM term)
   {
+    ErlNifSInt64 i;
+    if (enif_get_int64(m_env, term, &i)) [[likely]] {
+      m_out.ensure(20);
+      m_out.commit(glz::BigInt::write_i64(m_out.tail(), i));
+      return true;
+    }
     return glz::BigInt::encode(m_env, term, m_out)
         || error("cannot encode integer", term);
   }
@@ -1340,20 +1626,25 @@ private:
     }
 
     char buf[32];
-    auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::general);
-    if (ec == std::errc{}) {
-      bool has_dot = false;
-      for (char* q = buf; q < p; ++q) {
-        if (*q == '.' || *q == 'e' || *q == 'E') { has_dot = true; break; }
-      }
-      m_out.push(buf, p - buf);
-      if (!has_dot) m_out.push(".0", 2);
-      return true;
-    }
-
-    int n = snprintf(buf, sizeof(buf), "%.17g", d);
-    m_out.push(buf, n);
+    m_out.push(buf, glz::fp::ftoa(d, buf));
     return true;
+  }
+
+  // Writes one object member key and its ':'.
+  bool encode_member_key(ERL_NIF_TERM key)
+  {
+    if (!encode_key(key)) [[unlikely]] return false;
+    m_out.push(':');
+    return true;
+  }
+
+  // A binary key, already inspected: the same output as encode_key's binary case.
+  bool encode_binary_key(ERL_NIF_TERM key, const char* data, size_t n)
+  {
+    if (emit_plain(data, n)) return true;
+    if (!m_opts.force_utf8 && first_invalid_utf8(data, n) != UTF8_OK) [[unlikely]]
+      return error("invalid UTF-8 in string", key);
+    return escape_string({data, n});
   }
 
   bool encode_key(ERL_NIF_TERM key)
@@ -1363,7 +1654,7 @@ private:
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, key, &bin))
           return error("not a binary", key);
-        return escape_string({reinterpret_cast<const char*>(bin.data), bin.size});
+        return encode_binary_key(key, reinterpret_cast<const char*>(bin.data), bin.size);
       }
       case ERL_NIF_TERM_TYPE_ATOM:
         return encode_atom_key(key);
@@ -1391,7 +1682,7 @@ private:
         }
         if (!enif_is_empty_list(m_env, t)) [[unlikely]]
           return error("list key is not a proper charlist", key);
-        return escape_string(std::string_view(m_atom_buf, i));
+        return escape_latin1(m_atom_buf, i);
       }
       default:
         return error("unsupported key type", key);
@@ -1400,6 +1691,8 @@ private:
 
   inline bool encode_map(ERL_NIF_TERM term)
   {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", term);
+    DepthScope depth_scope(m_depth);
     size_t map_size = 0;
     if (enif_get_map_size(m_env, term, &map_size)) [[likely]]
       m_out.reserve(map_size * 24 + 2);
@@ -1411,9 +1704,8 @@ private:
     while (iter->get_pair(&k, &v)) {
       if (!first) m_out.push(',');
       first = false;
-      if (!encode_key(k)) [[unlikely]] return error("cannot encode key", k);
-      m_out.push(':');
-      if (!encode(v))     [[unlikely]] return error("cannot encode value", v);
+      if (!encode_member_key(k)) [[unlikely]] return error("cannot encode key", k);
+      if (!encode(v))            [[unlikely]] return error("cannot encode value", v);
       iter->next();
     }
     m_out.push('}');
@@ -1422,6 +1714,8 @@ private:
 
   inline bool encode_list(ERL_NIF_TERM term)
   {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", term);
+    DepthScope depth_scope(m_depth);
     unsigned list_len = 0;
     if (enif_get_list_length(m_env, term, &list_len)) [[likely]]
       m_out.reserve(static_cast<size_t>(list_len) * 12 + 2);
@@ -1442,6 +1736,8 @@ private:
 
   bool encode_proplist_inline(ERL_NIF_TERM term)
   {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", term);
+    DepthScope depth_scope(m_depth);
     unsigned list_len = 0;
     if (enif_get_list_length(m_env, term, &list_len)) [[likely]]
       m_out.reserve(static_cast<size_t>(list_len) * 24 + 2);
@@ -1487,11 +1783,13 @@ private:
     return append_escaped_latin1_atom(m_atom_buf, len);
   }
 
+  // Atoms are immediate terms, so comparing the words is the same as
+  // enif_is_identical, without a call into the VM for each comparison.
   bool encode_atom(ERL_NIF_TERM term) {
-    if (enif_is_identical(term, m_opts.null_term)) { m_out.push("null", 4); return true; }
-    if (enif_is_identical(term, AM_TRUE))  { m_out.push("true",  4); return true; }
-    if (enif_is_identical(term, AM_FALSE)) { m_out.push("false", 5); return true; }
-    if (enif_is_identical(term, AM_NIL))   { m_out.push("null",  4); return true; }
+    if (term == m_opts.null_term) { m_out.push("null", 4); return true; }
+    if (term == AM_TRUE)  { m_out.push("true",  4); return true; }
+    if (term == AM_FALSE) { m_out.push("false", 5); return true; }
+    if (term == AM_NIL)   { m_out.push("null",  4); return true; }
     unsigned len = 0;
     if (!enif_get_atom_length(m_env, term, &len, ERL_NIF_LATIN1)) [[unlikely]]
       return error("cannot convert atom to string", term);
@@ -1509,10 +1807,14 @@ private:
     return append_escaped_latin1_atom(m_atom_buf, len);
   }
 
+  // Each nesting level reports failure through here as the error unwinds.
+  // Keep the first (innermost) error, so the real cause survives the unwind.
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {
-    m_err = err;
-    m_err_term = term;
+    if (!m_err) {
+      m_err = err;
+      m_err_term = term;
+    }
     return false;
   }
 };

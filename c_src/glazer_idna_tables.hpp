@@ -9,7 +9,7 @@
 
 namespace glz::idna {
 
-inline constexpr uint32_t kRunStart[] = {
+inline constexpr uint32_t s_run_start[] = {
   0x0,
   0x9,
   0xA,
@@ -4053,7 +4053,7 @@ inline constexpr uint32_t kRunStart[] = {
   0x10FFFE,
 };
 
-inline constexpr uint32_t kRunValue[] = {
+inline constexpr uint32_t s_run_value[] = {
   0x2400,
   0x3000,
   0x2C00,
@@ -8097,9 +8097,9 @@ inline constexpr uint32_t kRunValue[] = {
   0x2404,
 };
 
-inline constexpr uint32_t kRuns = 4041;
+inline constexpr uint32_t s_runs = 4041;
 
-inline constexpr uint32_t kCccStart[] = {
+inline constexpr uint32_t s_ccc_start[] = {
   0x0,
   0x300,
   0x315,
@@ -8708,7 +8708,7 @@ inline constexpr uint32_t kCccStart[] = {
   0x1E94B,
 };
 
-inline constexpr uint32_t kCccValue[] = {
+inline constexpr uint32_t s_ccc_value[] = {
   0,
   230,
   232,
@@ -9317,9 +9317,9 @@ inline constexpr uint32_t kCccValue[] = {
   0,
 };
 
-inline constexpr uint32_t kCccRuns = 606;
+inline constexpr uint32_t s_ccc_runs = 606;
 
-inline constexpr uint32_t kDecompCp[] = {
+inline constexpr uint32_t s_decomp_cp[] = {
   0xC0,
   0xC1,
   0xC2,
@@ -11403,7 +11403,7 @@ inline constexpr uint32_t kDecompCp[] = {
   0x2FA1D,
 };
 
-inline constexpr uint32_t kDecompOff[] = {
+inline constexpr uint32_t s_decomp_off[] = {
   0,
   2,
   4,
@@ -13488,7 +13488,7 @@ inline constexpr uint32_t kDecompOff[] = {
   3450,
 };
 
-inline constexpr uint32_t kDecompSeq[] = {
+inline constexpr uint32_t s_decomp_seq[] = {
   0x41,
   0x300,
   0x41,
@@ -16941,9 +16941,9 @@ inline constexpr uint32_t kDecompSeq[] = {
   0x2A600,
 };
 
-inline constexpr uint32_t kDecompCount = 2081;
+inline constexpr uint32_t s_decomp_count = 2081;
 
-inline constexpr uint64_t kCompKey[] = {
+inline constexpr uint64_t s_comp_key[] = {
   0x7800338ULL,
   0x7A00338ULL,
   0x7C00338ULL,
@@ -17907,7 +17907,7 @@ inline constexpr uint64_t kCompKey[] = {
   0x2DAD216D67ULL,
 };
 
-inline constexpr uint32_t kCompValue[] = {
+inline constexpr uint32_t s_comp_value[] = {
   0x226E,
   0x2260,
   0x226F,
@@ -18871,9 +18871,9 @@ inline constexpr uint32_t kCompValue[] = {
   0x16D6A,
 };
 
-inline constexpr uint32_t kCompCount = 961;
+inline constexpr uint32_t s_comp_count = 961;
 
-inline constexpr uint32_t kUts46Start[] = {
+inline constexpr uint32_t s_uts46_start[] = {
   0x41,
   0x42,
   0x43,
@@ -26013,7 +26013,7 @@ inline constexpr uint32_t kUts46Start[] = {
   0xE01F0,
 };
 
-inline constexpr uint32_t kUts46End[] = {
+inline constexpr uint32_t s_uts46_end[] = {
   0x41,
   0x42,
   0x43,
@@ -33153,7 +33153,7 @@ inline constexpr uint32_t kUts46End[] = {
   0x10FFFF,
 };
 
-inline constexpr uint32_t kUts46Type[] = {
+inline constexpr uint32_t s_uts46_type[] = {
   1,
   1,
   1,
@@ -40293,7 +40293,7 @@ inline constexpr uint32_t kUts46Type[] = {
   3,
 };
 
-inline constexpr uint32_t kUts46Off[] = {
+inline constexpr uint32_t s_uts46_off[] = {
   0,
   1,
   2,
@@ -47434,7 +47434,7 @@ inline constexpr uint32_t kUts46Off[] = {
   8263,
 };
 
-inline constexpr uint32_t kUts46Seq[] = {
+inline constexpr uint32_t s_uts46_seq[] = {
   0x61,
   0x62,
   0x63,
@@ -55700,6 +55700,6 @@ inline constexpr uint32_t kUts46Seq[] = {
   0x2A600,
 };
 
-inline constexpr uint32_t kUts46Count = 7137;
+inline constexpr uint32_t s_uts46_count = 7137;
 
 } // namespace glz::idna

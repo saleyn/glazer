@@ -493,10 +493,12 @@ rfc8259_strings_test_() ->
     ?_assertEqual(<<"x41">>,    glazer_json:decode(<<"\"\\x41\"">>)),
 
     %% A lone (unpaired) UTF-16 surrogate in a \u escape does not represent
-    %% a valid Unicode scalar value; glazer encodes it as WTF-8/CESU-8 bytes
-    %% rather than rejecting it (default behavior). With validate_utf8 enabled,
-    %% these would produce parse errors.
-    ?_assertEqual(<<237,160,128>>, glazer_json:decode(<<"\"\\ud800\"">>))
+    %% a valid Unicode scalar value. It decodes to the CESU-8 bytes ED A0 80,
+    %% which are not valid UTF-8, so the default (validate_utf8) rejects it.
+    %% skip_utf8_validation keeps the bytes.
+    ?_assertError({parse_error, _}, glazer_json:decode(<<"\"\\ud800\"">>)),
+    ?_assertEqual(<<237,160,128>>,
+                  glazer_json:decode(<<"\"\\ud800\"">>, [skip_utf8_validation]))
     % Temporarily commented out due to syntax issue:
     % ?_assertEqual(<<237,176,128>>, glazer_json:decode(<<"\"\\udc00\">>))
   ].
@@ -677,12 +679,14 @@ jsontestsuite_implementation_defined_test_() ->
     %% text must be UTF-8 without a BOM.
     ?_assertError({parse_error, _}, glazer_json:decode(<<239,187,191, "{}">>)),
 
-    %% By default, glazer does not validate that string contents are well-formed UTF-8:
-    %% invalid byte sequences (overlong encodings, lone continuation bytes,
-    %% truncated multi-byte sequences) are passed through unchanged as raw
-    %% bytes in the resulting binary. With validate_utf8 enabled, these cause parse errors.
-    ?_assertEqual([<<255>>],          glazer_json:decode(<<"[\"", 255, "\"]">>)),
-    ?_assertEqual([<<129>>],          glazer_json:decode(<<"[\"", 129, "\"]">>)),
+    %% By default, string contents must be well-formed UTF-8: invalid byte
+    %% sequences (overlong encodings, lone continuation bytes, truncated
+    %% multi-byte sequences) are a parse error. skip_utf8_validation passes
+    %% them through unchanged as raw bytes in the resulting binary.
+    ?_assertError({parse_error, _}, glazer_json:decode(<<"[\"", 255, "\"]">>)),
+    ?_assertError({parse_error, _}, glazer_json:decode(<<"[\"", 129, "\"]">>)),
+    ?_assertEqual([<<255>>],          glazer_json:decode(<<"[\"", 255, "\"]">>, [skip_utf8_validation])),
+    ?_assertEqual([<<129>>],          glazer_json:decode(<<"[\"", 129, "\"]">>, [skip_utf8_validation])),
 
     %% Deep-but-reasonable array nesting is within MAX_DEPTH and decodes fine
     %% (see max_depth_test_ for the depth-limit boundary itself).
@@ -752,10 +756,61 @@ force_utf8_test_() ->
     %% Invalid byte sequences are sanitized to U+FFFD (UTF-8: EF BF BD)
     ?_assertEqual(<<"\"", 16#EF, 16#BF, 16#BD, 16#EF, 16#BF, 16#BD, "a\"">>,
                   glazer_json:encode(<<16#FF, 16#FE, $a>>, [force_utf8])),
-    %% Without force_utf8, invalid bytes pass through verbatim
-    ?_assertEqual(<<"\"", 16#FF, 16#FE, "a\"">>, glazer_json:encode(<<16#FF, 16#FE, $a>>)),
+    %% Without force_utf8, invalid UTF-8 in a binary is an encode error
+    ?_assertError({encode_error, {<<"invalid UTF-8 in string">>, <<16#FF, 16#FE, $a>>}},
+                  glazer_json:encode(<<16#FF, 16#FE, $a>>)),
     %% Valid UTF-8 is left untouched
     ?_assertEqual(<<"\"", 16#C3, 16#A9, "\"">>, glazer_json:encode(<<16#C3, 16#A9>>, [force_utf8]))
+  ].
+
+%% Invalid UTF-8 in object keys is an error too, unless force_utf8 is set.
+invalid_utf8_key_test_() ->
+  [
+    ?_assertError({encode_error, {<<"invalid UTF-8 in string">>, <<16#FF>>}},
+                  glazer_json:encode(#{<<16#FF>> => 1})),
+    ?_assertEqual(<<"{\"", 16#EF, 16#BF, 16#BD, "\":1}">>,
+                  glazer_json:encode(#{<<16#FF>> => 1}, [force_utf8]))
+  ].
+
+%% The UTF-8 validator works on 16-byte blocks. These strings are long enough to
+%% use the vector path, and the bad byte or the multi-byte character sits at
+%% every offset, so block boundaries and sequences split across them are covered.
+utf8_vector_path_test_() ->
+  Bad = [<<16#80>>, <<16#C0>>, <<16#FF>>, <<16#ED, 16#A0, 16#80>>,   % lone continuation, overlong, surrogate
+         <<16#F4, 16#90, 16#80, 16#80>>, <<16#E2, 16#82>>],         % above U+10FFFF, truncated
+  Multi = [<<"é"/utf8>>, <<"日"/utf8>>, <<"𝄞"/utf8>>],
+  [
+    ?_test(begin
+      [begin
+         Pad = binary:copy(<<"a">>, Off),
+         Tail = binary:copy(<<"b">>, 40),
+         Str = <<Pad/binary, B/binary, Tail/binary>>,
+         Json = <<"\"", Str/binary, "\"">>,
+         ?assertError({parse_error, _}, glazer_json:decode(Json)),
+         ?assertEqual(Str, glazer_json:decode(Json, [skip_utf8_validation]))
+       end || B <- Bad, Off <- lists:seq(0, 33)],
+      ok
+    end),
+    ?_test(begin
+      [begin
+         Pad = binary:copy(<<"a">>, Off),
+         Str = <<Pad/binary, M/binary, Pad/binary, M/binary, M/binary>>,
+         Json = <<"\"", Str/binary, "\"">>,
+         ?assertEqual(Str, glazer_json:decode(Json)),
+         ?assertEqual(Str, glazer_json:decode(Json, [validate_utf8]))
+       end || M <- Multi, Off <- lists:seq(0, 33)],
+      ok
+    end)
+  ].
+
+%% Atom names and charlist keys are Latin-1 code points; they must come out as
+%% UTF-8 (code point 233 is the two bytes C3 A9), not as raw Latin-1 bytes.
+latin1_names_utf8_test_() ->
+  [
+    ?_assertEqual(<<"\"", 16#C3, 16#A9, "\"">>, glazer_json:encode(list_to_atom([233]))),
+    ?_assertEqual(<<"{\"", 16#C3, 16#A9, "\":1}">>, glazer_json:encode(#{list_to_atom([233]) => 1})),
+    ?_assertEqual(<<"{\"", 16#C3, 16#A9, "\":1}">>, glazer_json:encode(#{[233] => 1})),
+    ?_assertEqual(<<"{\"ab\":1}">>, glazer_json:encode(#{"ab" => 1}))
   ].
 
 utf8_boundary_preserve_bytes_test_() ->

@@ -90,14 +90,14 @@ Decode options:
   Useful for decoding one JSON value off the front of a buffer (e.g. a
   newline-delimited stream) without a separate `scan/1,2` pass to find
   where the value ends first.
-- `validate_utf8`         - enable UTF-8 validation for JSON strings.
-  When enabled, invalid UTF-8 sequences in string values or object keys
-  cause a parse error instead of being silently accepted, matching the
-  behavior of OTP's json module and other JSON parsers. By default,
-  UTF-8 validation is disabled for backward compatibility and performance.
-- `skip_utf8_validation`  - explicitly disable UTF-8 validation for JSON
-  strings (this is the default behavior). This option is provided for
-  clarity when UTF-8 validation behavior might be changed in future versions.
+- `validate_utf8`         - validate UTF-8 in JSON strings (the default).
+  Invalid UTF-8 sequences in string values or object keys cause a parse
+  error. Overlong forms, surrogates (U+D800..U+DFFF) and code points above
+  U+10FFFF are invalid. Validation uses a vector check, so it costs little
+  on valid input.
+- `skip_utf8_validation`  - accept invalid UTF-8 in JSON strings and copy the
+  bytes through unchanged. Use this only for input known to be UTF-8 or for
+  byte data that is not text.
 """.
 -type decode_opts() :: [decode_opt()].
 
@@ -116,12 +116,12 @@ Encode options:
 - `uescape`             - escape non-ASCII characters as \\uXXXX sequences
 - `force_utf8`          - replace invalid UTF-8 byte sequences with the
   Unicode replacement character (U+FFFD) before encoding. Without this
-  option, invalid bytes in binaries are copied into the output verbatim,
-  which can produce a result that is not valid UTF-8/JSON. A pre-existing
+  option, a binary (value or object key) that is not valid UTF-8 raises
+  `{encode_error, {<<"invalid UTF-8 in string">>, Binary}}`. A pre-existing
   literal U+FFFD in the input is left untouched (not double-replaced). When
   combined with `uescape`, the replacement character is further escaped to
   `\\ufffd`. This is an *encode*-only option: for UTF-8 validation during
-  decoding, use `validate_utf8` in decode options (disabled by default)
+  decoding, `validate_utf8` is on by default in decode options
 - `escape_fwd_slash`    - escape forward slashes (`/`) as `\\/` in JSON strings,
   which is valid per RFC 8259 §7. By default, forward slashes are not escaped
 - `use_nil`             - encode the atom `nil` as JSON `null`
@@ -304,10 +304,9 @@ cannot be represented as JSON.
 <<"{\"a\":null}">>
 
 %% A binary with an invalid UTF-8 byte (0x80 is a lone continuation byte)
-%% is copied through verbatim by default, yielding output that is not
-%% valid UTF-8/JSON
+%% raises an encode error by default
 4> glazer_json:encode(<<"a", 128, "b">>).
-<<"\"a", 128, "b\"">>
+** exception error: {encode_error,{<<"invalid UTF-8 in string">>,<<"a\x80b">>}}
 
 %% force_utf8 replaces the invalid byte with U+FFFD (encoded as 0xEF 0xBF 0xBD)
 5> glazer_json:encode(<<"a", 128, "b">>, [force_utf8]).

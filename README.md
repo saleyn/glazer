@@ -154,7 +154,7 @@ Once compiled, call it via the `:glazer` module from Elixir:
 ```elixir
 iex> Glazer.JSON.decode!(~s({"a":1,"b":[true,null,3.5]}))
 %{"a" => 1, "b" => [true, nil, 3.5]}
-> Glazer.JSON.encode(%{"a" => 1, "b" => [true, nil, 3.5]})
+iex> Glazer.JSON.encode(%{"a" => 1, "b" => [true, nil, 3.5]})
 "{\"a\":1,\"b\":[true,null,3.5]}"
 ```
 
@@ -197,7 +197,7 @@ Benchmarking data tables:
 ## [JSON](#table-of-contents)
 
 Fast JSON encoding and decoding, with streaming, options, jq filters and Elixir
-protocol support. The full reference is in [guides/json.md](guides/json.md).
+protocol support. The full reference is in [JSON Guide](guides/json.md).
 
 **Erlang**
 
@@ -216,7 +216,7 @@ iex> Glazer.JSON.decode!(~s({"a":1,"b":[true,null,3.5]}))
 ## [YAML](#table-of-contents)
 
 YAML decoding and encoding, with the same option style as JSON. The full
-reference is in [guides/yaml.md](guides/yaml.md).
+reference is in [YAML Guide](guides/yaml.md).
 
 **Erlang**
 
@@ -235,7 +235,7 @@ iex> Glazer.YAML.decode!("a: 1\nb:\n  - true\n  - null\n  - 3.5\n")
 ## [CSV](#table-of-contents)
 
 CSV decoding and encoding, with headers, typed fields and streaming. The full
-reference is in [guides/csv.md](guides/csv.md).
+reference is in [CSV Guide](guides/csv.md).
 
 **Erlang**
 
@@ -255,7 +255,7 @@ iex> Glazer.CSV.decode!("name,age\nAlice,30\n", [:headers, {:return, :map}])
 ## [JSON Schema validation](#table-of-contents)
 
 Compile and validate JSON and YAML documents against JSON Schema 2020-12, with
-a schema registry. The full guide is in [guides/json-validation.md](guides/json-validation.md).
+a schema registry. The full guide is in [Validation Guide](guides/json-validation.md).
 
 ### Quick start
 
@@ -353,15 +353,15 @@ duplicating it here with a different, opinionated term shape.
 
 ### Nesting depth
 
-The JSON and YAML decoders both cap recursion at **256 levels** of nesting
+The JSON and YAML decoders both cap recursion at **128 levels** of nesting
 (arrays/objects for JSON; mappings/sequences for YAML). Inputs that exceed
 this limit are rejected with a decode error rather than crashing the VM by
 overflowing the C stack.
 
 | Format | Limit | Error returned |
 |--------|-------|----------------|
-| JSON   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
-| YAML   | 256   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
+| JSON   | 128   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
+| YAML   | 128   | `{error, <<"exceeded maximum nesting depth at offset N">>}` |
 
 256 levels is sufficient for any reasonable real-world document; it is
 deliberately not configurable, because the limit exists to protect the
@@ -372,7 +372,7 @@ recursive descent on adversarial input.
 
 The known gaps of schema validation (decimals beyond double precision, float `multipleOf`
 tolerance, and regex engine differences) are in
-[guides/json-validation.md](guides/json-validation.md#limits-known-issues-and-what-is-not-supported).
+[Validation Guide](guides/json-validation.md#limits-known-issues-and-what-is-not-supported).
 
 ## License
 

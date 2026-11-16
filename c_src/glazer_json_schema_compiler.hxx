@@ -196,8 +196,15 @@ bool SchemaCompiler::compile_schema_term(ERL_NIF_TERM schema_term, std::string& 
   ERL_NIF_TERM key, value;
   for (auto& iter = iter_opt.value(); iter.get_pair(&key, &value); iter.next()) {
     std::string kw;
-    if (!get_string(key, kw))
-      continue;  // Non-string keys are not keywords
+    if (!get_string(key, kw)) {
+      // A charlist key ("type") would never match the binary keyword, so the
+      // keyword would be silently ignored. Reject it instead.
+      if (enif_is_list(m_env, key)) {
+        error_msg = "schema key must be a binary or atom, not a charlist";
+        return false;
+      }
+      continue;  // Other non-string keys are not keywords
+    }
 
     // Dispatch on the first 8 bytes of the keyword (str_to_u64). A key does not
     // identify a name longer than 8 bytes, so each case also checks the rest:

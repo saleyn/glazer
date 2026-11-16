@@ -54,10 +54,10 @@ defmodule Mix.Tasks.BenchJson do
     if files == [] do
       Mix.shell().error("No test data files found in test/data/")
     else
-      workers = Mix.Tasks.Bench.Common.parallelism(args)
+      Mix.Tasks.Bench.Common.announce()
 
       files_data = Enum.map(files, fn {label, bin} ->
-        results = run_file(bin, suites, workers)
+        results = run_file(bin, suites)
         {label, results}
       end)
 
@@ -82,9 +82,11 @@ defmodule Mix.Tasks.BenchJson do
       {"glazer",
        &:glazer_json.decode/1,
        fn t -> :glazer_json.encode(t) end},
-      {"glazer+utf8",
-       fn b -> :glazer_json.decode(b, [:validate_utf8]) end,
-       fn t -> :glazer_json.encode(t) end}
+      # Below benchmark is no longer valid since 1.2.2 glazer_json always
+      # validates UTF-8 (unless `skip_utf8_validation` is passed).
+      #{"glazer+utf8",
+      # fn b -> :glazer_json.decode(b, [:validate_utf8]) end,
+      # fn t -> :glazer_json.encode(t) end}
     ]
 
     optional_candidates = [
@@ -92,11 +94,6 @@ defmodule Mix.Tasks.BenchJson do
        fn b -> {:ok, r} = apply(Torque, :decode, [b]); r end,
        fn t -> apply(Torque, :encode_to_iodata, [t]) end,
        Torque},
-
-      {"simdjsone",
-       &:simdjson.decode/1,
-       fn t -> :simdjson.encode(t) end,
-       :simdjson},
 
       {"jiffy",
        fn b -> :jiffy.decode(b, [:return_maps]) end,
@@ -192,41 +189,22 @@ defmodule Mix.Tasks.BenchJson do
     Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
   end
 
-  defp run_file(bin, suites, parallelism) do
+  defp run_file(bin, suites) do
     n       = iterations(byte_size(bin))
-    parent  = self()
-    ref     = make_ref()
     timeout = n * 200 + 10_000
 
-    suites
-    |> Enum.chunk_every(parallelism)
-    |> Enum.flat_map(fn chunk ->
-      tasks = Enum.map(chunk, fn {name, decode, encode} ->
-        pid = spawn(fn ->
-          result =
-            try do
-              decoded = decode.(bin)
-              Mix.Tasks.Bench.Common.repeat(div(n, 10), fn -> encode.(decode.(bin)) end)
-              dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
-              et = Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
-              {:ok, dt, et}
-            rescue
-              e -> {:error, Exception.message(e)}
-            catch
-              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-            end
-          send(parent, {ref, name, result})
-        end)
-        {name, pid}
-      end)
-
-      Enum.map(tasks, fn {name, _pid} ->
-        receive do
-          {^ref, ^name, result} -> {name, result}
-        after
-          timeout -> {name, {:error, "timeout"}}
-        end
-      end)
+    Mix.Tasks.Bench.Common.run_each(suites, timeout, fn {_name, decode, encode} ->
+      try do
+        decoded = decode.(bin)
+        Mix.Tasks.Bench.Common.repeat(div(n, 10), fn -> encode.(decode.(bin)) end)
+        dt = Mix.Tasks.Bench.Common.measure(n, fn -> decode.(bin) end)
+        et = Mix.Tasks.Bench.Common.measure(n, fn -> encode.(decoded) end)
+        {:ok, dt, et}
+      rescue
+        e -> {:error, Exception.message(e)}
+      catch
+        kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+      end
     end)
   end
 

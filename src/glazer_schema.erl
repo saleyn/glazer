@@ -237,7 +237,7 @@ is only a fragment such as `#item`.
 -spec name_of(term()) -> {ok, binary()} | error.
 name_of(#{~"$id" := Id}) when is_binary(Id) ->
   case doc_part(Id) of
-    ~"" -> error;
+    ~""  -> error;
     Name -> {ok, Name}
   end;
 name_of(_) ->
@@ -308,10 +308,8 @@ clear_interned() ->
 
 %% Internal
 
-nif_compile(Schema, []) ->
-  glazer:compile_schema(Schema);
-nif_compile(Schema, Opts) ->
-  glazer:compile_schema(Schema, Opts).
+nif_compile(Schema, [])   -> glazer:compile_schema(Schema);
+nif_compile(Schema, Opts) -> glazer:compile_schema(Schema, Opts).
 
 %% The document part of a URI reference: everything before the first '#'
 doc_part(Ref) ->
@@ -518,10 +516,10 @@ schema_format(Filename, Options) ->
     false ->
       Extension = string:lowercase(unicode:characters_to_binary(filename:extension(Filename))),
       case Extension of
-        <<".json">>       -> {ok, json, Options};
-        <<".yaml">>       -> {ok, yaml, Options};
-        <<".yml">>        -> {ok, yaml, Options};
-        _                 -> {error, {unsupported_format, Extension}}
+        <<".json">> -> {ok, json, Options};
+        <<".yaml">> -> {ok, yaml, Options};
+        <<".yml">>  -> {ok, yaml, Options};
+        _           -> {error, {unsupported_format, Extension}}
       end
   end.
 
@@ -593,5 +591,3 @@ validate_term(Schema, Data) ->
 -spec validate_term(map() | boolean(), term(), list()) -> ok | {error, term()}.
 validate_term(Schema, Data, Options) ->
   glazer:schema_validate_term(Schema, Data, Options).
-
-

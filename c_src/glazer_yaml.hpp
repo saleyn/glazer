@@ -29,9 +29,10 @@
 #  include <arm_neon.h>
 #endif
 
-#include "fast_float.hpp"
+#include "vendors/glazer_atof.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
+#include "vendors/glazer_ftoa.hpp"
 #include "glazer_common.hpp"
 
 namespace glz {
@@ -46,7 +47,7 @@ namespace glz {
 // AVX2 (32 B/iter) → SSE2 (16 B/iter) → scalar fallback.
 //-----------------------------------------------------------------------------
 
-static const char* find_break(const char* p, const char* end) noexcept
+inline const char* find_break(const char* p, const char* end) noexcept
 {
 #if defined(__ARM_NEON__)
   {
@@ -99,7 +100,7 @@ static const char* find_break(const char* p, const char* end) noexcept
 // Returns a pointer to the first byte in [p, end) that is '"', '\', '\n',
 // or '\r' — the four characters that require special handling inside a
 // double-quoted YAML scalar.
-static const char* find_dq_special(const char* p, const char* end) noexcept
+inline const char* find_dq_special(const char* p, const char* end) noexcept
 {
 #if defined(__ARM_NEON__)
   {
@@ -174,7 +175,7 @@ struct YAMLDecodeOpts {
   bool         copy_strings  = false;
 };
 
-static bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLDecodeOpts& opts)
+inline bool parse_yaml_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -201,7 +202,7 @@ struct YAMLEncodeOpts {
   ERL_NIF_TERM null_term = 0;
 };
 
-static bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLEncodeOpts& opts)
+inline bool parse_yaml_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, YAMLEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -889,7 +890,7 @@ private:
     }
 
     double d;
-    auto [ep, ec] = glz::fast_float::from_chars(start, end, d);
+    auto [ep, ec] = glz::fp::from_chars(start, end, d);
     if (ec == std::errc{} && ep == end)
       return enif_make_double(m_env, d);
     return 0;
@@ -1534,6 +1535,10 @@ struct YAMLEncoder {
   const char*  err()       const { return m_err;      }
   ERL_NIF_TERM err_term()  const { return m_err_term; }
 
+  // Output budget in bytes; see JSONEncoder::set_budget.
+  void set_budget(size_t budget) { m_budget = budget; }
+  bool budget_exceeded() const   { return m_over_budget; }
+
   bool encode(ERL_NIF_TERM term) {
     if (!encode_node(term, 0)) return false;
     m_out.push('\n');
@@ -1544,6 +1549,26 @@ private:
   ErlNifEnv*            m_env;
   const YAMLEncodeOpts& m_opts;
   OutBuf&               m_out;
+  size_t                m_budget = SIZE_MAX;
+  bool                  m_over_budget = false;
+
+  // Nesting depth of the container encoders (encode_map, encode_proplist,
+  // encode_sequence, encode_sequence_inline). Same cap as the JSON encoder.
+  static constexpr unsigned MAX_DEPTH = 128;
+  unsigned              m_depth = 0;
+
+  struct DepthScope {
+    unsigned& d;
+    explicit DepthScope(unsigned& d) : d(d) { ++d; }
+    ~DepthScope() { --d; }
+  };
+
+  // True if writing `extra` more bytes would pass the budget; records it.
+  bool over_budget(size_t extra) {
+    if (m_out.view().size() + extra <= m_budget) return false;
+    m_over_budget = true;
+    return true;
+  }
   char                  m_atom_buf[256];
   const char*           m_err;
   ERL_NIF_TERM          m_err_term;
@@ -1746,10 +1771,12 @@ private:
   // -------------------------------------------------------------------------
 
   bool encode_node(ERL_NIF_TERM term, size_t indent) {
+    if (over_budget(0)) [[unlikely]] return error("output budget exceeded", term);
     switch (enif_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
+        if (over_budget(bin.size)) [[unlikely]] return error("output budget exceeded", term);
         emit_string_scalar({reinterpret_cast<const char*>(bin.data), bin.size});
         return true;
       }
@@ -1803,17 +1830,7 @@ private:
       return true;
     }
     char buf[32];
-    auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-    if (ec == std::errc{}) [[likely]] {
-      bool has_dot = false;
-      for (char* p = buf; p < e; ++p)
-        if (*p == '.' || *p == 'e' || *p == 'E') { has_dot = true; break; }
-      m_out.push(buf, e - buf);
-      if (!has_dot) m_out.push(".0", 2);
-    } else {
-      int n = snprintf(buf, sizeof(buf), "%.17g", d);
-      m_out.push(buf, n);
-    }
+    m_out.push(buf, glz::fp::ftoa(d, buf));
     return true;
   }
 
@@ -1883,6 +1900,8 @@ private:
   // begun by the caller (e.g. right after "- " for a mapping that is a
   // sequence item) — in that case the first entry's indent is skipped.
   bool encode_map(ERL_NIF_TERM term, size_t indent, bool at_line_start = true) {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", term);
+    DepthScope depth_scope(m_depth);
     auto iter = MapIterator::create(m_env, term);
     if (!iter) return false;
 
@@ -1898,6 +1917,8 @@ private:
   }
 
   bool encode_proplist(ERL_NIF_TERM list, size_t indent, bool at_line_start = true) {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", list);
+    DepthScope depth_scope(m_depth);
     ERL_NIF_TERM h, t = list;
     bool first = true;
     while (enif_get_list_cell(m_env, t, &h, &t)) {
@@ -1941,6 +1962,8 @@ private:
   // key that owns the sequence, or 0 at the document root), each starting
   // with "- ". Nested mappings under a "- " continue at indent+2.
   bool encode_sequence(ERL_NIF_TERM list, size_t indent) {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", list);
+    DepthScope depth_scope(m_depth);
     ERL_NIF_TERM h, t = list;
     bool first = true;
     while (enif_get_list_cell(m_env, t, &h, &t)) {
@@ -1988,6 +2011,8 @@ private:
   // "- " has already been written by the caller; subsequent items continue
   // on their own line at `indent` ("- - first\n  - second").
   bool encode_sequence_inline(ERL_NIF_TERM list, size_t indent) {
+    if (m_depth >= MAX_DEPTH) [[unlikely]] return error("exceeded maximum nesting depth", list);
+    DepthScope depth_scope(m_depth);
     ERL_NIF_TERM h, t = list;
     bool first = true;
     while (enif_get_list_cell(m_env, t, &h, &t)) {
@@ -2001,10 +2026,14 @@ private:
     return true;
   }
 
+  // Each nesting level reports failure through here as the error unwinds.
+  // Keep the first (innermost) error, so the real cause survives the unwind.
   template <int N>
   bool error(const char (&err)[N], ERL_NIF_TERM term) {
-    m_err      = err;
-    m_err_term = term;
+    if (!m_err) {
+      m_err      = err;
+      m_err_term = term;
+    }
     return false;
   }
 };

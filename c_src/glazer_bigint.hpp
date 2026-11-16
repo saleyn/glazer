@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 #include <climits>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <cstring>
@@ -41,24 +42,72 @@ struct BigInt {
   // with `push(char)` / `push(const char*, size_t)`), handling the int64,
   // uint64, and arbitrary-precision bignum cases. Returns false if `term`
   // isn't an integer.
+  // Decimal digits of v, two per table lookup, written to out (at least 20
+  // bytes). Returns the length. Faster than std::to_chars for large values.
+  static inline size_t write_u64(char* out, uint64_t v)
+  {
+    // Four digits per step from a table of the 10000 four-character groups,
+    // built at compile time (40 KB). The final group of up to four digits is
+    // taken from the same table, starting at the first nonzero digit.
+    static constexpr auto D4 = [] {
+      std::array<char, 40000> t{};
+      for (int i = 0; i < 10000; ++i) {
+        t[4 * i] = char('0' + i / 1000);
+        t[4 * i + 1] = char('0' + i / 100 % 10);
+        t[4 * i + 2] = char('0' + i / 10 % 10);
+        t[4 * i + 3] = char('0' + i % 10);
+      }
+      return t;
+    }();
+    char  tmp[24];
+    char* e = tmp + sizeof tmp;
+    char* s = e;
+    while (v >= 10000) {
+      const unsigned r = unsigned(v % 10000);
+      v /= 10000;
+      s -= 4;
+      std::memcpy(s, D4.data() + 4 * r, 4);
+    }
+    uint32_t w = uint32_t(v);  // below 10000
+    if (w >= 1000) {
+      s -= 4;
+      std::memcpy(s, D4.data() + 4 * w, 4);
+    } else if (w >= 100) {
+      s -= 3;
+      std::memcpy(s, D4.data() + 4 * w + 1, 3);
+    } else if (w >= 10) {
+      s -= 2;
+      std::memcpy(s, D4.data() + 4 * w + 2, 2);
+    } else {
+      *--s = char('0' + w);
+    }
+    const size_t n = size_t(e - s);
+    std::memcpy(out, s, n);
+    return n;
+  }
+
+  // As write_u64, with a leading '-' for negative values (at least 20 bytes).
+  static inline size_t write_i64(char* out, int64_t v)
+  {
+    if (v >= 0) return write_u64(out, uint64_t(v));
+    out[0] = '-';
+    return 1 + write_u64(out + 1, uint64_t(0) - uint64_t(v));
+  }
+
   template <class Out>
   static inline bool encode(ErlNifEnv* env, ERL_NIF_TERM term, Out& out)
   {
     ErlNifSInt64 i;
     if (enif_get_int64(env, term, &i)) [[likely]] {
-      char buf[32];
-      auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), i);
-      if (ec != std::errc{}) return false;
-      out.push(buf, p - buf);
+      char buf[24];
+      out.push(buf, write_i64(buf, i));
       return true;
     }
 
     ErlNifUInt64 u;
     if (enif_get_uint64(env, term, &u)) {
-      char buf[32];
-      auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), u);
-      if (ec != std::errc{}) return false;
-      out.push(buf, p - buf);
+      char buf[24];
+      out.push(buf, write_u64(buf, u));
       return true;
     }
 

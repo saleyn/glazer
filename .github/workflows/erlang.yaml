@@ -88,6 +88,14 @@ jobs:
         run:  make memcheck
       - name: Test
         run:  make test
+      - name: Benchmark
+        run:  |
+          echo -e "### Benchmark Results (OTP ${{ matrix.otp }} ${{ matrix.os }}.${{ matrix.compiler.compiler }})\n" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          set -o pipefail
+          make OPTIMIZE=1 PRIORITY=-20 N=5 bench-json 2>&1 | tee bench.txt
+          sed -n '/^(numbers in/,/^$/{/===>/!p;}' bench.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
   macOS:
     name: OTP ${{ matrix.otp }} macos.${{ matrix.compiler.compiler }}
     runs-on: macos-latest
@@ -113,8 +121,13 @@ jobs:
         run:  erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:format("Version=~s\n", [Version]), halt().' -noshell -noinput;
       - name: Fix Ownership
         run:  git config --global --add safe.directory ${GITHUB_WORKSPACE}
-      - name: Install CMake
-        run:  brew install cmake
+      - name: Install CMake and libyaml
+        run: |
+          brew install cmake libyaml
+          # fast_yaml compiles against yaml.h; Homebrew installs libyaml outside
+          # the default include path, so point the C compiler at it.
+          echo "CPATH=$(brew --prefix libyaml)/include" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$(brew --prefix libyaml)/lib" >> $GITHUB_ENV
       - name: Build
         run:  make compile
       - name: Cache Dialyzer PLT
@@ -126,7 +139,14 @@ jobs:
         run:  make check
       - name: Test
         run:  make test
-
+      - name: Benchmark
+        run: |
+          echo -e "### Benchmark Results (OTP ${{ matrix.otp }} ${{ matrix.os }}.${{ matrix.compiler.compiler }})\n" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          set -o pipefail
+          make OPTIMIZE=1 PRIORITY=-20 N=5 bench-json 2>&1 | tee bench.txt
+          sed -n '/^(numbers in/,/^$/{/===>/!p;}' bench.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
   windows:
     name: OTP ${{ matrix.otp }} windows
     # Pinned to windows-2022 (win22 image) — windows-latest now points at a
@@ -179,3 +199,12 @@ jobs:
       - name: Test
         shell: msys2 {0}
         run:  make test
+      - name: Benchmark
+        run: |
+          echo "### Benchmark Results (OTP ${{ matrix.otp }} ${{ matrix.os }}.${{ matrix.compiler.compiler }})\n" >> $GITHUB_STEP_SUMMARY
+          echo " " >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          set -o pipefail
+          make OPTIMIZE=1 PRIORITY=-20 N=5 bench-json 2>&1 | tee bench.txt
+          sed -n '/^(numbers in/,/^$/{/===>/!p;}' bench.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

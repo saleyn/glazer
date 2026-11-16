@@ -11,3 +11,6 @@ rebar3.crashdump
 # SRELL is fetched by c_src/Makefile when PCRE2 is missing (see c_src/vendors/srell/README.md)
 /c_src/vendors/srell/*
 !/c_src/vendors/srell/README.md
+
+# Rust build output for the sonic-rs parse benchmark (c_src/tools/sonic_parse_bench)
+/c_src/tools/sonic_parse_bench/target/

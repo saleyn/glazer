@@ -1,25 +1,50 @@
-# JSON Schema validation guide
+# Schema Validation Guide
 
-Glazer validates Erlang terms and decoded JSON against [JSON Schema 2020-12](https://json-schema.org/specification) using a native (C++) validator. A schema is compiled once into bytecode, and each validation runs that bytecode against a term, so validating many documents against one schema is cheap.
+Glazer validates Erlang terms and decoded JSON or YAML against [JSON Schema 2020-12](https://json-schema.org/specification) using a native (C++) validator. A schema is compiled once into bytecode, and each validation runs that bytecode against a term, so validating many documents against one schema is cheap.
 
 This guide covers:
 
-1. [Quick start](#quick-start)
-2. [Compiling schemas](#compiling-schemas)
-3. [Validating data](#validating-data)
-4. [Reading errors](#reading-errors)
-5. [Validation options](#validation-options)
-6. [Compile options](#compile-options)
-7. [Supported keywords](#supported-keywords)
-8. [References and documents](#references-and-documents)
-9. [Formats](#formats)
-10. [Regular expressions](#regular-expressions)
-11. [Data model: what gets validated](#data-model-what-gets-validated)
-12. [Limits, known issues and what is not supported](#limits-known-issues-and-what-is-not-supported)
-13. [Schema registry](#schema-registry)
-14. [Performance](#performance)
-15. [Troubleshooting](#troubleshooting)
-16. [Conformance testing](#conformance-testing)
+- [Schema Validation Guide](#schema-validation-guide)
+  - [Quick start](#quick-start)
+  - [Compiling schemas](#compiling-schemas)
+    - [Reading a schema from a file](#reading-a-schema-from-a-file)
+    - [Registry by default](#registry-by-default)
+    - [Register once, validate by name](#register-once-validate-by-name)
+  - [Validating data](#validating-data)
+  - [Reading errors](#reading-errors)
+    - [Fail-fast (default)](#fail-fast-default)
+    - [Collect all errors](#collect-all-errors)
+    - [Path](#path)
+    - [Reason and detail](#reason-and-detail)
+    - [Formatting errors](#formatting-errors)
+  - [Validation options](#validation-options)
+    - [Timeouts](#timeouts)
+  - [Compile options](#compile-options)
+  - [Supported keywords](#supported-keywords)
+    - [Types and values](#types-and-values)
+    - [Numbers](#numbers)
+    - [Strings](#strings)
+    - [Arrays](#arrays)
+    - [Objects](#objects)
+    - [Combining schemas](#combining-schemas)
+    - [Referencing](#referencing)
+    - [Unevaluated keywords](#unevaluated-keywords)
+  - [References and documents](#references-and-documents)
+  - [Formats](#formats)
+    - [Custom formats](#custom-formats)
+    - [idn-hostname and idn-email](#idn-hostname-and-idn-email)
+    - [Format assertion off](#format-assertion-off)
+  - [Regular expressions](#regular-expressions)
+  - [Data model: what gets validated](#data-model-what-gets-validated)
+  - [Limits, known issues and what is not supported](#limits-known-issues-and-what-is-not-supported)
+  - [Schema registry](#schema-registry)
+  - [Performance](#performance)
+  - [Troubleshooting](#troubleshooting)
+  - [Conformance testing](#conformance-testing)
+  - [Standards compliance](#standards-compliance)
+    - [Formats](#formats-1)
+    - [Regular expressions](#regular-expressions-1)
+    - [Deviations](#deviations)
 
 ---
 
@@ -29,12 +54,12 @@ This guide covers:
 
 ```erlang
 Schema = #{
-  ~"type" => ~"object",
-  ~"required" => [~"name", ~"age"],
+  ~"type"       => ~"object",
+  ~"required"   => [~"name", ~"age"],
   ~"properties" => #{
-    ~"name" => #{~"type" => ~"string", ~"minLength" => 1},
-    ~"age"  => #{~"type" => ~"integer", ~"minimum" => 0},
-    ~"email" => #{~"type" => ~"string", ~"format" => ~"email"}
+    ~"name"  => #{~"type" => ~"string",  ~"minLength" => 1},
+    ~"age"   => #{~"type" => ~"integer", ~"minimum"   => 0},
+    ~"email" => #{~"type" => ~"string",  ~"format"    => ~"email"}
   }
 },
 
@@ -50,12 +75,12 @@ ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann", ~"age" => 3}),
 
 ```elixir
 schema = %{
-  "type" => "object",
-  "required" => ["name", "age"],
+  "type"       => "object",
+  "required"   => ["name", "age"],
   "properties" => %{
-    "name" => %{"type" => "string", "minLength" => 1},
-    "age" => %{"type" => "integer", "minimum" => 0},
-    "email" => %{"type" => "string", "format" => "email"}
+    "name"  => %{"type" => "string",  "minLength" => 1},
+    "age"   => %{"type" => "integer", "minimum"   => 0},
+    "email" => %{"type" => "string",  "format"    => "email"}
   }
 }
 
@@ -93,8 +118,8 @@ ok = glazer_schema:validate_term(Schema, #{~"name" => ~"Ann", ~"age" => 3}).
 **Elixir**
 
 ```elixir
-{:ok, compiled} = Glazer.Schema.compile(schema)
-{:ok, compiled} = Glazer.Schema.compile(schema, registry: false, format_assertion: true)
+{:ok, compiled}   = Glazer.Schema.compile(schema)
+{:ok, compiled}   = Glazer.Schema.compile(schema, registry: false, format_assertion: true)
 {:error, message} = Glazer.Schema.compile(bad_schema)
 ```
 
@@ -137,8 +162,8 @@ A schema with a top-level `$id` is registered under that `$id` (without any frag
 **Erlang**
 
 ```erlang
-{ok, C} = glazer_schema:compile(Schema),        % registered
-{ok, C} = glazer_schema:compile(Schema).        % same handle, no recompile
+{ok, C} = glazer_schema:compile(Schema),    % registered
+{ok, C} = glazer_schema:compile(Schema).    % same handle, no recompile
 
 {ok, D} = glazer_schema:compile(Schema, [{registry, false}]).  % not registered
 ```
@@ -146,8 +171,8 @@ A schema with a top-level `$id` is registered under that `$id` (without any frag
 **Elixir**
 
 ```elixir
-{:ok, c} = Glazer.Schema.compile(schema)            # registered
-{:ok, c} = Glazer.Schema.compile(schema)            # same handle, no recompile
+{:ok, c} = Glazer.Schema.compile(schema)    # registered
+{:ok, c} = Glazer.Schema.compile(schema)    # same handle, no recompile
 
 {:ok, d} = Glazer.Schema.compile(schema, registry: false)   # not registered
 ```
@@ -159,46 +184,39 @@ A schema with a top-level `$id` is registered under that `$id` (without any frag
 - Compile errors are never stored.
 - Stored entries stay in the VM until `glazer_schema:clear_interned/0` is called. Each new entry triggers a global garbage collection, and entries are never removed on their own. For schemas built per request (for example with values embedded from user input), pass `{registry, false}` so the registry does not grow without bound.
 
-### Compile once, validate many
+### Register once, validate by name
 
-Compilation parses the schema and checks it. Do it at startup or on first use, then reuse the handle:
+Compilation parses the schema and checks it, so do it once, at startup or deploy. Register the schema under a name, then validate by that name from anywhere. Validation reads the compiled schema from the registry, so no handle has to be cached in your own code:
 
 **Erlang**
 
 ```erlang
 -module(user_schema).
--export([compiled/0, check/1]).
+-export([register/0, check/1]).
 
-compiled() ->
-  persistent_term:get({?MODULE, schema}, undefined) orelse
-    begin
-      {ok, C} = glazer_schema:compile(schema()),
-      persistent_term:put({?MODULE, schema}, C),
-      C
-    end.
+register() ->
+  {ok, _Version} = glazer_schema:register(~"user", schema()),
+  ok.
 
-check(Data) -> glazer_schema:validate(compiled(), Data).
+check(Data) -> glazer_schema:validate(~"user", Data).
 ```
 
 **Elixir**
 
 ```elixir
 defmodule UserSchema do
-  def compiled do
-    case :persistent_term.get({__MODULE__, :schema}, nil) do
-      nil ->
-        {:ok, c} = Glazer.Schema.compile(schema())
-        :persistent_term.put({__MODULE__, :schema}, c)
-        c
-
-      c ->
-        c
-    end
+  def register do
+    {:ok, _version} = Glazer.Schema.register("user", schema())
+    :ok
   end
 
-  def check(data), do: Glazer.Schema.validate(compiled(), data)
+  def check(data), do: Glazer.Schema.validate("user", data)
 end
 ```
+
+Call `register/0` once at startup. Registering the same schema again is a no-op, so calling it twice is safe. If the schema has a top-level `$id`, `register(Schema)` (without a name) uses the `$id` as the name instead.
+
+If you need a handle rather than a name, for example for a schema built per request, use `compile` with `{registry, false}` and keep the returned handle yourself. See [Registry by default](#registry-by-default).
 
 ---
 
@@ -207,21 +225,21 @@ end
 **Erlang**
 
 ```erlang
-ok                     = glazer_schema:validate(Compiled, Data).
-{error, Reason}        = glazer_schema:validate(Compiled, Data).
-ok                     = glazer_schema:validate(Compiled, Data, Options).
-ok                     = glazer_schema:validate_term(Schema, Data).
-ok                     = glazer_schema:validate_term(Schema, Data, Options).
+ok               = glazer_schema:validate(Compiled, Data).
+{error, Reason}  = glazer_schema:validate(Compiled, Data).
+ok               = glazer_schema:validate(Compiled, Data, Options).
+ok               = glazer_schema:validate_term(Schema, Data).
+ok               = glazer_schema:validate_term(Schema, Data, Options).
 ```
 
 **Elixir**
 
 ```elixir
-:ok = Glazer.Schema.validate(compiled, data)
+:ok              = Glazer.Schema.validate(compiled, data)
 {:error, reason} = Glazer.Schema.validate(compiled, data)
-:ok = Glazer.Schema.validate(compiled, data, options)
-:ok = Glazer.Schema.validate_term(schema, data)
-:ok = Glazer.Schema.validate_term(schema, data, options)
+:ok              = Glazer.Schema.validate(compiled, data, options)
+:ok              = Glazer.Schema.validate_term(schema, data)
+:ok              = Glazer.Schema.validate_term(schema, data, options)
 ```
 
 - `validate/2,3` takes a compiled schema, either the `{schema, Resource}` tuple from `compile/1` or the bare resource.
@@ -292,7 +310,7 @@ With `collect_all_errors` the result is a list of the same error bodies:
 ```elixir
 {:error, [
   {:path, ["name"], {:string_too_short, ""}},
-  {:path, ["age"], {:value_too_small, 0}}
+  {:path, ["age"],  {:value_too_small, 0}}
 ]}
 ```
 
@@ -306,16 +324,16 @@ With `collect_all_errors` the result is a list of the same error bodies:
 **Erlang**
 
 ```erlang
-{error, {path, [~"items", 1, ~"sku"], {missing_required, ~"sku"}}}
+{error, {path, [~"items", 1], {missing_required, ~"sku"}}}
 ```
 
 **Elixir**
 
 ```elixir
-{:error, {:path, ["items", 1, "sku"], {:missing_required, "sku"}}}
+{:error, {:path, ["items", 1], {:missing_required, "sku"}}}
 ```
 
-The path of a `missing_required` error is the object that lacks the key, so the example above would have the empty path `[]` at the top level, and `[~"items", 1]` for an element of `items`.
+The path of a `missing_required` error is the object that lacks the key. In the example above, `sku` is missing from element 1 of `items`, so the path is `[~"items", 1]`; a missing key at the top level gives the path `[]`.
 
 ### Reason and detail
 
@@ -348,7 +366,6 @@ The path of a `missing_required` error is the object that lacks the key, so the 
 | `max_depth_exceeded` | any (nesting limit) | `nil` |
 | `timeout` | any (`timeout_ms`) | the `timeout_ms` limit |
 | `regex_error` | `pattern`, `patternProperties`, custom `formats` | the regex engine's error code (for example PCRE2's match-limit error). The regex engine failed; this is not a mismatch. |
-| `timeout` | any (`timeout_ms`) | the `timeout_ms` limit |
 | `expected_string`, `invalid_term_type` | term shape checks | the value |
 
 Some reasons are internal annotations that show up only in specific situations (for example `schema_matched`). If you see a reason not in the table, match on `{path, _, {_, _}}` and log it; the set can grow.
@@ -550,8 +567,8 @@ Address = #{~"type" => ~"object",
             ~"required" => [~"city"]},
 
 Schema = #{
-  ~"$id" => ~"https://example.com/person.json",
-  ~"type" => ~"object",
+  ~"$id"        => ~"https://example.com/person.json",
+  ~"type"       => ~"object",
   ~"properties" => #{
     ~"home" => #{~"$ref" => ~"https://example.com/address.json"}
   }
@@ -567,8 +584,8 @@ Schema = #{
 address = %{"type" => "object", "required" => ["city"]}
 
 schema = %{
-  "$id" => "https://example.com/person.json",
-  "type" => "object",
+  "$id"        => "https://example.com/person.json",
+  "type"       => "object",
   "properties" => %{"home" => %{"$ref" => "https://example.com/address.json"}}
 }
 
@@ -611,7 +628,7 @@ Schemas that refer to each other are registered together, as a group: `glazer_sc
 
 | Format | Specification | Notes |
 |---|---|---|
-| `date-time` | RFC 3339 | Accepts leap seconds (`23:59:60`) when they are valid for the date; RFC 9557 bracketed suffixes accepted |
+| `date-time` | RFC 3339 | Accepts `23:59:60` only at 23:59 UTC on June 30 or December 31; RFC 9557 bracketed suffixes accepted |
 | `date` | RFC 3339 | `YYYY-MM-DD` with a valid day for the month (leap years included) |
 | `time` | RFC 3339 | Rejects leap seconds |
 | `email` | RFC 5321 | ASCII mailbox, quoted local parts, IP literals |
@@ -669,6 +686,7 @@ Consequences you may notice:
 - ASCII outside the LDH set (`$`, `_`, space) is rejected, even though UTS 46 would map some of them.
 - A-labels (`xn--…`) must decode to a valid U-label and re-encode to the same form.
 - Each label is at most 63 octets in its ASCII form, and the whole name at most 253.
+- The bidi rule of RFC 5893 is applied across the domain: once any label contains a right-to-left character, every label must satisfy it, so `0a.א` is invalid.
 
 ### Format assertion off
 
@@ -726,9 +744,7 @@ ok = glazer_schema:validate(C, ~"not-an-email").
 
 - Remote `$ref` fetching. Pass documents with `refs`.
 - Draft 3, 4, 6, 7 and 2019-09 keyword forms (for example `dependencies`, `additionalItems` with array-form `items`, `$recursiveRef`). Use 2020-12 forms.
-- Decimal numbers with more precision than a double (JSON text such as `0.12345678912345678`) are decoded as doubles, so the exact decimal text is not compared.
 - ECMAScript-only regex syntax that the engine does not support (such patterns may be rejected at compile time).
-- `idn-email` and `idn-hostname` follow IDNA2008 with UTS 46 mapping, not a pure IDNA2003 reading. The bidi rule of RFC 5893 is applied across the domain: once any label contains a right-to-left character, every label must satisfy it, so `0a.א` is invalid.
 
 ---
 
@@ -795,7 +811,7 @@ The registry holds schemas only for the life of the VM. Persist the source schem
 
 ## Performance
 
-- **Compile once.** Compilation is the expensive step; keep the `{schema, Resource}` handle.
+- **Register once.** Compilation is the expensive step; register schemas at startup, or keep the `{schema, Resource}` handle when you do not use the registry.
 - **Use `validate`, not `validate_term`,** in hot paths. `validate_term` compiles the schema on every call. With several schemas, register them and use `glazer_schema:validate/2`.
 - **Prefer fail-fast** for the common valid-or-not check. Use `collect_all_errors` only when the user needs every problem (form feedback, for example).
 - **Bound the input.** `max_depth` (default 128) protects against deeply nested documents; limit request sizes before decoding.
@@ -811,7 +827,7 @@ The registry holds schemas only for the life of the VM. Persist the source schem
 
 **`unresolved $ref (document not provided)`.** The referenced URI is neither a `$id` in this document nor in `refs`. Add the document to `refs`, or check the URI for a trailing slash or a different scheme.
 
-**`format_invalid` for a value you expected to pass.** Check the format name and the value. For `date-time`, leap seconds must be valid for the date. For `hostname`, labels cannot start or end with a hyphen. For `idn-hostname`, see the note on UTS 46 mapping above.
+**`format_invalid` for a value you expected to pass.** Check the format name and the value. For `date-time`, a leap second `23:59:60` must fall at 23:59 UTC on June 30 or December 31. For `hostname`, labels cannot start or end with a hyphen. For `idn-hostname`, see the note on UTS 46 mapping above.
 
 **`missing_required` for a key that is present.** The key may be an atom in the data but not in the schema, or a binary in the schema but an atom that does not exist yet. Use the same key type in both, or check that the atom exists (keys are never created by validation).
 
@@ -837,7 +853,7 @@ Unit tests for individual features live in `test/glazer_json_schema_test.erl` (E
 
 Schema validation targets [JSON Schema 2020-12](https://json-schema.org/specification): the core, applicator, validation and unevaluated vocabularies. Compliance is checked against the official [JSON-Schema-Test-Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite), pinned at commit `38dea93`. Every in-scope test passes (709 of 709): groups whose `compatibility` covers 2020-12 and that use no legacy keywords. Run it with `make test-jsts`.
 
-Out of scope, and so not claimed: other drafts (draft 3 to 2019-09 keyword forms), the suite's `optional/` and proposal groups, decimals with more precision than a double, and ECMAScript-only regex syntax. Integers of any size are exact (see the bignum note under Deviations). Groups excluded for an upstream issue (json-schema-org/JSON-Schema-Test-Suite#1277) are listed in `test/json_schema_suite.es`.
+Out of scope, and so not claimed: other drafts (draft 3 to 2019-09 keyword forms), the suite's `optional/` and proposal groups, decimals with more precision than a double, and ECMAScript-only regex syntax. Integers of any size are exact (see [Data model: what gets validated](#data-model-what-gets-validated)). Groups excluded for an upstream issue (json-schema-org/JSON-Schema-Test-Suite#1277) are listed in `test/json_schema_suite.es`.
 
 ### Formats
 
@@ -845,7 +861,7 @@ Out of scope, and so not claimed: other drafts (draft 3 to 2019-09 keyword forms
 
 | `format` | Standard | Notes |
 |---|---|---|
-| `date-time` | RFC 3339 §5.6 | Leap second `23:59:60` accepted only where it is a valid UTC instant. RFC 9557 bracketed suffixes accepted (an extension). |
+| `date-time` | RFC 3339 §5.6 | Leap second `23:59:60` accepted only at 23:59 UTC on June 30 or December 31. RFC 9557 bracketed suffixes accepted (an extension). |
 | `date` | RFC 3339 §5.6 (`full-date`) | Valid day for the month, leap years included |
 | `time` | RFC 3339 §5.6 (`full-time`) | Leap seconds rejected |
 | `duration` | ISO 8601 as profiled by JSON Schema | Contiguous unit run; weeks (`P2W`) accepted |

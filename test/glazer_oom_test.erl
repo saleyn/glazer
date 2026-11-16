@@ -74,10 +74,12 @@
 %% JSON encoding under memory pressure
 
 json_large_nested_test_() ->
-  %% Create a deeply nested structure that will cause many reallocations
-  LargeMap = make_nested_map(1000),
+  %% Nesting up to the encoder's depth cap (128) encodes fine ...
+  LargeMap = make_nested_map(100),
   [
-    ?_assertMatch(<<"{", _/binary>>, glazer_json:encode(LargeMap))
+    ?_assertMatch(<<"{", _/binary>>, glazer_json:encode(LargeMap)),
+    %% ... and anything deeper is rejected with an error, not a stack overflow
+    ?_assertError({encode_error, _}, glazer_json:encode(make_nested_map(1000)))
   ].
 
 json_long_strings_test_() ->
@@ -177,10 +179,12 @@ json_encode_exception_check() ->
 %% YAML encoding under memory pressure
 
 yaml_large_nested_test_() ->
-  %% Create a deeply nested structure
-  LargeMap = make_nested_map(500),
+  %% Nesting up to the encoder's depth cap (128) encodes fine ...
+  LargeMap = make_nested_map(100),
   [
-    ?_assertMatch(<<_, _/binary>>, glazer_yaml:encode(LargeMap))
+    ?_assertMatch(<<_, _/binary>>, glazer_yaml:encode(LargeMap)),
+    %% ... and anything deeper is rejected with an error, not a stack overflow
+    ?_assertError({encode_error, _}, glazer_yaml:encode(make_nested_map(1000)))
   ].
 
 yaml_long_strings_test_() ->

@@ -7,9 +7,13 @@ OBJ_DIR  ?= $(APP_DIR)/obj
 REBAR    := rebar3
 COMPILE  := $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),bare compile --paths $(patsubst %/_build/%,%/_build,$(REBAR_BARE_COMPILER_OUTPUT_DIR))/default/plugins/*/ebin,compile)
 
-SRC      := glazer_nif.cpp
+# Translation units. Each NIF entry-point group has its own file so that a
+# change to (say) the CSV code rebuilds only that unit, and the units compile
+# in parallel with make -j. The JSON hot path stays together in nif_json.cpp.
+SRCS     := glazer_nif.cpp nif_json.cpp nif_yaml.cpp nif_csv.cpp nif_jq.cpp \
+            nif_schema.cpp glazer_atoms.cpp
 
-OBJ      := $(OBJ_DIR)/glazer_nif.o
+OBJ      := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 
 # erlang:load_nif/2 appends the platform-specific extension itself
 # (.dll on Windows, .so elsewhere), so the build output must match.
@@ -90,20 +94,19 @@ ifeq ($(HAVE_PCRE2),1)
 endif
 
 # SRELL: header-only regex fallback (glazer_regex.hpp), used only when PCRE2 is
-# not installed. Fetched from GitHub at a pinned commit and checked against
-# SHA-256 digests. The downloaded files are not stored in git; see
-# vendors/srell/README.md.
+# not installed. Fetched from GitHub at a pinned commit and checked against a
+# SHA-256 digest. The downloaded header is not stored in git; see
+# vendors/README.md.
 SRELL_COMMIT   := c3bcf40
 SRELL_HDR_SHA  := c3bc022d72e3b984a222e0d84ee50473532dd9a9b2d93d3f77bf07d4c8e81b39
 SRELL_URL      := https://raw.githubusercontent.com/upa-url/srell/$(SRELL_COMMIT)/srell-src
-SRELL_DIR      := vendors/srell
+SRELL_DIR      := vendors
 SRELL_HDR      := $(SRELL_DIR)/srell.hpp
-SRELL_LICENSE  := $(SRELL_DIR)/LICENSE
 SHA256SUM      := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
 ifeq ($(HAVE_PCRE2),1)
   SRELL_DEPS :=
 else
-  SRELL_DEPS := $(SRELL_HDR) $(SRELL_LICENSE)
+  SRELL_DEPS := $(SRELL_HDR)
 endif
 
 
@@ -209,8 +212,15 @@ all: compile
 
 SHOULD_OPTIMIZE = $(if $(filter 1,$(OPTIMIZE)),yes,$(if $(filter 0,$(OPTIMIZE)),no,$(if $(filter 1,$(PGO_DEFAULT)),yes,no)))
 
+# The PGO rebuild runs in a sub-make with PGO=use, which always uses O3, so the
+# banner must report O3 whenever PGO will be applied (OPT_LEVEL here reflects
+# only the parent make's PGO=0 state, which is O1 for dev builds).
 ifeq ($(PGO),0)
-$(info ===> glazer NIF: $(if $(filter yes,$(SHOULD_OPTIMIZE)),PGO,no PGO), $(OPT_LEVEL))
+ifeq ($(SHOULD_OPTIMIZE),yes)
+$(info ===> glazer NIF: PGO, O3)
+else
+$(info ===> glazer NIF: no PGO, $(OPT_LEVEL))
+endif
 endif
 
 ifeq ($(SHOULD_OPTIMIZE),yes)
@@ -228,7 +238,8 @@ optimize:
 	  echo "===> TARGET: $(TARGET)"; \
 	  echo "===> Building PGO optimized NIF library in $(REBAR_BARE_COMPILER_OUTPUT_DIR)"; \
 	  echo "===> PGO step 1/3: build instrumented binary"; \
-	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean all; \
+	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate clean; \
+	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=generate all; \
 	  if [ -z "$$REBAR_BUILD_DIR" ]; then cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE); fi; \
 	  echo "===> PGO step 2/3: collect profile data"; \
 	  ERL_LIBS= REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(BASEDIR)/bin/pgo-profile.es; \
@@ -252,7 +263,7 @@ optimize:
 	    fi; \
 	  fi; \
 	  echo "===> PGO step 3/3: rebuild with profile data"; \
-	  rm -vf $(OBJ_DIR)/glazer_nif.o $(PRIV_DIR)/glazer.so; \
+	  rm -f $(OBJ) $(PRIV_DIR)/glazer.so; \
 	  $(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) OPTIMIZE=0 PGO=use all; \
 	  if [ -z "$$REBAR_BUILD_DIR" ]; then cd $(BASEDIR) && SKIP_NIF_RECOMPILE=1 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(if $(strip $(MIX_ENV)),as $(strip $(MIX_ENV)),) $(COMPILE); fi; \
 	  echo "===> PGO build complete | $$(strings $(TARGET) | grep PGO_OPTIMIZED)"; \
@@ -280,16 +291,19 @@ endif
 
 memcheck:
 	@echo "===> Building NIF with AddressSanitizer"
-	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 \
-	  $(if $(VERBOSE),VERBOSE=1) clean compile
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 $(if $(VERBOSE),VERBOSE=1) clean
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=1 $(if $(VERBOSE),VERBOSE=1) compile
 	@echo "===> Running eunit under ASan$(if $(filter 1,$(DETECT_LEAKS)), + LeakSanitizer,) ($(ASAN_PRELOAD))"
 	@cd .. && ERL_FLAGS="+A 1" ASAN_OPTIONS="detect_leaks=$(DETECT_LEAKS)" \
 	  LSAN_OPTIONS="suppressions=$(LSAN_SUPPRESSIONS)" \
 	  $(ASAN_PRELOAD) \
-	  $(REBAR) as test eunit 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^===> \(Verifying\|Analyzing\|Compile (apps)\|Not adding provider\|Evaluating config\)"
+	  $(REBAR) as test eunit > $(OBJ_DIR)/memcheck-eunit.log 2>&1; rc=$$?; \
+	  sed 's/\x1b\[[0-9;]*m//g' $(OBJ_DIR)/memcheck-eunit.log | grep -v "^===> \(Verifying\|Analyzing\|Compile (apps)\|Not adding provider\|Evaluating config\)"; \
+	  exit $$rc
 	@echo "===> Rebuilding normal NIF (removing ASan instrumentation)"
-	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) $(if $(VERBOSE),VERBOSE=1) clean all
-	cd .. && REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=0 $(if $(VERBOSE),VERBOSE=1) clean
+	@$(MAKE) PRIV_DIR=$(PRIV_DIR) OBJ_DIR=$(OBJ_DIR) ASAN=0 $(if $(VERBOSE),VERBOSE=1) all
+	cd .. && MAKEFLAGS="ASAN=0" ASAN=0 REBAR_BARE_COMPILER_OUTPUT_DIR=$(REBAR_BARE_COMPILER_OUTPUT_DIR) $(REBAR) $(COMPILE)
 
 info:
 	@echo -ne "TARGET: "
@@ -303,16 +317,18 @@ info:
 $(TARGET): $(OBJ) | $(PRIV_DIR)
 	@[ -n $(HAVE_JQ) ] && echo "===> Building glazer with jq support" || true
 	@[ $(HAVE_PCRE2) = 1 ] && echo "===> Schema regex: PCRE2" || echo "===> Schema regex: SRELL (PCRE2 not found)"
-	$(CXX) $(OBJ) $(LDFLAGS) -o $@
+	$(if $(VERBOSE),,@echo "  LINK    $(notdir $@)")
+	$(if $(VERBOSE),,@)$(CXX) $(OBJ) $(LDFLAGS) -o $@
 
 # When PGO=use the .o is stale by timestamp (same source, same flags string)
 # but must be recompiled against the newly collected profile data — force it.
 # Note: GCC writes .gcda files under a path derived from the source file's
 # absolute path, so the layout inside $(PGO_DIR) is nested.  This is harmless:
 # GCC searches $(PGO_DIR) recursively on -fprofile-use, and clean wipes the tree.
-$(OBJ): $(SRC) $(wildcard *.hpp) $(SRELL_DEPS) $(if $(filter use,$(PGO)),force) \
-        $(OPT_STAMP) $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: %.cpp $(wildcard *.hpp) $(wildcard *.hxx) $(wildcard vendors/*.hpp) $(SRELL_DEPS) $(if $(filter use,$(PGO)),force) \
+        $(OPT_STAMP) | $(OBJ_DIR) $(if $(filter generate use,$(PGO)),$(PGO_DIR))
+	$(if $(VERBOSE),,@echo "  CXX     $<")
+	$(if $(VERBOSE),,@)$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Stamp recipe for OPT_STAMP (defined above the object rule). Creating a new
 # stamp, newer than the object, makes the object rebuild when the mode changes.
@@ -324,17 +340,44 @@ $(PRIV_DIR) $(OBJ_DIR) $(PGO_DIR):
 	@mkdir -p $@
 
 clean:
-	rm -vf $(OBJ) $(TARGET)
-	rm -rf $(PGO_DIR)
+	@rm -f $(OBJ) $(TARGET)
+	@rm -rf $(PGO_DIR)
 
 # Fetch rule for SRELL. Defined last so that `all` remains the default goal.
-$(SRELL_HDR) $(SRELL_LICENSE):
+# The header is the target itself: make fetches it only while it is missing.
+$(SRELL_HDR):
 	@echo "===> PCRE2 not found: fetching SRELL $(SRELL_COMMIT) from GitHub"
 	@command -v curl >/dev/null 2>&1 || { echo "Error: curl is required to fetch SRELL (or install libpcre2-8)"; exit 1; }
-	@mkdir -p $(SRELL_DIR)
 	curl -fsSL -o $(SRELL_HDR).part $(SRELL_URL)/single-header/srell.hpp
-	curl -fsSL -o $(SRELL_LICENSE).part $(SRELL_URL)/license.txt
 	@echo "$(SRELL_HDR_SHA)  $(SRELL_HDR).part" | $(SHA256SUM) -c - >/dev/null 2>&1 || \
-	  { rm -f $(SRELL_HDR).part $(SRELL_LICENSE).part; echo "Error: SRELL header checksum mismatch"; exit 1; }
+	  { rm -f $(SRELL_HDR).part; echo "Error: SRELL header checksum mismatch"; exit 1; }
 	mv $(SRELL_HDR).part $(SRELL_HDR)
-	mv $(SRELL_LICENSE).part $(SRELL_LICENSE)
+
+# Download a tagged release of fast_float.h into c_src/vendors/glazer_atof.hpp. Not part of
+# the build: the NIF still includes the vendored fast_float.hpp.
+# Usage: make -C c_src fast-float                        (latest release)
+#        make -C c_src fast-float FAST_FLOAT_TAG=v8.3.3  (pin a tag)
+FAST_FLOAT_OUT  := $(CURDIR)/vendors/glazer_atof.hpp
+FAST_FLOAT_REPO ?= https://github.com/fastfloat/fast_float
+FAST_FLOAT_TAG  ?=
+
+.PHONY: fast-float fast-float-check
+fast-float: $(FAST_FLOAT_OUT)
+	@$(MAKE) fast-float-check
+fast-float-check:
+	@command -v curl >/dev/null 2>&1 || { echo "Error: curl is required to fetch fast_float"; exit 1; }
+	@tag="$(FAST_FLOAT_TAG)"; \
+	if [ -z "$$tag" ]; then \
+	  tag=$$(curl -fsSLI -o /dev/null -w '%{url_effective}' $(FAST_FLOAT_REPO)/releases/latest | sed 's|.*/releases/tag/||'); \
+	fi; \
+	case "$$tag" in v[0-9]*) ;; *) echo "Error: could not resolve a fast_float release tag (got '$$tag')"; exit 1;; esac; \
+	echo "===> fetching fast_float $$tag"; \
+	curl -fsSL -o $(FAST_FLOAT_OUT).part "$(FAST_FLOAT_REPO)/releases/download/$$tag/fast_float.h" || \
+	  { rm -f $(FAST_FLOAT_OUT).part; echo "Error: download of fast_float $$tag failed"; exit 1; }; \
+	echo "// fast_float.h $$tag" > $(FAST_FLOAT_OUT); \
+	cat $(FAST_FLOAT_OUT).part >> $(FAST_FLOAT_OUT); \
+	rm -f $(FAST_FLOAT_OUT).part; \
+	sed -i -e 's/^namespace fast_float {/namespace glz::fp {/' \
+	       -e 's|^} // namespace fast_float$$|} // namespace glz::fp|' \
+	       -e 's/fast_float::/glz::fp::/g' $(FAST_FLOAT_OUT); \
+	echo "===> wrote $(FAST_FLOAT_OUT) ($$tag), namespace glz::fp"

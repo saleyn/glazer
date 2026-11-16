@@ -110,9 +110,8 @@ of the gap over the slower contenders:
   fast path dominates; the 8-byte path handles pretty-printed inputs.
 
 - **Fast integer formatting.** Integers are written to JSON using a
-  lookup-table-based digit-pair algorithm (avoiding division for small
-  values) with a vendored `lltoa` fallback for larger numbers — faster
-  than routing every integer through `snprintf`.
+  four-digit lookup table (`glz::BigInt`), which is faster than routing
+  every integer through `snprintf`.
 
 ## Benchmarking
 

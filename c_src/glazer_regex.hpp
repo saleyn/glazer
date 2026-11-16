@@ -4,7 +4,7 @@
 //
 // Engine, chosen at build time (c_src/Makefile):
 //   1. PCRE2, when libpcre2-8 is installed (GLAZER_HAVE_PCRE2).
-//   2. Otherwise SRELL, the header-only engine fetched into vendors/srell.
+//   2. Otherwise SRELL, the header-only engine fetched into vendors/srell.hpp.
 //
 // Both run in UTF-8 mode, so \p{...} works. \d, \w and \s stay ASCII, as in
 // ECMA-262 without the `u` flag.
@@ -65,7 +65,7 @@
 #  endif
 #  include <pcre2.h>
 #else
-#  include "vendors/srell/srell.hpp"
+#  include "vendors/srell.hpp"
 #endif
 
 namespace glz {
@@ -235,17 +235,17 @@ public:
   static const char* engine();
 
 private:
-  Mode m_mode;
 #if defined(GLAZER_HAVE_PCRE2)
   pcre2_code_8* m_code = nullptr;
 #else
+  Mode m_mode;  // read by match(): SRELL distinguishes full from search matching
   srell::u8cregex m_regex;
 #endif
 };
 
 #if defined(GLAZER_HAVE_PCRE2)
 
-inline SchemaRegex::SchemaRegex(const std::string& pattern, Mode mode) : m_mode(mode) {
+inline SchemaRegex::SchemaRegex(const std::string& pattern, Mode mode) {
   std::string translated = ecma_to_short_properties(pattern);
   std::string source = (mode == Mode::Full) ? "\\A(?:" + translated + ")\\z" : translated;
   int error = 0;

@@ -63,7 +63,6 @@ defmodule Glazer.MixProject do
       # mix docs
       {:ex_doc,              "~> 0.34",  only: :dev, runtime: false},
       # Benchmarking dependencies
-      {:simdjsone,           "~> 0.5",   only: :bench},
       {:jason,               "~> 1.4",   only: :bench},
       {:jiffy,               "~> 2.0.2", only: :bench},
       {:thoas,               "~> 1.2",   only: :bench},
@@ -172,7 +171,14 @@ defmodule Mix.Tasks.Compile.Make do
 
   @shortdoc "Compiles Erlang and NIF sources via Makefile"
 
-  def run(_args) do
+  def run(args) do
+    # The bench targets set SKIP_NIF_RECOMPILE after building the NIF themselves,
+    # so mix must not run make again (it would repeat the build banner, and under
+    # sudo it would write root-owned files).
+    if System.get_env("SKIP_NIF_RECOMPILE") in [nil, ""], do: run_make(args), else: :ok
+  end
+
+  defp run_make(_args) do
     app_path = Mix.Project.app_path()
 
     # Detect dependency build: Check if the app_path is pointing to a _build directory

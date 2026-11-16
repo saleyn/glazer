@@ -119,16 +119,18 @@ All functions below are in `glazer_yaml`.
 ## Benchmarking YAML
 
 ```sh
-$ PARALLEL=2 make bench-yaml
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
+$ make bench-yaml
+===> Running benchmarks (optimization: O3 - PGO)
 
 (numbers in µs)
 YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
                 decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer            24.6      8.2       18.7      4.8        2.4      1.2
-yaml_rustler     136.5      n/a       83.1      n/a       13.3      n/a
-fast_yaml        169.2     72.9       96.4     36.8       18.3      7.5
-yamerl          1545.3      n/a     1176.9      n/a      585.4      n/a
-ymlr               n/a     50.1        n/a     50.1        n/a      5.3
+glazer           57.8     19.6       39.8      8.9        2.8      1.3
+yaml_rustler    170.9      n/a      102.8      n/a       12.0      n/a
+fast_yaml       320.2     77.6      159.0     49.2       23.2      8.3
+yamerl         2609.6      n/a     2063.7      n/a     1009.7      n/a
+ymlr              n/a     79.5        n/a     85.2        n/a     12.3
+===> Running benchmarks (optimization: O3 - PGO)
+===> Process niceness: 0 (lower is higher priority)
 ```

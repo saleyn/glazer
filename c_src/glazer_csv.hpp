@@ -28,9 +28,10 @@
 
 #include <erl_nif.h>
 
-#include "fast_float.hpp"
+#include "vendors/glazer_atof.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
+#include "vendors/glazer_ftoa.hpp"
 #include "glazer_common.hpp"
 
 namespace glz {
@@ -99,7 +100,7 @@ struct CSVDecodeOpts {
 // Parses a `field_type()`:
 //   integer | {float, Precision} | boolean | {datetime, InputFormat}
 //   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
-static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
+inline bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
 {
   if (enif_is_identical(term, AM_INTEGER))       { spec.type = CSVFieldType::integer;       return true; }
   if (enif_is_identical(term, AM_BOOLEAN))       { spec.type = CSVFieldType::boolean;       return true; }
@@ -150,7 +151,7 @@ static bool parse_csv_field_type(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec
 //             | #{type => field_type(), default => Term, on_failure => binary | raise | default | null}
 //   field_type() :: integer | {float, Precision} | boolean | {datetime, InputFormat}
 //   | binary | charlist | existing_atom | {atom, ExistingAtoms :: list(atom())}
-static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
+inline bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec& spec)
 {
   if (!enif_is_map(env, term))
     return parse_csv_field_type(env, term, spec);
@@ -177,7 +178,7 @@ static bool parse_csv_field_spec(ErlNifEnv* env, ERL_NIF_TERM term, CSVFieldSpec
   return true;
 }
 
-static bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVDecodeOpts& opts)
+inline bool parse_csv_decode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVDecodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -272,7 +273,7 @@ struct CSVEncodeOpts {
   std::string_view line_ending = "\r\n";
 };
 
-static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVEncodeOpts& opts)
+inline bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVEncodeOpts& opts)
 {
   ERL_NIF_TERM head, tail = list;
   while (enif_get_list_cell(env, tail, &head, &tail)) {
@@ -313,7 +314,7 @@ static bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVEncodeOp
 // find_byte is the shared single-byte scanner from glazer_common.hpp.
 //-----------------------------------------------------------------------------
 
-static const char* find_field_end(const char* p, const char* end, char delim) noexcept
+inline const char* find_field_end(const char* p, const char* end, char delim) noexcept
 {
 #if defined(__ARM_NEON__)
   {
@@ -370,7 +371,7 @@ static const char* find_field_end(const char* p, const char* end, char delim) no
 
 // Finds the first byte in [p, end) that requires the field to be quoted:
 // the delimiter, a double-quote, a newline, or a carriage return.
-static const char* find_csv_special(const char* p, const char* end, char delim) noexcept
+inline const char* find_csv_special(const char* p, const char* end, char delim) noexcept
 {
 #if defined(__ARM_NEON__)
   {
@@ -570,7 +571,7 @@ struct CSVDecoder {
 
     return std::make_tuple(true, result);
   }
-  
+
 private:
   ErlNifEnv*           m_env;
   const CSVDecodeOpts& m_opts;
@@ -695,7 +696,7 @@ private:
         if (sv.empty())
           return 0;
         double d;
-        auto [ep, ec] = glz::fast_float::from_chars(sv.data(), sv.data() + sv.size(), d);
+        auto [ep, ec] = glz::fp::from_chars(sv.data(), sv.data() + sv.size(), d);
         if (ec != std::errc{} || ep != sv.data() + sv.size()) [[unlikely]]
           return 0;
         d = std::round(d * spec.scale) / spec.scale;
@@ -825,6 +826,10 @@ struct CSVEncoder {
   const char*  err()       const { return m_err;      }
   ERL_NIF_TERM err_term()  const { return m_err_term; }
 
+  // Output budget in bytes; see JSONEncoder::set_budget.
+  void set_budget(size_t budget) { m_budget = budget; }
+  bool budget_exceeded() const   { return m_over_budget; }
+
   // `term` is a list of rows (each a list of fields), or — with `headers` —
   // a list of maps.
   bool encode(ERL_NIF_TERM term)
@@ -890,6 +895,15 @@ private:
   OutBuf&              m_out;
   const char*          m_err;
   ERL_NIF_TERM         m_err_term;
+  size_t               m_budget = SIZE_MAX;
+  bool                 m_over_budget = false;
+
+  // True if writing `extra` more bytes would pass the budget; records it.
+  bool over_budget(size_t extra) {
+    if (m_out.view().size() + extra <= m_budget) return false;
+    m_over_budget = true;
+    return true;
+  }
 
   void push_field_raw(std::string_view sv)
   {
@@ -916,11 +930,13 @@ private:
   // for unsupported term types.
   bool encode_field(ERL_NIF_TERM term)
   {
+    if (over_budget(0)) [[unlikely]] return error("output budget exceeded", term);
     switch (enif_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) [[unlikely]]
           return false;
+        if (over_budget(bin.size)) [[unlikely]] return error("output budget exceeded", term);
         push_field_raw({reinterpret_cast<const char*>(bin.data), bin.size});
         return true;
       }
@@ -931,11 +947,15 @@ private:
         double d;
         if (!enif_get_double(m_env, term, &d)) [[unlikely]]
           return false;
+        if (!std::isfinite(d)) [[unlikely]] {
+          if (std::isnan(d)) m_out.push("nan", 3);
+          else if (d < 0) m_out.push("-inf", 4);
+          else m_out.push("inf", 3);
+          return true;
+        }
         char buf[32];
-        auto [e, ec] = std::to_chars(buf, buf+32, d, std::chars_format::general);
-        if (ec != std::errc{}) [[unlikely]]
-          return false;
-        m_out.push(buf, e - buf);
+        const size_t n = glz::fp::ftoa(d, buf);
+        m_out.push(buf, n);
         return true;
       }
       case ERL_NIF_TERM_TYPE_ATOM: {

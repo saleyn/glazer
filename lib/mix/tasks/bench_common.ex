@@ -2,46 +2,79 @@ defmodule Mix.Tasks.Bench.Common do
   @moduledoc false
 
   @doc """
-  Determine the parallelism level to use for benchmark runs.
-
-  Resolution order:
-    1. `-p N` / `-p=N` / `--parallel N` / `--parallel=N` from `args`
-    2. `PARALLEL` environment variable
-    3. Number of online schedulers (nproc)
-
-  The resulting value is clamped to `[1, nproc]`.
+  Print the benchmark banner: the NIF optimization level and whether PGO was used.
   """
-  def parallelism(args) do
-    nproc = System.schedulers_online()
-
-    value = parallel_arg(args) || System.get_env("PARALLEL")
-
-    nworkers =
-      case value do
-        nil ->
-          1
-
-        value ->
-          case Integer.parse(value) do
-            {n, _} -> n |> max(1) |> min(nproc)
-            :error -> 1
-          end
-      end
-
+  def announce do
     info = :glazer.info()
     opt  = info.optimization
     pgo  = info.pgo && " - PGO" || ""
 
-    IO.puts("==> Running benchmarks with parallelism: #{nworkers} (#{opt == :none && "non optimized" || "optimization: O#{opt}"}#{pgo})")
-    nworkers
+    IO.puts("===> Running benchmarks (#{opt == :none && "non optimized" || "optimization: #{opt}"}#{pgo})")
+    IO.puts("===> Process niceness: #{niceness()} (lower is higher priority)")
   end
 
-  defp parallel_arg(["-p=" <> n | _]),         do: n
-  defp parallel_arg(["--parallel=" <> n | _]), do: n
-  defp parallel_arg(["-p", n | _]),            do: n
-  defp parallel_arg(["--parallel", n | _]),    do: n
-  defp parallel_arg([_ | rest]),               do: parallel_arg(rest)
-  defp parallel_arg([]),                       do: nil
+  # Nice values of the VM's threads. The scheduler threads inherit the niceness
+  # of the process that started the VM (e.g. `sudo nice -n -20`), so this shows
+  # the priority the benchmark runs at. Reads /proc on Linux, falls back to ps.
+  @doc false
+  def niceness do
+    case File.ls("/proc/self/task") do
+      {:ok, tids} ->
+        tids
+        |> Enum.map(&thread_nice/1)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> Enum.sort()
+        |> Enum.map_join(", ", &Integer.to_string/1)
+
+      {:error, _} ->
+        ps_niceness()
+    end
+  end
+
+  defp thread_nice(tid) do
+    with {:ok, stat} <- File.read("/proc/self/task/#{tid}/stat"),
+         [_, after_comm] <- String.split(stat, ")", parts: 2),
+         fields = String.split(String.trim(after_comm)),
+         # Fields after "(comm)" start at field 3 (state); nice is field 19.
+         nice = Enum.at(fields, 16),
+         {n, ""} <- Integer.parse(nice) do
+      n
+    else
+      _ -> nil
+    end
+  end
+
+  defp ps_niceness do
+    case System.cmd("ps", ["-o", "ni=", "-p", List.to_string(:os.getpid())],
+                    stderr_to_stdout: true) do
+      {out, 0} -> String.trim(out)
+      _ -> "unknown"
+    end
+  end
+
+  @doc """
+  Run each suite in its own fresh process, one after another, and collect the
+  results. `fun` receives a `{name, decode, encode}` suite and returns that
+  suite's result. A suite that does not finish within `timeout` ms is reported
+  as `{:error, "timeout"}`.
+
+  Returns a list of `{name, result}` in suite order.
+  """
+  def run_each(suites, timeout, fun) do
+    parent = self()
+
+    Enum.map(suites, fn {name, _decode, _encode} = suite ->
+      ref = make_ref()
+      spawn(fn -> send(parent, {ref, fun.(suite)}) end)
+
+      receive do
+        {^ref, result} -> {name, result}
+      after
+        timeout -> {name, {:error, "timeout"}}
+      end
+    end)
+  end
 
   @doc "Run `f` `n` times and return the average elapsed time in microseconds."
   def measure(n, f) do

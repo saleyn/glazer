@@ -186,11 +186,11 @@ int main() {
   std::printf("// Packed value, low to high bits: derived (3), joining (3), script (3),\n");
   std::printf("// virama (1), bidi (4), mark (1).\n");
   std::printf("#pragma once\n\n#include <cstdint>\n\nnamespace glz::idna {\n\n");
-  std::printf("inline constexpr uint32_t kRunStart[] = {\n");
+  std::printf("inline constexpr uint32_t s_run_start[] = {\n");
   for (auto& r : runs) std::printf("  0x%X,\n", r.first);
-  std::printf("};\n\ninline constexpr uint32_t kRunValue[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_run_value[] = {\n");
   for (auto& r : runs) std::printf("  0x%X,\n", r.second);
-  std::printf("};\n\ninline constexpr uint32_t kRuns = %zu;\n\n", runs.size());
+  std::printf("};\n\ninline constexpr uint32_t s_runs = %zu;\n\n", runs.size());
 
   // ---- NFC data (UAX #15; RFC 5891 section 5.4) ----
   UErrorCode nerr = U_ZERO_ERROR;
@@ -244,34 +244,34 @@ int main() {
   }
   std::sort(comps.begin(), comps.end());
 
-  std::printf("inline constexpr uint32_t kCccStart[] = {\n");
+  std::printf("inline constexpr uint32_t s_ccc_start[] = {\n");
   for (auto& r : ccc_runs) std::printf("  0x%X,\n", r.first);
-  std::printf("};\n\ninline constexpr uint32_t kCccValue[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_ccc_value[] = {\n");
   for (auto& r : ccc_runs) std::printf("  %u,\n", r.second);
-  std::printf("};\n\ninline constexpr uint32_t kCccRuns = %zu;\n\n", ccc_runs.size());
+  std::printf("};\n\ninline constexpr uint32_t s_ccc_runs = %zu;\n\n", ccc_runs.size());
 
-  // kDecompCp is sorted; the sequence for kDecompCp[i] is
-  // kDecompSeq[kDecompOff[i] .. kDecompOff[i + 1])
+  // s_decomp_cp is sorted; the sequence for s_decomp_cp[i] is
+  // s_decomp_seq[s_decomp_off[i] .. s_decomp_off[i + 1])
   std::vector<uint32_t> seq_flat, offs;
   for (auto& d : decomp) {
     offs.push_back(static_cast<uint32_t>(seq_flat.size()));
     seq_flat.insert(seq_flat.end(), d.second.begin(), d.second.end());
   }
   offs.push_back(static_cast<uint32_t>(seq_flat.size()));
-  std::printf("inline constexpr uint32_t kDecompCp[] = {\n");
+  std::printf("inline constexpr uint32_t s_decomp_cp[] = {\n");
   for (auto& d : decomp) std::printf("  0x%X,\n", d.first);
-  std::printf("};\n\ninline constexpr uint32_t kDecompOff[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_decomp_off[] = {\n");
   for (auto o : offs) std::printf("  %u,\n", o);
-  std::printf("};\n\ninline constexpr uint32_t kDecompSeq[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_decomp_seq[] = {\n");
   for (auto c : seq_flat) std::printf("  0x%X,\n", c);
-  std::printf("};\n\ninline constexpr uint32_t kDecompCount = %zu;\n\n", decomp.size());
+  std::printf("};\n\ninline constexpr uint32_t s_decomp_count = %zu;\n\n", decomp.size());
 
   // Primary composites keyed by (first << 21) | second, sorted
-  std::printf("inline constexpr uint64_t kCompKey[] = {\n");
+  std::printf("inline constexpr uint64_t s_comp_key[] = {\n");
   for (auto& c : comps) std::printf("  0x%llXULL,\n", static_cast<unsigned long long>(c.first));
-  std::printf("};\n\ninline constexpr uint32_t kCompValue[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_comp_value[] = {\n");
   for (auto& c : comps) std::printf("  0x%X,\n", c.second);
-  std::printf("};\n\ninline constexpr uint32_t kCompCount = %zu;\n\n", comps.size());
+  std::printf("};\n\ninline constexpr uint32_t s_comp_count = %zu;\n\n", comps.size());
 
   // ---- UTS #46 mapping (nontransitional, STD3 rules off). The IDNA2008 rules
   // are applied after mapping, so ASCII outside LDH is still rejected there.
@@ -330,17 +330,17 @@ int main() {
     useq.insert(useq.end(), r.seq.begin(), r.seq.end());
   }
   uoff.push_back(static_cast<uint32_t>(useq.size()));
-  std::printf("inline constexpr uint32_t kUts46Start[] = {\n");
+  std::printf("inline constexpr uint32_t s_uts46_start[] = {\n");
   for (auto& r : ranges) std::printf("  0x%X,\n", r.start);
-  std::printf("};\n\ninline constexpr uint32_t kUts46End[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_uts46_end[] = {\n");
   for (auto& r : ranges) std::printf("  0x%X,\n", r.end);
-  std::printf("};\n\ninline constexpr uint32_t kUts46Type[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_uts46_type[] = {\n");
   for (auto& r : ranges) std::printf("  %u,\n", r.type);
-  std::printf("};\n\ninline constexpr uint32_t kUts46Off[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_uts46_off[] = {\n");
   for (auto o : uoff) std::printf("  %u,\n", o);
-  std::printf("};\n\ninline constexpr uint32_t kUts46Seq[] = {\n");
+  std::printf("};\n\ninline constexpr uint32_t s_uts46_seq[] = {\n");
   for (auto c : useq) std::printf("  0x%X,\n", c);
-  std::printf("};\n\ninline constexpr uint32_t kUts46Count = %zu;\n\n", ranges.size());
+  std::printf("};\n\ninline constexpr uint32_t s_uts46_count = %zu;\n\n", ranges.size());
 
   std::printf("} // namespace glz::idna\n");
   std::fprintf(stderr, "ccc runs: %zu, decompositions: %zu, composition pairs: %zu, uts46 entries: %zu\n",

@@ -247,18 +247,18 @@ All functions below are in `glazer_csv`.
 ## Benchmarking CSV
 
 ```sh
-$ PARALLEL=2 make bench-csv
-==> Running benchmarks with parallelism: 1 (optimization: O3 - PGO)
+$ make bench-csv
+===> Running benchmarks (optimization: O3 - PGO)
 
 (numbers in µs)
 CSV               small (1.3K)          medium (130.9K)         large (3433.1K)
                 decode     encode       decode     encode       decode     encode
 -----------------------------------------------------------------------------------
-glazer             8.8        5.0        917.9      428.4      26411.7     9596.2
-rusty_csv         34.3        n/a       1167.0        n/a      33518.3        n/a
-nimble_csv        35.5       34.6       6042.9     3355.5     180571.7   110273.4
-csv               69.6      219.8       5874.3    14229.1     325996.6   521524.7
-erl_csv           16.7       21.3       1528.7     1574.8      55473.9    71353.1
+glazer            8.3      4.1      769.2    400.7    45725.1  18175.5
+rusty_csv        27.3      n/a     1282.7      n/a    47439.2      n/a
+nimble_csv       40.5     34.7     5123.6   6509.5    375516.5  247815.2
+csv              65.2    198.1    11383.0  26980.5    TIMEOUT  TIMEOUT
+erl_csv          35.9     35.1     2587.6   3623.7    115074.7  143284.3
 ```
 
 ### glazer vs rusty_csv
@@ -273,7 +273,7 @@ the `BENCH_SET` note in the Makefile); run it explicitly with
 `make bench-csv BENCH_SET=csv`:
 >
 ```sh
-$ PARALLEL=2 make bench-csv BENCH_SET=csv
+$ make bench-csv BENCH_SET=csv
 ```
 >
 > The benchmarking table above has the merged results of running with `BENCH_SET=csv`

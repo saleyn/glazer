@@ -35,7 +35,7 @@ defmodule Mix.Tasks.BenchYaml do
   ]
 
   @impl Mix.Task
-  def run(args) do
+  def run(_args) do
     Mix.env() != :bench && Mix.raise("mix bench-yaml must be run with MIX_ENV=bench")
 
     # Ensure all deps are started so NIFs get loaded.
@@ -47,10 +47,10 @@ defmodule Mix.Tasks.BenchYaml do
     if files == [] do
       Mix.shell().error("No YAML test data files found in test/data/")
     else
-      workers = Mix.Tasks.Bench.Common.parallelism(args)
+      Mix.Tasks.Bench.Common.announce()
 
       files_data = Enum.map(files, fn {label, bin} ->
-        results = run_file(bin, suites, workers)
+        results = run_file(bin, suites)
         {label, results}
       end)
 
@@ -144,47 +144,28 @@ defmodule Mix.Tasks.BenchYaml do
     Mix.Tasks.Bench.Common.iterations(size, @iteration_thresholds, @default_iterations)
   end
 
-  defp run_file(bin, suites, parallelism) do
+  defp run_file(bin, suites) do
     n       = iterations(byte_size(bin))
-    parent  = self()
-    ref     = make_ref()
     timeout = n * 200 + 10_000
 
-    suites
-    |> Enum.chunk_every(parallelism)
-    |> Enum.flat_map(fn chunk ->
-      tasks = Enum.map(chunk, fn {name, decode, encode} ->
-        pid = spawn(fn ->
-          result =
-            try do
-              {dt, decoded} =
-                case decode do
-                  nil        -> {:na, :glazer_yaml.decode(bin)}
-                  decode_fun -> {Mix.Tasks.Bench.Common.measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
-                end
-              et =
-                case encode do
-                  nil        -> :na
-                  encode_fun -> Mix.Tasks.Bench.Common.measure(n, fn -> encode_fun.(decoded) end)
-                end
-              {:ok, dt, et}
-            rescue
-              e -> {:error, Exception.message(e)}
-            catch
-              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-            end
-          send(parent, {ref, name, result})
-        end)
-        {name, pid}
-      end)
-
-      Enum.map(tasks, fn {name, _pid} ->
-        receive do
-          {^ref, ^name, result} -> {name, result}
-        after
-          timeout -> {name, {:error, "timeout"}}
-        end
-      end)
+    Mix.Tasks.Bench.Common.run_each(suites, timeout, fn {_name, decode, encode} ->
+      try do
+        {dt, decoded} =
+          case decode do
+            nil        -> {:na, :glazer_yaml.decode(bin)}
+            decode_fun -> {Mix.Tasks.Bench.Common.measure(n, fn -> decode_fun.(bin) end), decode_fun.(bin)}
+          end
+        et =
+          case encode do
+            nil        -> :na
+            encode_fun -> Mix.Tasks.Bench.Common.measure(n, fn -> encode_fun.(decoded) end)
+          end
+        {:ok, dt, et}
+      rescue
+        e -> {:error, Exception.message(e)}
+      catch
+        kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+      end
     end)
   end
 

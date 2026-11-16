@@ -80,8 +80,15 @@ inline T power(T a, size_t b) {
 
 static constexpr size_t DIRTY_THRESHOLD = 4096;
 
-inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term)
+// Nesting levels the size estimate walks. Deeper terms are reported as large,
+// so they go to a dirty scheduler and the encoder rejects them with an error.
+// Matches the encoder's nesting cap; keeps this recursion off the C stack limit.
+static constexpr unsigned ESTIMATE_MAX_DEPTH = 128;
+
+inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term, unsigned depth = 0)
 {
+  if (depth >= ESTIMATE_MAX_DEPTH) [[unlikely]] return DIRTY_THRESHOLD + 1;
+
   if (enif_is_binary(env, term)) {
     ErlNifBinary bin;
     if (enif_inspect_binary(env, term, &bin))
@@ -95,7 +102,7 @@ inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term)
     size_t bytes = 0;
     while (enif_get_list_cell(env, list, &head, &list)) {
       ++count;
-      bytes += estimate_json_term_size(env, head);
+      bytes += estimate_json_term_size(env, head, depth + 1);
       if (count >= 256) return DIRTY_THRESHOLD + 1;
     }
     return bytes + count * 8;
@@ -113,17 +120,12 @@ inline size_t estimate_json_term_size(ErlNifEnv* env, ERL_NIF_TERM term)
     if (enif_get_tuple(env, term, &arity, &elems)) {
       size_t bytes = 0;
       for (int i = 0; i < arity; ++i)
-        bytes += estimate_json_term_size(env, elems[i]);
+        bytes += estimate_json_term_size(env, elems[i], depth + 1);
       return bytes + size_t(arity) * 12;
     }
   }
 
   return 0;
-}
-
-inline bool should_use_dirty_scheduler(ErlNifEnv* env, ERL_NIF_TERM term)
-{
-  return estimate_json_term_size(env, term) >= DIRTY_THRESHOLD;
 }
 
 //-----------------------------------------------------------------------------
@@ -427,13 +429,16 @@ struct OutBuf {
   // Use functions below with caution: they do not check capacity and may
   // overwrite memory if used incorrectly. Call `ensure()` to make sure there is
   // enough space before calling these functions.
-  void unsafe_push(char c)                  { m_data[m_len++] = c; }
-  void unsafe_push(const char* s, size_t n) { memcpy(m_data + m_len, s, n); m_len += n; }
-  void unsafe_push(std::string_view sv)     { unsafe_push(sv.data(), sv.size()); }
+  void  unsafe_push(char c)                  { m_data[m_len++] = c; }
+  // Write position for direct writes; commit(n) advances the length by n.
+  char* tail()                               { return m_data + m_len; }
+  void  commit(size_t n)                     { m_len += n; }
+  void  unsafe_push(const char* s, size_t n) { memcpy(m_data + m_len, s, n); m_len += n; }
+  void  unsafe_push(std::string_view sv)     { unsafe_push(sv.data(), sv.size()); }
 
-  std::string_view view() const      { return {m_data, m_len}; }
+  std::string_view view() const              { return {m_data, m_len}; }
 
-  operator std::string_view() const  { return view(); }
+  operator std::string_view() const          { return view(); }
 };
 
 //-----------------------------------------------------------------------------
@@ -447,11 +452,11 @@ struct OutBuf {
 //-----------------------------------------------------------------------------
 
 struct KeyCache {
-  // Open-addressed, power-of-two-sized table with linear probing. Sized
-  // larger than the expected distinct-key count (real documents have ~94
-  // distinct keys per the comment above) to keep the load factor low and
-  // probe sequences short.
-  static constexpr size_t CAP  = 128;
+  // Open-addressed, power-of-two-sized table with linear probing. 512 slots keep
+  // the load low for documents with a few hundred distinct keys (twitter2 has 73
+  // distinct keys, which collide often in 128 slots and mispredict on every probe).
+  // Measured on twitter2 decode: 512 slots cut mispredictions by 18% over 128.
+  static constexpr size_t CAP  = 512;
   static constexpr size_t MASK = CAP - 1;
 
   // Lazily-cleared via an epoch counter rather than zero-initializing the
@@ -462,7 +467,7 @@ struct KeyCache {
   // seeded from a process-wide monotonic counter, so leftover garbage from
   // prior stack frames can never coincide with it (it is always strictly
   // less than every epoch handed out so far).
-  struct Entry { const char* s; size_t len; uint32_t hash; uint32_t epoch; ERL_NIF_TERM term; };
+  struct Entry { uint64_t pre; uint64_t tail; const char* s; size_t len; uint32_t hash; uint32_t epoch; ERL_NIF_TERM term; };
   Entry    m_entries[CAP]; // intentionally left uninitialized — see m_epoch
   size_t   m_count = 0;
   uint32_t m_epoch;
@@ -476,33 +481,44 @@ struct KeyCache {
 
   KeyCache() : m_epoch(next_epoch()) {}
 
-  // FNV-1a, mixed 4 bytes per multiply instead of 1 — cheap, decent
-  // distribution, computed once per key and reused for both the lookup
-  // and (on a miss) the subsequent insert.
-  static uint32_t hash_of(const char* s, size_t len) {
-    uint32_t h = 2166136261u;
-    size_t   i = 0;
-    for (; i + 4 <= len; i += 4) {
-      uint32_t w;
-      memcpy(&w, s + i, 4);
-      h = (h ^ w) * 16777619u;
+  // First and last 8 key bytes, zero-padded for short keys. For keys of up to
+  // 16 bytes these two words cover every byte, so equal words mean equal keys.
+  static inline void key_words(const char* s, size_t len, uint64_t& pre, uint64_t& tail) {
+    if (len >= 8) {
+      memcpy(&pre, s, 8);
+      memcpy(&tail, s + len - 8, 8);
+    } else if (len >= 4) {
+      // Two overlapping 4-byte loads cover every byte of a 4..7 byte key.
+      uint32_t a, b;
+      memcpy(&a, s, 4);
+      memcpy(&b, s + len - 4, 4);
+      pre = static_cast<uint64_t>(a) | (static_cast<uint64_t>(b) << 32);
+      tail = pre;
+    } else {
+      pre = 0;
+      for (size_t i = 0; i < len; ++i)
+        pre |= static_cast<uint64_t>(static_cast<unsigned char>(s[i])) << (8 * i);
+      tail = pre;
     }
-    for (; i < len; ++i) {
-      h ^= static_cast<unsigned char>(s[i]);
-      h *= 16777619u;
-    }
-    return h;
   }
 
-  // Returns 0 if not cached or cache is full/bypassed (has_escape).
-  // O(1) average: jump straight to the hash's home slot and linearly probe
-  // only the (typically very short, given the low load factor) collision
-  // chain — comparing the precomputed hash before len/memcmp.
+  static uint32_t hash_of(const char* s, size_t len) {
+    uint64_t pre, tail;
+    key_words(s, len, pre, tail);
+    uint64_t h = pre * 0x9E3779B97F4A7C15ull ^ (tail + len) * 0xC2B2AE3D27D4EB4Full;
+    return static_cast<uint32_t>(h >> 32);
+  }
+
+  // Returns 0 if not cached. Keys of up to 16 bytes are matched by their word
+  // pair alone; longer keys are confirmed with memcmp.
   ERL_NIF_TERM lookup(const char* s, size_t len, uint32_t hash) const {
+    uint64_t pre, tail;
+    key_words(s, len, pre, tail);
     for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       const Entry& e = m_entries[i];
       if (e.epoch != m_epoch) [[unlikely]] return 0; // empty slot — key was never inserted
-      if (e.hash == hash && e.len == len && memcmp(e.s, s, len) == 0) [[likely]]
+      if (e.hash == hash && e.len == len && e.pre == pre && e.tail == tail &&
+          (len <= 16 || memcmp(e.s, s, len) == 0)) [[likely]]
         return e.term;
     }
     return 0;
@@ -510,17 +526,15 @@ struct KeyCache {
 
   void insert(const char* s, size_t len, uint32_t hash, ERL_NIF_TERM term) {
     if (m_count >= CAP) return;
+    uint64_t pre, tail;
+    key_words(s, len, pre, tail);
     for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       if (m_entries[i].epoch != m_epoch) {
-        m_entries[i] = {s, len, hash, m_epoch, term};
+        m_entries[i] = {pre, tail, s, len, hash, m_epoch, term};
         ++m_count;
         return;
       }
     }
-    // If we reach here, all slots appear to have matching epochs (likely due to
-    // uninitialized memory containing the same epoch value). This is extremely
-    // unlikely in normal operation but can happen due to uninitialized memory.
-    // Simply return without inserting to prevent infinite loop.
   }
 };
 
@@ -715,6 +729,7 @@ inline const char* find_byte(const char* p, const char* end, char c) noexcept
 // (c ^ 0x80) < 0xA0 (signed), which SSE2/NEON signed-compare handles.
 inline const char* find_escape_pos(const char* p, const char* end) noexcept
 {
+  [[maybe_unused]] const char* const start = p;  // used only by the SSE2 tail below
 #if defined(__ARM_NEON__)
   {
     const uint8x16_t vq    = vdupq_n_u8('"');
@@ -774,6 +789,25 @@ inline const char* find_escape_pos(const char* p, const char* end) noexcept
       if (mask) return p + __builtin_ctz(mask);
       p += 16;
     }
+  }
+#endif
+#if defined(__SSE2__)
+  // Under 16 bytes left: one 16-byte window that ends at end. The bytes before p
+  // were already scanned clean, so the first flagged byte in the window is at p
+  // or later.
+  if (end - start >= 16 && p < end) {
+    const __m128i vq    = _mm_set1_epi8('"');
+    const __m128i vbs   = _mm_set1_epi8('\\');
+    const __m128i vbias = _mm_set1_epi8(-128);
+    const __m128i vcmp  = _mm_set1_epi8(-96);
+    const char* w = end - 16;
+    __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(w));
+    __m128i  biased = _mm_xor_si128(v, vbias);
+    unsigned mask   = (unsigned)_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(
+      _mm_cmpgt_epi8(vcmp, biased),
+      _mm_cmpeq_epi8(v, vq)),
+      _mm_cmpeq_epi8(v, vbs)));
+    return mask ? w + __builtin_ctz(mask) : end;
   }
 #endif
   while (p < end && !NEEDS_ESCAPE_TAB[(unsigned char)*p]) ++p;

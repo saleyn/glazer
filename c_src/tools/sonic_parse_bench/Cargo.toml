@@ -1,0 +1,13 @@
+[package]
+name = "sonic_parse_bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Torque-patched copy: exposes parse_into_visitor and JsonVisitor.
+sonic-rs = { path = "../../../deps/torque/native/sonic-rs" }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = true
