@@ -38,7 +38,7 @@ Schema = #{
   }
 },
 
-{ok, Compiled} = glazer_schema:compile_schema(Schema),
+{ok, Compiled} = glazer_schema:compile(Schema),
 
 ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann", ~"age" => 3}),
 
@@ -85,9 +85,9 @@ ok = glazer_schema:validate_term(Schema, #{~"name" => ~"Ann", ~"age" => 3}).
 **Erlang**
 
 ```erlang
-{ok, Compiled}   = glazer_schema:compile_schema(Schema).
-{ok, Compiled}   = glazer_schema:compile_schema(Schema, Options).
-{error, Message} = glazer_schema:compile_schema(BadSchema).
+{ok, Compiled}   = glazer_schema:compile(Schema).
+{ok, Compiled}   = glazer_schema:compile(Schema, Options).
+{error, Message} = glazer_schema:compile(BadSchema).
 ```
 
 **Elixir**
@@ -109,8 +109,8 @@ Schema keys can be binaries (the normal case for decoded JSON) or atoms. Both wo
 **Erlang**
 
 ```erlang
-{ok, C} = glazer_schema:compile_schema_file("schemas/user.json"),
-{ok, D} = glazer_schema:compile_schema_file("schemas/order.json", [{registry, false}]).
+{ok, C} = glazer_schema:compile_file("schemas/user.json"),
+{ok, D} = glazer_schema:compile_file("schemas/order.json", [{registry, false}]).
 ```
 
 **Elixir**
@@ -120,7 +120,7 @@ Schema keys can be binaries (the normal case for decoded JSON) or atoms. Both wo
 {:ok, d} = Glazer.Schema.compile_file("schemas/order.json", registry: false)
 ```
 
-The format comes from the extension: `.json` is decoded as JSON, and `.yaml` or `.yml` as YAML (the extension is matched case-insensitively). `{format, json | yaml}` overrides the extension. The file is then compiled as `compile_schema/2` does, so the same options and registry behaviour apply. Errors are:
+The format comes from the extension: `.json` is decoded as JSON, and `.yaml` or `.yml` as YAML (the extension is matched case-insensitively). `{format, json | yaml}` overrides the extension. The file is then compiled as `compile/2` does, so the same options and registry behaviour apply. Errors are:
 
 - `{error, {unsupported_format, Extension}}` (the extension as a binary, e.g. `<<".txt">>`): the extension is not recognised and no `format` option was given;
 - `{error, {read_failed, Filename, Reason}}`: the file cannot be read;
@@ -130,17 +130,17 @@ The format comes from the extension: `.json` is decoded as JSON, and `.yaml` or 
 
 ### Registry by default
 
-`compile_schema` adds each schema to the schema registry (see [Schema registry](#schema-registry)). Compiling the same schema with the same options again returns the stored handle, so repeated calls with the same schema do not recompile.
+`compile` adds each schema to the schema registry (see [Schema registry](#schema-registry)). Compiling the same schema with the same options again returns the stored handle, so repeated calls with the same schema do not recompile.
 
 A schema with a top-level `$id` is registered under that `$id` (without any fragment), so it can be fetched by name and used by `$ref` from other schemas. A schema without `$id` is stored by its content.
 
 **Erlang**
 
 ```erlang
-{ok, C} = glazer_schema:compile_schema(Schema),        % registered
-{ok, C} = glazer_schema:compile_schema(Schema).        % same handle, no recompile
+{ok, C} = glazer_schema:compile(Schema),        % registered
+{ok, C} = glazer_schema:compile(Schema).        % same handle, no recompile
 
-{ok, D} = glazer_schema:compile_schema(Schema, [{registry, false}]).  % not registered
+{ok, D} = glazer_schema:compile(Schema, [{registry, false}]).  % not registered
 ```
 
 **Elixir**
@@ -172,7 +172,7 @@ Compilation parses the schema and checks it. Do it at startup or on first use, t
 compiled() ->
   persistent_term:get({?MODULE, schema}, undefined) orelse
     begin
-      {ok, C} = glazer_schema:compile_schema(schema()),
+      {ok, C} = glazer_schema:compile(schema()),
       persistent_term:put({?MODULE, schema}, C),
       C
     end.
@@ -224,8 +224,8 @@ ok                     = glazer_schema:validate_term(Schema, Data, Options).
 :ok = Glazer.Schema.validate_term(schema, data, options)
 ```
 
-- `validate/2,3` takes a compiled schema, either the `{schema, Resource}` tuple from `compile_schema/1` or the bare resource.
-- `validate_term/2,3` takes the uncompiled schema map and **compiles it on every call**. Use it for tests and one-off checks; use `compile_schema` plus `validate` for anything called repeatedly.
+- `validate/2,3` takes a compiled schema, either the `{schema, Resource}` tuple from `compile/1` or the bare resource.
+- `validate_term/2,3` takes the uncompiled schema map and **compiles it on every call**. Use it for tests and one-off checks; use `compile` plus `validate` for anything called repeatedly.
 
 `Data` is an Erlang term in the decoded-JSON shape:
 
@@ -443,7 +443,7 @@ A validation that was cut short is never reported as `ok`, even inside `not` or 
 **Erlang**
 
 ```erlang
-{ok, Compiled} = glazer_schema:compile_schema(Schema, [
+{ok, Compiled} = glazer_schema:compile(Schema, [
   {refs, #{~"https://example.com/address.json" => AddressSchema}},
   {format_assertion, true},
   {registry, true}
@@ -557,7 +557,7 @@ Schema = #{
   }
 },
 
-{ok, C} = glazer_schema:compile_schema(Schema,
+{ok, C} = glazer_schema:compile(Schema,
             [{refs, #{~"https://example.com/address.json" => Address}}]).
 ```
 
@@ -584,10 +584,10 @@ Schemas that refer to each other are registered together, as a group: `glazer_sc
 **Erlang**
 
 ```erlang
-{ok, _} = glazer_schema:compile_schema(#{~"$id" => ~"https://example.com/address.json",
+{ok, _} = glazer_schema:compile(#{~"$id" => ~"https://example.com/address.json",
                                        ~"type" => ~"object",
                                        ~"required" => [~"city"]}),
-{ok, Person} = glazer_schema:compile_schema(#{~"type" => ~"object",
+{ok, Person} = glazer_schema:compile(#{~"type" => ~"object",
                  ~"properties" => #{~"home" => #{~"$ref" => ~"https://example.com/address.json"}}}).
 ```
 
@@ -637,7 +637,7 @@ Unknown format names pass. Non-string values always pass the format check, as th
 **Erlang**
 
 ```erlang
-{ok, C} = glazer_schema:compile_schema(#{~"format" => ~"sku"},
+{ok, C} = glazer_schema:compile(#{~"format" => ~"sku"},
             [{formats, #{~"sku" => ~"^[A-Z]{3}-[0-9]{4}$"}}]),
 ok = glazer_schema:validate(C, ~"ABC-1234"),
 {error, {path, [], {format_invalid, ~"abc-1"}}} = glazer_schema:validate(C, ~"abc-1").
@@ -675,7 +675,7 @@ Consequences you may notice:
 **Erlang**
 
 ```erlang
-{ok, C} = glazer_schema:compile_schema(#{~"format" => ~"email"},
+{ok, C} = glazer_schema:compile(#{~"format" => ~"email"},
                                      [{format_assertion, false}]),
 ok = glazer_schema:validate(C, ~"not-an-email").
 ```
@@ -764,7 +764,7 @@ ok = glazer_schema:validate(~"user", Data),
 {:error, {:unknown_schema, "order"}} = Glazer.Schema.validate("order", data)
 ```
 
-`glazer_schema:compile_schema/1,2` registers a schema with a `$id` under that name by default (see [Registry by default](#registry-by-default)), so a schema compiled once can be fetched and validated by name, and used by `$ref` from other schemas.
+`glazer_schema:compile/1,2` registers a schema with a `$id` under that name by default (see [Registry by default](#registry-by-default)), so a schema compiled once can be fetched and validated by name, and used by `$ref` from other schemas.
 
 | Function | Returns |
 |---|---|
@@ -779,7 +779,7 @@ ok = glazer_schema:validate(~"user", Data),
 | `list()` | `[{Name, Version}]`, sorted by name |
 | `register_group(Schemas)`, `register_group(Schemas, CompileOpts)` | `{ok, [{Name, Version}]}`: schemas that refer to each other, registered together (every schema needs a `$id`; all or nothing) |
 | `unregister(Name)` | `ok` (unknown names are ignored) |
-| `clear_interned()` | the number of schemas removed; clears the entries added by default `compile_schema` calls. Named registrations are not affected. |
+| `clear_interned()` | the number of schemas removed; clears the entries added by default `compile` calls. Named registrations are not affected. |
 
 How it is stored and why:
 

@@ -53,17 +53,17 @@ defmodule Glazer.Schema do
 
   Returns `{:ok, handle}` or `{:error, message}`.
 
-  See `:glazer_schema.compile_schema/2`.
+  See `:glazer_schema.compile/2`.
   """
-  defdelegate compile(schema), to: :glazer_schema, as: :compile_schema
+  defdelegate compile(schema), to: :glazer_schema, as: :compile
 
   @doc """
   Like `compile/1`, with compile options: `registry: false`, `name: name`,
   `refs: %{uri => schema}` and `format_assertion: boolean`.
 
-  See `:glazer_schema.compile_schema/2`.
+  See `:glazer_schema.compile/2`.
   """
-  defdelegate compile(schema, opts), to: :glazer_schema, as: :compile_schema
+  defdelegate compile(schema, opts), to: :glazer_schema, as: :compile
 
   @doc """
   Read a schema file and compile it. The decoder is chosen by extension:
@@ -74,16 +74,16 @@ defmodule Glazer.Schema do
   `{:unsupported_format, ext}`, `{:read_failed, path, reason}`,
   `{:invalid_json, path, message}`, or `{:invalid_yaml, path, message}`.
 
-  See `:glazer_schema.compile_schema_file/2`.
+  See `:glazer_schema.compile_file/2`.
   """
-  defdelegate compile_file(path), to: :glazer_schema, as: :compile_schema_file
+  defdelegate compile_file(path), to: :glazer_schema, as: :compile_file
 
   @doc """
   Like `compile_file/1`, with options.
 
-  See `:glazer_schema.compile_schema_file/2`.
+  See `:glazer_schema.compile_file/2`.
   """
-  defdelegate compile_file(path, opts), to: :glazer_schema, as: :compile_schema_file
+  defdelegate compile_file(path, opts), to: :glazer_schema, as: :compile_file
 
   @doc """
   Validate `data` against a compiled handle, or against a registered name.

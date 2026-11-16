@@ -12,7 +12,6 @@
 #include <unordered_set>
 #include <cstdint>
 #include <cctype>
-#include <regex>
 
 #include "glazer_json_schema_compiler.hpp"
 

@@ -108,46 +108,46 @@ list_test() ->
 
 compile_schema_is_interned_by_default_test() ->
   S = #{<<"type">> => <<"string">>, <<"maxLength">> => 7001},
-  {ok, A} = glazer_schema:compile_schema(S),
+  {ok, A} = glazer_schema:compile(S),
   % same schema and options: the stored handle is returned (resource refs are
   % unique per compile, so equality shows nothing was recompiled)
-  {ok, A} = glazer_schema:compile_schema(S),
-  {ok, A} = glazer_schema:compile_schema(S, []),
+  {ok, A} = glazer_schema:compile(S),
+  {ok, A} = glazer_schema:compile(S, []),
   ok = glazer_schema:validate(A, <<"ok">>),
   _ = glazer_schema:clear_interned().
 
 registry_false_compiles_fresh_test() ->
   S = #{<<"type">> => <<"string">>, <<"maxLength">> => 7002},
-  {ok, A} = glazer_schema:compile_schema(S, [{registry, false}]),
-  {ok, B} = glazer_schema:compile_schema(S, [{registry, false}]),
+  {ok, A} = glazer_schema:compile(S, [{registry, false}]),
+  {ok, B} = glazer_schema:compile(S, [{registry, false}]),
   ?assertNotEqual(A, B),
   % and does not touch the interned store
-  {ok, C} = glazer_schema:compile_schema(S),
+  {ok, C} = glazer_schema:compile(S),
   ?assertNotEqual(A, C),
   _ = glazer_schema:clear_interned().
 
 options_are_part_of_the_key_test() ->
   S = #{<<"format">> => <<"email">>},
-  {ok, A} = glazer_schema:compile_schema(S),
-  {ok, B} = glazer_schema:compile_schema(S, [{format_assertion, false}]),
+  {ok, A} = glazer_schema:compile(S),
+  {ok, B} = glazer_schema:compile(S, [{format_assertion, false}]),
   ?assertNotEqual(A, B),
-  ?assertEqual({ok, A}, glazer_schema:compile_schema(S, [{registry, true}])),
+  ?assertEqual({ok, A}, glazer_schema:compile(S, [{registry, true}])),
   _ = glazer_schema:clear_interned().
 
 invalid_registry_value_test() ->
   ?assertEqual({error, <<"registry must be true or false">>},
-               glazer_schema:compile_schema(#{}, [{registry, sometimes}])).
+               glazer_schema:compile(#{}, [{registry, sometimes}])).
 
 compile_errors_are_not_interned_test() ->
   Bad = #{<<"type">> => <<"bogus">>},
-  ?assertEqual({error, <<"unknown type: bogus">>}, glazer_schema:compile_schema(Bad)),
-  ?assertEqual({error, <<"unknown type: bogus">>}, glazer_schema:compile_schema(Bad)).
+  ?assertEqual({error, <<"unknown type: bogus">>}, glazer_schema:compile(Bad)),
+  ?assertEqual({error, <<"unknown type: bogus">>}, glazer_schema:compile(Bad)).
 
 clear_interned_test() ->
   S = #{<<"type">> => <<"number">>, <<"minimum">> => 7003},
-  {ok, A} = glazer_schema:compile_schema(S),
+  {ok, A} = glazer_schema:compile(S),
   ?assert(glazer_schema:clear_interned() >= 1),
-  {ok, B} = glazer_schema:compile_schema(S),
+  {ok, B} = glazer_schema:compile(S),
   ?assertNotEqual(A, B),
   _ = glazer_schema:clear_interned().
 
@@ -163,12 +163,12 @@ named_registrations_unaffected_by_clear_test() ->
 schema_with_id_is_named_by_id_test() ->
   Id = ~"https://example.test/named-by-id-1.json",
   S = #{~"$id" => Id, ~"type" => ~"string"},
-  {ok, C} = glazer_schema:compile_schema(S),
+  {ok, C} = glazer_schema:compile(S),
   ?assertEqual({ok, 1}, glazer_schema:version(Id)),
   ?assertEqual({ok, C}, glazer_schema:fetch(Id)),
   ?assertEqual(ok, glazer_schema:validate(Id, ~"x")),
   % the same schema again: unchanged, same handle
-  ?assertEqual({ok, C}, glazer_schema:compile_schema(S)),
+  ?assertEqual({ok, C}, glazer_schema:compile(S)),
   ok = glazer_schema:unregister(Id).
 
 fragment_in_id_is_dropped_test() ->
@@ -189,8 +189,8 @@ register_1_uses_id_test() ->
 
 conflicting_id_creates_new_version_test() ->
   Id = ~"https://example.test/conflict-1.json",
-  {ok, C1} = glazer_schema:compile_schema(#{~"$id" => Id, ~"type" => ~"string"}),
-  {ok, C2} = glazer_schema:compile_schema(#{~"$id" => Id, ~"type" => ~"integer"}),
+  {ok, C1} = glazer_schema:compile(#{~"$id" => Id, ~"type" => ~"string"}),
+  {ok, C2} = glazer_schema:compile(#{~"$id" => Id, ~"type" => ~"integer"}),
   ?assertNotEqual(C1, C2),
   ?assertEqual({ok, 2}, glazer_schema:version(Id)),
   ?assertMatch({error, _}, glazer_schema:validate(Id, ~"x")),
@@ -200,12 +200,12 @@ conflicting_id_creates_new_version_test() ->
 
 ref_is_resolved_from_registry_test() ->
   Address = ~"https://example.test/address-1.json",
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Address,
+  {ok, _} = glazer_schema:compile(#{~"$id" => Address,
                                          ~"type" => ~"object",
                                          ~"required" => [~"city"]}),
   Person = #{~"type" => ~"object",
              ~"properties" => #{~"home" => #{~"$ref" => Address}}},
-  {ok, P} = glazer_schema:compile_schema(Person),
+  {ok, P} = glazer_schema:compile(Person),
   ok = glazer_schema:validate(P, #{~"home" => #{~"city" => ~"Oslo"}}),
   ?assertMatch({error, _}, glazer_schema:validate(P, #{~"home" => #{}})),
   ok = glazer_schema:unregister(Address).
@@ -213,10 +213,10 @@ ref_is_resolved_from_registry_test() ->
 ref_resolution_is_transitive_test() ->
   Leaf = ~"https://example.test/leaf-1.json",
   Mid = ~"https://example.test/mid-1.json",
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Leaf, ~"type" => ~"integer"}),
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Mid,
+  {ok, _} = glazer_schema:compile(#{~"$id" => Leaf, ~"type" => ~"integer"}),
+  {ok, _} = glazer_schema:compile(#{~"$id" => Mid,
                                          ~"properties" => #{~"n" => #{~"$ref" => Leaf}}}),
-  {ok, Top} = glazer_schema:compile_schema(#{~"$ref" => Mid}),
+  {ok, Top} = glazer_schema:compile(#{~"$ref" => Mid}),
   ok = glazer_schema:validate(Top, #{~"n" => 3}),
   ?assertMatch({error, _}, glazer_schema:validate(Top, #{~"n" => ~"x"})),
   ok = glazer_schema:unregister(Leaf),
@@ -224,78 +224,78 @@ ref_resolution_is_transitive_test() ->
 
 explicit_refs_take_precedence_test() ->
   Doc = ~"https://example.test/prec-1.json",
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Doc, ~"type" => ~"string"}),
+  {ok, _} = glazer_schema:compile(#{~"$id" => Doc, ~"type" => ~"string"}),
   Override = #{Doc => #{~"type" => ~"integer"}},
-  {ok, C} = glazer_schema:compile_schema(#{~"$ref" => Doc}, [{refs, Override}]),
+  {ok, C} = glazer_schema:compile(#{~"$ref" => Doc}, [{refs, Override}]),
   ok = glazer_schema:validate(C, 1),
   ok = glazer_schema:unregister(Doc).
 
 changed_referenced_document_is_recompiled_test() ->
   Doc = ~"https://example.test/changing-1.json",
   Top = #{~"$ref" => Doc},
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Doc, ~"type" => ~"string"}),
-  {ok, A} = glazer_schema:compile_schema(Top, [{registry, false}]),
+  {ok, _} = glazer_schema:compile(#{~"$id" => Doc, ~"type" => ~"string"}),
+  {ok, A} = glazer_schema:compile(Top, [{registry, false}]),
   ok = glazer_schema:validate(A, ~"x"),
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Doc, ~"type" => ~"integer"}),
+  {ok, _} = glazer_schema:compile(#{~"$id" => Doc, ~"type" => ~"integer"}),
   % a fresh compile sees the new document
-  {ok, B} = glazer_schema:compile_schema(Top, [{registry, false}]),
+  {ok, B} = glazer_schema:compile(Top, [{registry, false}]),
   ok = glazer_schema:validate(B, 1),
   ?assertMatch({error, _}, glazer_schema:validate(B, ~"x")),
   ok = glazer_schema:unregister(Doc).
 
 unknown_ref_is_still_unresolved_test() ->
   ?assertEqual({error, ~"unresolved $ref (document not provided): https://example.test/nope-1.json"},
-               glazer_schema:compile_schema(#{~"$ref" => ~"https://example.test/nope-1.json"},
+               glazer_schema:compile(#{~"$ref" => ~"https://example.test/nope-1.json"},
                                           [{registry, false}])).
 
 %% the name option
 
 name_option_names_schema_without_id_test() ->
   Name = ~"opt-named-1",
-  {ok, C} = glazer_schema:compile_schema(#{~"type" => ~"string"}, [{name, Name}]),
+  {ok, C} = glazer_schema:compile(#{~"type" => ~"string"}, [{name, Name}]),
   ?assertEqual({ok, C}, glazer_schema:fetch(Name)),
   ?assertEqual(ok, glazer_schema:validate(Name, ~"x")),
   ok = glazer_schema:unregister(Name).
 
 name_option_accepts_string_test() ->
-  {ok, _} = glazer_schema:compile_schema(#{~"type" => ~"integer"}, [{name, "opt-named-2"}]),
+  {ok, _} = glazer_schema:compile(#{~"type" => ~"integer"}, [{name, "opt-named-2"}]),
   ?assertEqual({ok, 1}, glazer_schema:version(~"opt-named-2")),
   ok = glazer_schema:unregister(~"opt-named-2").
 
 name_option_equal_to_id_is_accepted_test() ->
   Id = ~"https://example.test/opt-same-1.json",
-  {ok, C} = glazer_schema:compile_schema(#{~"$id" => Id, ~"type" => ~"string"}, [{name, Id}]),
+  {ok, C} = glazer_schema:compile(#{~"$id" => Id, ~"type" => ~"string"}, [{name, Id}]),
   ?assertEqual({ok, C}, glazer_schema:fetch(Id)),
   ok = glazer_schema:unregister(Id).
 
 name_option_differing_from_id_is_rejected_test() ->
   Id = ~"https://example.test/opt-diff-1.json",
   ?assertEqual({error, ~"name option differs from the schema's $id"},
-               glazer_schema:compile_schema(#{~"$id" => Id, ~"type" => ~"string"},
+               glazer_schema:compile(#{~"$id" => Id, ~"type" => ~"string"},
                                           [{name, ~"other-name"}])),
   ?assertEqual({error, not_found}, glazer_schema:fetch(~"other-name")),
   ?assertEqual({error, not_found}, glazer_schema:fetch(Id)).
 
 name_option_is_not_registered_without_registry_test() ->
   Name = ~"opt-noreg-1",
-  {ok, _} = glazer_schema:compile_schema(#{~"type" => ~"string"},
+  {ok, _} = glazer_schema:compile(#{~"type" => ~"string"},
                                        [{name, Name}, {registry, false}]),
   ?assertEqual({error, not_found}, glazer_schema:fetch(Name)).
 
 name_option_mismatch_is_an_error_without_registry_test() ->
   Id = ~"https://example.test/opt-noreg-diff-1.json",
   ?assertEqual({error, ~"name option differs from the schema's $id"},
-               glazer_schema:compile_schema(#{~"$id" => Id, ~"type" => ~"string"},
+               glazer_schema:compile(#{~"$id" => Id, ~"type" => ~"string"},
                                           [{name, ~"other"}, {registry, false}])).
 
 invalid_name_option_test() ->
   ?assertEqual({error, ~"name must be a non-empty binary or string"},
-               glazer_schema:compile_schema(#{}, [{name, 42}])),
+               glazer_schema:compile(#{}, [{name, 42}])),
   ?assertEqual({error, ~"name must be a non-empty binary or string"},
-               glazer_schema:compile_schema(#{}, [{name, ~""}])).
+               glazer_schema:compile(#{}, [{name, ~""}])).
 
 no_name_and_no_id_is_stored_by_content_test() ->
-  {ok, _} = glazer_schema:compile_schema(#{~"type" => ~"boolean", ~"const" => true}),
+  {ok, _} = glazer_schema:compile(#{~"type" => ~"boolean", ~"const" => true}),
   ?assertEqual(false, lists:keymember(~"", 1, glazer_schema:list())),
   _ = glazer_schema:clear_interned(),
   ok.
@@ -308,22 +308,22 @@ compile_schema_file_test() ->
   ok = file:write_file(Good, ~"""
     {"$id": "https://example.test/file-schema-1.json", "type": "object", "required": ["name"]}
     """),
-  {ok, C} = glazer_schema:compile_schema_file(Good),
+  {ok, C} = glazer_schema:compile_file(Good),
   ?assertEqual({ok, C}, glazer_schema:fetch(~"https://example.test/file-schema-1.json")),
   ok = glazer_schema:validate(C, #{~"name" => ~"Ann"}),
   ok = glazer_schema:unregister(~"https://example.test/file-schema-1.json"),
-  {ok, _} = glazer_schema:compile_schema_file(Good, [{registry, false}]),
+  {ok, _} = glazer_schema:compile_file(Good, [{registry, false}]),
   ok = file:delete(Good).
 
 compile_schema_file_errors_test() ->
   Missing = "/nonexistent/glazer-no-such-schema.json",
-  ?assertMatch({error, {read_failed, Missing, enoent}}, glazer_schema:compile_schema_file(Missing)),
+  ?assertMatch({error, {read_failed, Missing, enoent}}, glazer_schema:compile_file(Missing)),
   Bad = filename:join(tmp_dir(),
                       "glazer_schema_file_bad_" ++ integer_to_list(erlang:unique_integer([positive])) ++ ".json"),
   ok = file:write_file(Bad, ~"{not json"),
-  ?assertMatch({error, {invalid_json, Bad, _}}, glazer_schema:compile_schema_file(Bad)),
+  ?assertMatch({error, {invalid_json, Bad, _}}, glazer_schema:compile_file(Bad)),
   ok = file:write_file(Bad, ~"{\"type\": \"bogus\"}"),
-  ?assertEqual({error, ~"unknown type: bogus"}, glazer_schema:compile_schema_file(Bad)),
+  ?assertEqual({error, ~"unknown type: bogus"}, glazer_schema:compile_file(Bad)),
   ok = file:delete(Bad).
 
 %% info/0 return types
@@ -343,21 +343,21 @@ info_returns_binary_optimization_test() ->
 compile_schema_file_boolean_schema_test() ->
   File = tmp_file("true"),
   ok = file:write_file(File, ~"true"),
-  {ok, C} = glazer_schema:compile_schema_file(File, [{registry, false}]),
+  {ok, C} = glazer_schema:compile_file(File, [{registry, false}]),
   ok = glazer_schema:validate(C, 1),
   ok = file:delete(File).
 
 compile_schema_file_non_object_test() ->
   File = tmp_file("array"),
   ok = file:write_file(File, ~"[1, 2]"),
-  ?assertMatch({error, _}, glazer_schema:compile_schema_file(File, [{registry, false}])),
+  ?assertMatch({error, _}, glazer_schema:compile_file(File, [{registry, false}])),
   ok = file:delete(File).
 
 compile_schema_file_passes_refs_test() ->
   Doc = ~"https://example.test/file-refs-doc-1.json",
   File = tmp_file("refs"),
   ok = file:write_file(File, ~"{\"$ref\": \"https://example.test/file-refs-doc-1.json\"}"),
-  {ok, C} = glazer_schema:compile_schema_file(File,
+  {ok, C} = glazer_schema:compile_file(File,
               [{registry, false}, {refs, #{Doc => #{~"type" => ~"string"}}}]),
   ok = glazer_schema:validate(C, ~"x"),
   ?assertMatch({error, _}, glazer_schema:validate(C, 1)),
@@ -366,7 +366,7 @@ compile_schema_file_passes_refs_test() ->
 compile_schema_file_name_option_test() ->
   File = tmp_file("named"),
   ok = file:write_file(File, ~"{\"type\": \"integer\"}"),
-  {ok, _} = glazer_schema:compile_schema_file(File, [{name, ~"file-named-1"}]),
+  {ok, _} = glazer_schema:compile_file(File, [{name, ~"file-named-1"}]),
   ?assertEqual(ok, glazer_schema:validate(~"file-named-1", 7)),
   ok = glazer_schema:unregister(~"file-named-1"),
   ok = file:delete(File).
@@ -377,24 +377,24 @@ ref_cycle_terminates_test() ->
   A = ~"https://example.test/cycle-a-1.json",
   B = ~"https://example.test/cycle-b-1.json",
   % B refers to A, which is not registered yet: give it as an explicit document
-  {ok, _} = glazer_schema:compile_schema(
+  {ok, _} = glazer_schema:compile(
               #{~"$id" => B, ~"properties" => #{~"prev" => #{~"$ref" => A}}},
               [{refs, #{A => #{~"type" => ~"object"}}}]),
   % A refers to B, which is registered: A and B now refer to each other
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => A,
+  {ok, _} = glazer_schema:compile(#{~"$id" => A,
                                          ~"properties" => #{~"next" => #{~"$ref" => B}}}),
   % resolving A through the registry must terminate on the cycle
-  {ok, Top} = glazer_schema:compile_schema(#{~"$ref" => A}, [{registry, false}]),
+  {ok, Top} = glazer_schema:compile(#{~"$ref" => A}, [{registry, false}]),
   ok = glazer_schema:validate(Top, #{~"next" => #{~"prev" => #{}}}),
   ok = glazer_schema:unregister(A),
   ok = glazer_schema:unregister(B).
 
 self_reference_through_registry_test() ->
   Tree = ~"https://example.test/tree-1.json",
-  {ok, _} = glazer_schema:compile_schema(#{~"$id" => Tree,
+  {ok, _} = glazer_schema:compile(#{~"$id" => Tree,
                                          ~"type" => ~"object",
                                          ~"properties" => #{~"child" => #{~"$ref" => Tree}}}),
-  {ok, Top} = glazer_schema:compile_schema(#{~"$ref" => Tree}, [{registry, false}]),
+  {ok, Top} = glazer_schema:compile(#{~"$ref" => Tree}, [{registry, false}]),
   ok = glazer_schema:validate(Top, #{~"child" => #{~"child" => #{}}}),
   ?assertMatch({error, _}, glazer_schema:validate(Top, #{~"child" => 1})),
   ok = glazer_schema:unregister(Tree).
@@ -402,7 +402,7 @@ self_reference_through_registry_test() ->
 schema_with_unresolved_ref_is_not_registered_test() ->
   Id = ~"https://example.test/chain-a-1.json",
   ?assertEqual({error, ~"unresolved $ref (document not provided): https://example.test/chain-missing-1.json"},
-               glazer_schema:compile_schema(#{~"$id" => Id,
+               glazer_schema:compile(#{~"$id" => Id,
                                             ~"$ref" => ~"https://example.test/chain-missing-1.json"})),
   ?assertEqual({error, not_found}, glazer_schema:fetch(Id)).
 
@@ -410,7 +410,7 @@ schema_with_unresolved_ref_is_not_registered_test() ->
 
 ipv4_and_date_boundaries_test() ->
   Check = fun(Format, V) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{~"format" => Format}, [{registry, false}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{~"format" => Format}, [{registry, false}]),
     glazer_schema:validate(S, V) =:= ok
   end,
   true  = Check(~"ipv4", ~"255.255.255.255"),
@@ -439,7 +439,7 @@ group_registers_mutual_references_test() ->
   ?assertEqual({ok, 1}, glazer_schema:version(A)),
   ?assertEqual({ok, 1}, glazer_schema:version(B)),
   % both directions resolve, including through a chain back to the start
-  {ok, Top} = glazer_schema:compile_schema(#{~"$ref" => A}, [{registry, false}]),
+  {ok, Top} = glazer_schema:compile(#{~"$ref" => A}, [{registry, false}]),
   ok = glazer_schema:validate(Top, #{~"next" => #{~"prev" => #{~"next" => #{}}}}),
   ?assertMatch({error, _}, glazer_schema:validate(Top, #{~"next" => #{~"prev" => 1}})),
   ok = glazer_schema:unregister(A),
@@ -483,9 +483,9 @@ file_schema_yaml_and_json_test() ->
   ok = file:write_file(Yaml, Body),
   ok = file:write_file(Yml, Body),
   ok = file:write_file(Json, ~"{\"type\": \"object\", \"required\": [\"name\"]}"),
-  {ok, Y} = glazer_schema:compile_schema_file(Yaml, [{registry, false}]),
-  {ok, Z} = glazer_schema:compile_schema_file(Yml, [{registry, false}]),
-  {ok, J} = glazer_schema:compile_schema_file(Json, [{registry, false}]),
+  {ok, Y} = glazer_schema:compile_file(Yaml, [{registry, false}]),
+  {ok, Z} = glazer_schema:compile_file(Yml, [{registry, false}]),
+  {ok, J} = glazer_schema:compile_file(Json, [{registry, false}]),
   ok = glazer_schema:validate(Y, #{~"name" => ~"Ann"}),
   ok = glazer_schema:validate(Z, #{~"name" => ~"Ann"}),
   ?assertMatch({error, _}, glazer_schema:validate(J, #{})),
@@ -496,8 +496,8 @@ file_schema_format_option_test() ->
   Dir = tmp_dir(),
   File = filename:join(Dir, "schema.txt"),
   ok = file:write_file(File, ~"{\"type\": \"string\"}"),
-  ?assertMatch({error, {unsupported_format, <<".txt">>}}, glazer_schema:compile_schema_file(File)),
-  {ok, C} = glazer_schema:compile_schema_file(File, [{format, json}, {registry, false}]),
+  ?assertMatch({error, {unsupported_format, <<".txt">>}}, glazer_schema:compile_file(File)),
+  {ok, C} = glazer_schema:compile_file(File, [{format, json}, {registry, false}]),
   ok = glazer_schema:validate(C, ~"x"),
   ok = file:delete(File),
   ok.
@@ -508,8 +508,8 @@ file_schema_invalid_documents_test() ->
   BadJson = filename:join(Dir, "bad.json"),
   ok = file:write_file(Bad, ~"key: [unclosed"),
   ok = file:write_file(BadJson, ~"{not json"),
-  ?assertMatch({error, {invalid_yaml, Bad, _}}, glazer_schema:compile_schema_file(Bad)),
-  ?assertMatch({error, {invalid_json, BadJson, _}}, glazer_schema:compile_schema_file(BadJson)),
+  ?assertMatch({error, {invalid_yaml, Bad, _}}, glazer_schema:compile_file(Bad)),
+  ?assertMatch({error, {invalid_json, BadJson, _}}, glazer_schema:compile_file(BadJson)),
   ok = file:delete(Bad),
   ok = file:delete(BadJson),
   ok.
@@ -517,7 +517,7 @@ file_schema_invalid_documents_test() ->
 %% Inputs with 256+ list elements are above the dirty-scheduler threshold,
 %% so validation runs on a dirty CPU scheduler. Results must match inline runs.
 large_input_dirty_scheduler_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(
+  {ok, {schema, S}} = glazer_schema:compile(
     #{~"items" => #{~"type" => ~"integer", ~"minimum" => 0}}, [{registry, false}]),
   Big = lists:seq(0, 19999),
   ?assertEqual(ok, glazer_schema:validate(S, Big)),

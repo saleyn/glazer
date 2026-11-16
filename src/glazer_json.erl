@@ -40,12 +40,7 @@ custom Elixir protocol on top of Glazer's Erlang encoding functions.
          read_file/1, read_file/2, write_file/2, write_file/3,
          stream_decoder/0, stream_decoder/1, stream_feed/2, stream_eof/1,
          decode_start/2, decode_start/3, decode_continue/2,
-         'decode!'/1, 'encode!'/1, 'encode_to_iodata!'/1,
          encode_to_iodata/1, encode_to_iodata/2]).
-
--deprecated({'encode!',           1, "use Glazer.JSON.encode!/1 instead"}).
--deprecated({'decode!',           1, "use Glazer.JSON.decode!/1 instead"}).
--deprecated({'encode_to_iodata!', 1, "use Glazer.JSON.encode_to_iodata!/1 instead"}).
 
 -deprecated({stream_decoder,      0, "use decode_start/3"}).
 -deprecated({stream_decoder,      1, "use decode_start/3"}).
@@ -221,26 +216,6 @@ decode(Input, Opts) ->
   end.
 
 -doc """
-Decode a JSON binary to an Erlang term. Equivalent to `decode/1`, provided
-for API parity with Elixir's `JSON.decode!/1`. Raises `{parse_error,
-Reason}` on invalid input.
-
-## NOTE
-
-This function is deprecated. Use `Glazer.JSON.decode!/1` instead.
-
-## Examples
-
-```elixir
-1> Glazer.JSON.decode!("{\"a\":1}").
-%{"a" => 1}
-```
-""".
--spec 'decode!'(binary() | iolist()) -> term().
-'decode!'(Input) ->
-  decode(Input, [use_nil]).
-
--doc """
 Decode a JSON binary or iolist, returning `{ok, Term}` or
 `{error, Reason}` instead of raising.
 
@@ -405,47 +380,6 @@ Encode a list of Erlang terms to newline-delimited JSON (NDJSON) with options
 -spec encode_ndjson([term()], encode_opts()) -> binary().
 encode_ndjson(List, Opts) ->
   glazer:json_encode_ndjson(List, Opts).
-
--doc """
-Encode an Erlang term to a JSON binary. Equivalent to `encode/1`, provided
-for API parity with Elixir's `JSON.encode!/1`. Raises `{encode_error, Msg}`
-if `Data` cannot be encoded.
-
-## NOTE
-
-This function is deprecated. Use `Glazer.JSON.encode!/1` instead.
-
-## Examples
-
-```elixir
-1> Glazer.JSON.encode!(%{"a" => 1}).
-<<"{\"a\":1}">>
-```
-""".
--spec 'encode!'(term()) -> binary().
-'encode!'(Data) ->
-  encode(Data, [use_nil]).
-
--doc """
-Encode an Erlang term to JSON as iodata. Equivalent to `encode/1` (which
-already returns a binary, itself valid iodata), provided for API parity with
-Elixir's `JSON.encode_to_iodata!/1`. Raises `{encode_error, Msg}` if `Data`
-cannot be encoded.
-
-## NOTE
-
-This function is deprecated. Use `Glazer.JSON.encode_to_iodata!/1` instead.
-
-## Examples
-
-```elixir
-1> Glazer.JSON.encode_to_iodata!(%{"a" => 1}).
-<<"{\"a\":1}">>
-```
-""".
--spec 'encode_to_iodata!'(term()) -> iodata().
-'encode_to_iodata!'(Data) ->
-  encode(Data, [use_nil]).
 
 -doc """
 Encode an Erlang term to JSON iodata.

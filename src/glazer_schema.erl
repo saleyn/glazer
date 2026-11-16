@@ -2,11 +2,11 @@
 -moduledoc """
 Schemas for JSON and YAML documents: compile, validate and register them.
 
-- `compile_schema/1,2` compiles a schema map to a handle, and
-  `compile_schema_file/1,2` reads a `.json`, `.yaml` or `.yml` file and compiles
+- `compile/1,2` compiles a schema map to a handle, and
+  `compile_file/1,2` reads a `.json`, `.yaml` or `.yml` file and compiles
   it (the format comes from the extension, or from the `format` option).
 - `validate/2,3` checks a term against a handle or a registered name (a file
-  name is not a registered name: load the file with `compile_schema_file/1,2` first), and
+  name is not a registered name: load the file with `compile_file/1,2` first), and
   `validate_term/2,3` compiles and validates in one call.
 - `register/1,2,3` keeps compiled schemas under names, in a process-free registry
   (`persistent_term`). A schema with a top-level `$id` is named by it.
@@ -18,7 +18,7 @@ The data being validated is any Erlang term, so a document decoded with
 
 ```erlang
 %% schemas/user.yaml has "$id: https://example.com/user.json", so it is registered under that name
-{ok, _} = glazer_schema:compile_schema_file("schemas/user.yaml"),
+{ok, _} = glazer_schema:compile_file("schemas/user.yaml"),
 ok = glazer_schema:validate(<<"https://example.com/user.json">>, #{<<"name">> => <<"Ann">>}),
 {ok, 1} = glazer_schema:register(#{<<"$id">> => <<"order">>, <<"type">> => <<"object">>}).
 ```
@@ -29,7 +29,7 @@ ok = glazer_schema:validate(<<"https://example.com/user.json">>, #{<<"name">> =>
          validate/2, validate/3, validate_term/2, validate_term/3,
          name_of/1, register_handle/3, resolve_refs/2,
          intern/2, clear_interned/0,
-         compile_schema/1, compile_schema/2, compile_schema_file/1, compile_schema_file/2]).
+         compile/1, compile/2, compile_file/1, compile_file/2]).
 
 -export_type([name/0]).
 
@@ -61,7 +61,7 @@ register(Name, Schema) ->
   register(Name, Schema, []).
 
 -doc """
-Compile `Schema` with `CompileOpts` (see `glazer_schema:compile_schema/2`) and
+Compile `Schema` with `CompileOpts` (see `glazer_schema:compile/2`) and
 store it under `Name`.
 
 Returns `{ok, Version}`:
@@ -72,7 +72,7 @@ Returns `{ok, Version}`:
   start at 1 and increase by 1 on each change of the same name).
 
 On a compile error nothing is stored, and `{error, Message}` is returned with
-the message from the compiler, as in `glazer_schema:compile_schema/1`.
+the message from the compiler, as in `glazer_schema:compile/1`.
 """.
 -spec register(name(), map() | boolean(), list()) -> {ok, pos_integer()} | {error, binary()}.
 register(Name, Schema, CompileOpts) ->
@@ -271,7 +271,7 @@ resolve_refs(Schema, Options) ->
 -doc """
 Compile `Schema` with `Opts` and return the stored handle, if one exists for
 the same schema and options; otherwise compile it and store it. This is what
-`glazer_schema:compile_schema/2` uses for schemas without a `$id`. Interned
+`glazer_schema:compile/2` uses for schemas without a `$id`. Interned
 schemas are keyed by their content and are not part of the name index, so
 `list/0` does not show them.
 
@@ -297,7 +297,7 @@ intern(Schema, Opts0) ->
   end.
 
 -doc """
-Remove every schema stored by `intern/2` (the default `glazer_schema:compile_schema`
+Remove every schema stored by `intern/2` (the default `glazer_schema:compile`
 path). Named registrations are not affected. Returns the number removed.
 """.
 -spec clear_interned() -> non_neg_integer().
@@ -389,12 +389,12 @@ Options:
   over the registry.
 - `{format_assertion, boolean()}`: enforce `format` (default `true`).
 """.
--spec compile_schema(map() | boolean()) -> {ok, {schema, reference()}} | {error, binary()}.
-compile_schema(Schema) ->
-  compile_schema(Schema, []).
+-spec compile(map() | boolean()) -> {ok, {schema, reference()}} | {error, binary()}.
+compile(Schema) ->
+  compile(Schema, []).
 
--spec compile_schema(map() | boolean(), list()) -> {ok, {schema, reference()}} | {error, binary()}.
-compile_schema(Schema, Options) ->
+-spec compile(map() | boolean(), list()) -> {ok, {schema, reference()}} | {error, binary()}.
+compile(Schema, Options) ->
   case {split_name_option(Options), split_registry_option(Options)} of
     {{error, _} = Error, _} ->
       Error;
@@ -465,7 +465,7 @@ schema_name(Schema, Given) ->
   end.
 
 -doc """
-Read a schema from `Filename` and compile it, as `compile_schema/1`.
+Read a schema from `Filename` and compile it, as `compile/1`.
 
 The format comes from the file extension: `.json` is decoded as JSON, and
 `.yaml` or `.yml` as YAML. Any other extension is an error, unless the `format`
@@ -479,18 +479,18 @@ Returns `{ok, {schema, Resource}}`, or one of:
 - `{error, {read_failed, Filename, Reason}}`: the file cannot be read.
 - `{error, {invalid_json, Filename, Message}}`: the contents are not JSON.
 - `{error, {invalid_yaml, Filename, Message}}`: the contents are not YAML.
-- `{error, Message}`: the schema does not compile, as for `compile_schema/1`.
+- `{error, Message}`: the schema does not compile, as for `compile/1`.
 
-Other options are those of `compile_schema/2`.
+Other options are those of `compile/2`.
 """.
--spec compile_schema_file(file:name_all()) ->
+-spec compile_file(file:name_all()) ->
         {ok, {schema, reference()}} | {error, term()}.
-compile_schema_file(Filename) ->
-  compile_schema_file(Filename, []).
+compile_file(Filename) ->
+  compile_file(Filename, []).
 
--spec compile_schema_file(file:name_all(), list()) ->
+-spec compile_file(file:name_all(), list()) ->
         {ok, {schema, reference()}} | {error, term()}.
-compile_schema_file(Filename, Options0) ->
+compile_file(Filename, Options0) ->
   case schema_format(Filename, Options0) of
     {error, _} = Error ->
       Error;
@@ -503,7 +503,7 @@ compile_schema_file(Filename, Options0) ->
             {error, Message} ->
               {error, {invalid_tag(Format), Filename, Message}};
             {ok, Schema} ->
-              compile_schema(Schema, Options)
+              compile(Schema, Options)
           end
       end
   end.
@@ -548,11 +548,11 @@ compile_direct(Schema, []) ->
 compile_direct(Schema, Options) ->
   glazer:compile_schema(Schema, Options).
 
-%% The NIF expects the {schema, Resource} tuple returned by compile_schema/1
+%% The NIF expects the {schema, Resource} tuple returned by compile/1
 -doc """
 Validate `Data` against a compiled schema or a registered name.
 
-`Schema` is a handle from `compile_schema/1,2` (`{schema, Resource}` or the bare
+`Schema` is a handle from `compile/1,2` (`{schema, Resource}` or the bare
 resource), or the name of a registered schema. Any other term is taken as a name.
 Returns `ok`, the error tuples of the validator, or `{error, {unknown_schema, Name}}`
 for a name that is not registered.
@@ -584,7 +584,7 @@ validate_compiled(Compiled, Data, Options) ->
 
 -doc """
 Compile `Schema` and validate `Data` in one call. Each call compiles the schema
-again, so use `compile_schema/1,2` and `validate/2,3` for repeated validation.
+again, so use `compile/1,2` and `validate/2,3` for repeated validation.
 """.
 -spec validate_term(map() | boolean(), term()) -> ok | {error, term()}.
 validate_term(Schema, Data) ->

@@ -859,21 +859,6 @@ file_test_() ->
   ].
 
 %% ----------------------------------------------------------------------------
-%% Elixir JSON-module API parity: decode!/1, encode!/1, encode_to_iodata!/1
-%% ----------------------------------------------------------------------------
-
-bang_api_test_() ->
-  Term = #{<<"a">> => 1, <<"b">> => [true, nil, 3.5]},
-  Bin  = <<"{\"a\":1,\"b\":[true,null,3.5]}">>,
-  [
-    ?_assertEqual(Term, glazer_json:'decode!'(Bin)),
-    ?_assertError({parse_error, _}, glazer_json:'decode!'(<<"not json">>)),
-
-    ?_assertEqual(Bin, glazer_json:'encode!'(Term)),
-    ?_assertEqual(Bin, glazer_json:'encode_to_iodata!'(Term))
-  ].
-
-%% ----------------------------------------------------------------------------
 %% Zero-copy sub-binary safety with iolist input.
 %%
 %% Regression test for a bug where decoding an iolist (not a flat binary)

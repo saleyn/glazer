@@ -18,8 +18,11 @@ It also has **jq-style filters** for JSON (`query/2,3`, see [jq filter support](
 and **JSON Schema 2020-12 validation** for JSON and YAML documents, with a schema registry
 (see [JSON Schema validation](#json-schema-validation)).
 
+Full documentation: [see hexdocs](https://glazer.hexdocs.pm/).
+
 ## Table of contents
 
+- [Table of contents](#table-of-contents)
 - [Features](#features)
   - [JSON](#json)
   - [YAML](#yaml)
@@ -267,7 +270,7 @@ Schema = #{
   }
 },
 
-{ok, Compiled} = glazer_schema:compile_schema(Schema),
+{ok, Compiled} = glazer_schema:compile(Schema),
 ok = glazer_schema:validate(Compiled, #{~"name" => ~"Ann"}),
 {error, {path, [~"name"], {string_too_short, ~""}}} =
   glazer_schema:validate(Compiled, #{~"name" => ~""}).

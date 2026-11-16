@@ -5,7 +5,7 @@
 %% uniqueItems. Doubles would lose the low digits of these values.
 
 ok(Schema, Data) ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema, [{registry, false}]),
+  {ok, {schema, S}} = glazer_schema:compile(Schema, [{registry, false}]),
   glazer_schema:validate(S, Data).
 
 assert(Schema, Data) -> ?assertEqual(ok, ok(Schema, Data)).

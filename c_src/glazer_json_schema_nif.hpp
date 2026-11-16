@@ -3,7 +3,7 @@
 // JSON Schema validator NIF interface
 //
 // Exposes schema validation functions to Erlang:
-//   - glazer_schema:compile_schema/1
+//   - glazer_schema:compile/1
 //   - glazer_schema:validate/2,3
 //   - glazer_schema:validate_term/2,3
 //   - glazer_json:validate_batch/2,3

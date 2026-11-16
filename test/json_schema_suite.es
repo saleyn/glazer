@@ -189,7 +189,7 @@ exclude_nothing(Rel, Desc, Schema, Tests, G, Acc) ->
                     false -> []
                   end,
       Opts = [{refs, maps:get(<<"externalSchemas">>, G, #{})}] ++ FormatOpt,
-      case glazer_schema:compile_schema(Schema, Opts) of
+      case glazer_schema:compile(Schema, Opts) of
         {error, Msg} ->
           io:format("CERR ~s | ~ts | ~ts~n", [Rel, Desc, to_s(Msg)]),
           Acc#{cerr := maps:get(cerr, Acc) + length(Tests)};

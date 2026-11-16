@@ -37,18 +37,18 @@
 compile_schema_test() ->
   % Test schema compilation succeeds
   SchemaMap = ?SCHEMA_SIMPLE_TYPE,
-  {ok, {schema, _CompiledSchema}} = glazer_schema:compile_schema(SchemaMap),
+  {ok, {schema, _CompiledSchema}} = glazer_schema:compile(SchemaMap),
   ok.
 
 compile_schema_invalid_test() ->
   % Test compilation fails with invalid schema
   InvalidSchema = not_a_map,
-  {error, _Msg} = glazer_schema:compile_schema(InvalidSchema),
+  {error, _Msg} = glazer_schema:compile(InvalidSchema),
   ok.
 
 validate_type_mismatch_test() ->
   % Test type validation fails on mismatch
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_SIMPLE_TYPE),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_SIMPLE_TYPE),
   Term = 42,  % Expected string, got integer
   Result = glazer_schema:validate(Schema, Term),
   ?assertMatch({error, _}, Result),
@@ -56,7 +56,7 @@ validate_type_mismatch_test() ->
 
 validate_type_match_test() ->
   % Test type validation succeeds on match
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_SIMPLE_TYPE),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_SIMPLE_TYPE),
   Term = <<"hello">>,
   Result = glazer_schema:validate(Schema, Term),
   ?assertEqual(ok, Result),
@@ -64,7 +64,7 @@ validate_type_match_test() ->
 
 validate_fail_fast_test() ->
   % Test fail-fast mode returns first error
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_USER),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_USER),
   Term = #{
     name => 42,       % Type error
     age => "invalid"   % Type error
@@ -81,7 +81,7 @@ validate_fail_fast_test() ->
 
 validate_collect_all_test() ->
   % Test collect_all_errors mode returns all errors
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_USER),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_USER),
   Term = #{
     name => 42,
     age => "invalid"
@@ -93,7 +93,7 @@ validate_collect_all_test() ->
 
 validate_required_field_test() ->
   % Test required field validation
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_USER),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_USER),
   Term = #{age => 30},  % Missing required 'name'
   Result = glazer_schema:validate(Schema, Term),
   ?assertMatch({error, {path, [], {missing_required, <<"name">>}}}, Result),
@@ -101,7 +101,7 @@ validate_required_field_test() ->
 
 validate_numeric_constraints_test() ->
   % Test numeric constraint validation
-  {ok, {schema, Schema}} = glazer_schema:compile_schema(?SCHEMA_USER),
+  {ok, {schema, Schema}} = glazer_schema:compile(?SCHEMA_USER),
   Term = #{
     name => <<"Alice">>,
     age => 200  % Greater than maximum (150)
@@ -120,20 +120,20 @@ validate_term_inline_test() ->
 validate_schema_not_map_test() ->
   % Test error handling for non-map schema in compile_schema
   InvalidSchema = [<<"type">>, <<"string">>],  % List instead of map
-  {error, _} = glazer_schema:compile_schema(InvalidSchema),
+  {error, _} = glazer_schema:compile(InvalidSchema),
   ok.
 
 compile_schema_unknown_type_test() ->
   % Test error handling for unknown type value
   InvalidSchema = #{type => <<"invalid_type">>},
-  {error, ErrorMsg} = glazer_schema:compile_schema(InvalidSchema),
+  {error, ErrorMsg} = glazer_schema:compile(InvalidSchema),
   ?assertMatch(<<"unknown type", _/binary>>, ErrorMsg),
   ok.
 
 compile_schema_invalid_type_not_string_test() ->
   % Test error handling for type that's not a string
   InvalidSchema = #{type => 123},  % Integer instead of string
-  {error, ErrorMsg} = glazer_schema:compile_schema(InvalidSchema),
+  {error, ErrorMsg} = glazer_schema:compile(InvalidSchema),
   ?assertMatch(<<"type must be", _/binary>>, ErrorMsg),
   ok.
 
@@ -141,7 +141,7 @@ compile_schema_invalid_type_not_string_test() ->
 
 validate_type_null_test() ->
   Schema = #{type => <<"null">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, null),
   {error, _} = glazer_schema:validate(CS, 0),
   {error, _} = glazer_schema:validate(CS, <<"string">>),
@@ -149,7 +149,7 @@ validate_type_null_test() ->
 
 validate_type_boolean_test() ->
   Schema = #{type => <<"boolean">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, true),
   ok = glazer_schema:validate(CS, false),
   {error, _} = glazer_schema:validate(CS, 1),
@@ -157,7 +157,7 @@ validate_type_boolean_test() ->
 
 validate_type_integer_test() ->
   Schema = #{type => <<"integer">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 0),
   ok = glazer_schema:validate(CS, 42),
   ok = glazer_schema:validate(CS, -100),
@@ -167,7 +167,7 @@ validate_type_integer_test() ->
 validate_type_number_test() ->
   % "number" type accepts both integer and float
   Schema = #{type => <<"number">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 42),
   ok = glazer_schema:validate(CS, 3.14),
   ok = glazer_schema:validate(CS, 0),
@@ -177,7 +177,7 @@ validate_type_number_test() ->
 
 validate_type_string_test() ->
   Schema = #{type => <<"string">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"hello">>),
   ok = glazer_schema:validate(CS, <<>>),
   ok = glazer_schema:validate(CS, <<"123">>),
@@ -186,7 +186,7 @@ validate_type_string_test() ->
 
 validate_type_array_test() ->
   Schema = #{type => <<"array">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, []),
   ok = glazer_schema:validate(CS, [1, 2, 3]),
   ok = glazer_schema:validate(CS, [<<"a">>, <<"b">>]),
@@ -195,7 +195,7 @@ validate_type_array_test() ->
 
 validate_type_object_test() ->
   Schema = #{type => <<"object">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, #{}),
   ok = glazer_schema:validate(CS, #{key => <<"value">>}),
   {error, _} = glazer_schema:validate(CS, []),
@@ -206,7 +206,7 @@ validate_type_object_test() ->
 validate_empty_object_test() ->
   % Test validation of empty object against object schema
   Schema = #{type => <<"object">>},
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CompiledSchema, #{}),
   ok.
 
@@ -224,7 +224,7 @@ validate_nested_properties_test() ->
       }
     }
   },
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
 
   % Valid nested object
   ValidTerm = #{address => #{street => <<"123 Main St">>}},
@@ -238,7 +238,7 @@ validate_nested_properties_test() ->
 validate_null_term_test() ->
   % Test validation with null value (atom 'null')
   Schema = #{type => <<"null">>},
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CompiledSchema, null),
   ok.
 
@@ -246,7 +246,7 @@ validate_null_term_test() ->
 
 validate_mode_explicit_fail_fast_test() ->
   Schema = #{type => <<"string">>},
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
   {error, _} = glazer_schema:validate(CompiledSchema, 42, [fail_fast]),
   ok.
 
@@ -259,7 +259,7 @@ validate_mode_default_is_fail_fast_test() ->
       b => #{type => <<"string">>}
     }
   },
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
 
   % Two errors but default mode returns first one
   Term = #{a => 1, b => 2},
@@ -271,7 +271,7 @@ validate_mode_default_is_fail_fast_test() ->
 validate_with_max_depth_test() ->
   % Test max_depth option
   Schema = #{type => <<"object">>},
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
   Term = #{},
   % Should succeed with reasonable depth
   ok = glazer_schema:validate(CompiledSchema, Term, [{max_depth, 128}]),
@@ -287,7 +287,7 @@ validate_with_max_errors_test() ->
       c => #{type => <<"string">>}
     }
   },
-  {ok, {schema, CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CompiledSchema}} = glazer_schema:compile(Schema),
   Term = #{a => 1, b => 2, c => 3},
 
   {error, Errors} = glazer_schema:validate(
@@ -303,7 +303,7 @@ validate_with_max_errors_test() ->
 bytecode_type_instruction_test() ->
   % Verify bytecode contains type instruction
   Schema = #{type => <<"string">>},
-  {ok, {schema, _CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, _CompiledSchema}} = glazer_schema:compile(Schema),
   % Just verify it compiles; actual bytecode inspection is implementation-specific
   ok.
 
@@ -314,7 +314,7 @@ bytecode_multiple_constraints_test() ->
     minLength => 1,
     maxLength => 100
   },
-  {ok, {schema, _CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, _CompiledSchema}} = glazer_schema:compile(Schema),
   ok.
 
 bytecode_pattern_test() ->
@@ -323,14 +323,14 @@ bytecode_pattern_test() ->
     type => <<"string">>,
     pattern => <<"^[a-z]+$">>
   },
-  {ok, {schema, _CompiledSchema}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, _CompiledSchema}} = glazer_schema:compile(Schema),
   ok.
 
 %% ===== Task 4: Numeric Constraints =====
 
 validate_minimum_test() ->
   Schema = #{minimum => 0},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 0),
   ok = glazer_schema:validate(CS, 1),
   ok = glazer_schema:validate(CS, 100),
@@ -339,7 +339,7 @@ validate_minimum_test() ->
 
 validate_maximum_test() ->
   Schema = #{maximum => 100},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 100),
   ok = glazer_schema:validate(CS, 50),
   ok = glazer_schema:validate(CS, 0),
@@ -348,7 +348,7 @@ validate_maximum_test() ->
 
 validate_exclusive_minimum_test() ->
   Schema = #{exclusiveMinimum => 0},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 1),
   ok = glazer_schema:validate(CS, 0.1),
   {error, _} = glazer_schema:validate(CS, 0),
@@ -357,7 +357,7 @@ validate_exclusive_minimum_test() ->
 
 validate_exclusive_maximum_test() ->
   Schema = #{exclusiveMaximum => 100},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 99),
   ok = glazer_schema:validate(CS, 99.9),
   {error, _} = glazer_schema:validate(CS, 100),
@@ -366,7 +366,7 @@ validate_exclusive_maximum_test() ->
 
 validate_multiple_of_test() ->
   Schema = #{multipleOf => 5},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 0),
   ok = glazer_schema:validate(CS, 5),
   ok = glazer_schema:validate(CS, -10),
@@ -382,7 +382,7 @@ validate_combined_numeric_constraints_test() ->
     maximum => 100,
     multipleOf => 10
   },
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, 0),
   ok = glazer_schema:validate(CS, 10),
   ok = glazer_schema:validate(CS, 50),
@@ -399,7 +399,7 @@ validate_numeric_edge_cases_test() ->
     minimum => -100,
     maximum => 100
   },
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, -100),
   ok = glazer_schema:validate(CS, 0),
   ok = glazer_schema:validate(CS, 100),
@@ -413,7 +413,7 @@ validate_numeric_edge_cases_test() ->
 
 validate_string_min_length_test() ->
   Schema = #{minLength => 3},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"abc">>),
   ok = glazer_schema:validate(CS, <<"hello">>),
   {error, _} = glazer_schema:validate(CS, <<"ab">>),
@@ -422,7 +422,7 @@ validate_string_min_length_test() ->
 
 validate_string_max_length_test() ->
   Schema = #{maxLength => 5},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"hello">>),
   ok = glazer_schema:validate(CS, <<"hi">>),
   ok = glazer_schema:validate(CS, <<>>),
@@ -433,7 +433,7 @@ validate_string_length_utf8_test() ->
   % UTF-8 grapheme counting (not byte length)
   % "😀" is 1 grapheme but 4 bytes
   Schema = #{minLength => 2, maxLength => 2},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
 
   % Two emoji (2 graphemes, 8 bytes total)
   ok = glazer_schema:validate(CS, <<"😀😀">>),
@@ -450,7 +450,7 @@ validate_string_length_utf8_test() ->
 
 validate_pattern_simple_test() ->
   Schema = #{pattern => <<"^[a-z]+$">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"abc">>),
   ok = glazer_schema:validate(CS, <<"hello">>),
   {error, _} = glazer_schema:validate(CS, <<"ABC">>),
@@ -460,7 +460,7 @@ validate_pattern_simple_test() ->
 
 validate_pattern_email_like_test() ->
   Schema = #{pattern => <<"^[^@]+@[^@]+\\.[^@]+$">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"alice@example.com">>),
   ok = glazer_schema:validate(CS, <<"test@domain.co">>),
   {error, _} = glazer_schema:validate(CS, <<"invalid">>),
@@ -470,7 +470,7 @@ validate_pattern_email_like_test() ->
 
 validate_pattern_digit_test() ->
   Schema = #{pattern => <<"^[0-9]{3}-[0-9]{2}-[0-9]{4}$">>},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"123-45-6789">>),
   {error, _} = glazer_schema:validate(CS, <<"12-345-6789">>),
   {error, _} = glazer_schema:validate(CS, <<"abc-de-fghi">>),
@@ -479,7 +479,7 @@ validate_pattern_digit_test() ->
 validate_invalid_regex_pattern_test() ->
   % Invalid regex should cause compilation error
   Schema = #{pattern => <<"(?<invalid">>},
-  {error, ErrorMsg} = glazer_schema:compile_schema(Schema),
+  {error, ErrorMsg} = glazer_schema:compile(Schema),
   ?assertMatch(<<"invalid regex", _/binary>>, ErrorMsg),
   ok.
 
@@ -490,7 +490,7 @@ validate_string_constraints_combined_test() ->
     maxLength => 10,
     pattern => <<"^[a-z]+$">>
   },
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, <<"ab">>),
   ok = glazer_schema:validate(CS, <<"hello">>),
   {error, _} = glazer_schema:validate(CS, <<"a">>),        % too short
@@ -503,7 +503,7 @@ validate_string_constraints_combined_test() ->
 
 validate_array_min_items_test() ->
   Schema = #{minItems => 2},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, [1, 2]),
   ok = glazer_schema:validate(CS, [1, 2, 3]),
   {error, _} = glazer_schema:validate(CS, [1]),
@@ -512,7 +512,7 @@ validate_array_min_items_test() ->
 
 validate_array_max_items_test() ->
   Schema = #{maxItems => 3},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, []),
   ok = glazer_schema:validate(CS, [1, 2]),
   ok = glazer_schema:validate(CS, [1, 2, 3]),
@@ -521,7 +521,7 @@ validate_array_max_items_test() ->
 
 validate_array_unique_items_test() ->
   Schema = #{uniqueItems => true},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, [1, 2, 3]),
   ok = glazer_schema:validate(CS, [<<"a">>, <<"b">>]),
   ok = glazer_schema:validate(CS, []),
@@ -535,7 +535,7 @@ validate_array_combined_constraints_test() ->
     minItems => 1,
     maxItems => 5
   },
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, [1]),
   ok = glazer_schema:validate(CS, [1, 2, 3]),
   ok = glazer_schema:validate(CS, [<<"a">>, <<"b">>, <<"c">>, <<"d">>, <<"e">>]),
@@ -547,7 +547,7 @@ validate_array_combined_constraints_test() ->
 
 validate_object_min_properties_test() ->
   Schema = #{minProperties => 2},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, #{a => 1, b => 2}),
   ok = glazer_schema:validate(CS, #{a => 1, b => 2, c => 3}),
   {error, _} = glazer_schema:validate(CS, #{a => 1}),
@@ -556,7 +556,7 @@ validate_object_min_properties_test() ->
 
 validate_object_max_properties_test() ->
   Schema = #{maxProperties => 3},
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, #{}),
   ok = glazer_schema:validate(CS, #{a => 1}),
   ok = glazer_schema:validate(CS, #{a => 1, b => 2, c => 3}),
@@ -569,7 +569,7 @@ validate_object_combined_constraints_test() ->
     minProperties => 1,
     maxProperties => 5
   },
-  {ok, {schema, CS}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, CS}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(CS, #{name => <<"Alice">>}),
   ok = glazer_schema:validate(CS, #{a => 1, b => 2, c => 3}),
   {error, _} = glazer_schema:validate(CS, #{}),  % too few properties
@@ -579,7 +579,7 @@ validate_object_combined_constraints_test() ->
 %% ===== Phase 3: Composition, references, conditionals, advanced keywords =====
 
 any_of_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(
+  {ok, {schema, S}} = glazer_schema:compile(
     #{anyOf => [#{type => <<"string">>}, #{type => <<"integer">>}]}),
   ok = glazer_schema:validate(S, <<"x">>),
   ok = glazer_schema:validate(S, 3),
@@ -587,7 +587,7 @@ any_of_test() ->
   ok.
 
 one_of_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(
+  {ok, {schema, S}} = glazer_schema:compile(
     #{oneOf => [#{type => <<"number">>}, #{minimum => 0}]}),
   % 5 satisfies both branches
   ?assertMatch({error, {path, [], {multiple_schemas_matched, 2}}}, glazer_schema:validate(S, 5)),
@@ -596,7 +596,7 @@ one_of_test() ->
   ok.
 
 all_of_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(
+  {ok, {schema, S}} = glazer_schema:compile(
     #{allOf => [#{type => <<"integer">>}, #{minimum => 10}]}),
   ?assertMatch({error, {path, [], {value_too_small, 10}}}, glazer_schema:validate(S, 5)),
   ok = glazer_schema:validate(S, 12),
@@ -608,7 +608,7 @@ ref_defs_test() ->
     type => <<"array">>,
     items => #{'$ref' => <<"#/$defs/pos">>}
   },
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, [1, 2]),
   ?assertMatch({error, {path, [1], {value_too_small, 1}}}, glazer_schema:validate(S, [1, 0])),
   ok.
@@ -625,7 +625,7 @@ ref_recursive_test() ->
     },
     '$ref' => <<"#/$defs/node">>
   },
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{children => [#{children => []}]}),
   ?assertMatch({error, {path, [<<"children">>, 0, <<"children">>], {type_mismatch, _}}},
                glazer_schema:validate(S, #{children => [#{children => 5}]})),
@@ -633,23 +633,23 @@ ref_recursive_test() ->
 
 ref_self_loop_is_bounded_test() ->
   % A reference that never consumes data must stop at the depth limit
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{'$ref' => <<"#">>}),
+  {ok, {schema, S}} = glazer_schema:compile(#{'$ref' => <<"#">>}),
   ?assertMatch({error, {path, [], {max_depth_exceeded, _}}}, glazer_schema:validate(S, 1)),
   ok.
 
 ref_unresolved_and_external_test() ->
   ?assertMatch({error, <<"unresolved $ref", _/binary>>},
-               glazer_schema:compile_schema(#{'$ref' => <<"#/$defs/nope">>})),
+               glazer_schema:compile(#{'$ref' => <<"#/$defs/nope">>})),
   % External URIs resolve only through the refs option (see external_document_test)
   ?assertMatch({error, <<"unresolved $ref (document not provided)", _/binary>>},
-               glazer_schema:compile_schema(#{'$ref' => <<"http://example.com/s.json">>})),
+               glazer_schema:compile(#{'$ref' => <<"http://example.com/s.json">>})),
   ok.
 
 if_then_else_test() ->
   Schema = #{'if' => #{type => <<"integer">>},
              then => #{minimum => 0},
              'else' => #{type => <<"string">>}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, 5),
   ?assertMatch({error, {path, [], {value_too_small, 0}}}, glazer_schema:validate(S, -1)),
   ok = glazer_schema:validate(S, <<"x">>),
@@ -660,7 +660,7 @@ prefix_items_test() ->
   Schema = #{type => <<"array">>,
              prefixItems => [#{type => <<"string">>}, #{type => <<"integer">>}],
              items => #{type => <<"boolean">>}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, [<<"a">>, 1, true]),
   ok = glazer_schema:validate(S, [<<"a">>]),
   % items applies only past the prefix
@@ -671,7 +671,7 @@ prefix_items_test() ->
 dependent_required_test() ->
   Schema = #{type => <<"object">>,
              dependentRequired => #{<<"credit_card">> => [<<"billing_address">>]}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ?assertMatch({error, {path, [], {dependent_keys_missing, <<"billing_address">>}}},
                glazer_schema:validate(S, #{credit_card => 1})),
   ok = glazer_schema:validate(S, #{credit_card => 1, billing_address => x}),
@@ -680,7 +680,7 @@ dependent_required_test() ->
 
 dependent_schemas_test() ->
   Schema = #{dependentSchemas => #{<<"a">> => #{required => [<<"b">>]}}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ?assertMatch({error, {path, [], {missing_required, <<"b">>}}}, glazer_schema:validate(S, #{a => 1})),
   ok = glazer_schema:validate(S, #{a => 1, b => 2}),
   ok = glazer_schema:validate(S, #{}),
@@ -689,7 +689,7 @@ dependent_schemas_test() ->
 additional_properties_schema_test() ->
   Schema = #{properties => #{a => #{type => <<"integer">>}},
              additionalProperties => #{type => <<"integer">>}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{a => 1, z => 2}),
   ?assertMatch({error, {path, [<<"z">>], {type_mismatch, _}}},
                glazer_schema:validate(S, #{a => 1, z => <<"x">>})),
@@ -698,26 +698,26 @@ additional_properties_schema_test() ->
 additional_properties_false_test() ->
   Schema = #{properties => #{a => #{type => <<"integer">>}},
              additionalProperties => false},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{a => 1}),
   ?assertMatch({error, {path, [<<"z">>], {extra_properties, <<"z">>}}},
                glazer_schema:validate(S, #{a => 1, z => 2})),
   ok.
 
 format_is_asserted_by_default_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{format => <<"email">>}),
+  {ok, {schema, S}} = glazer_schema:compile(#{format => <<"email">>}),
   ?assertMatch({error, {path, [], {format_invalid, _}}}, glazer_schema:validate(S, <<"not-an-email">>)),
   ok.
 
 format_annotation_option_test() ->
   % format_assertion false keeps `format` as an annotation
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{format => <<"email">>},
+  {ok, {schema, S}} = glazer_schema:compile(#{format => <<"email">>},
                                                   [{format_assertion, false}]),
   ok = glazer_schema:validate(S, <<"not-an-email">>),
   ok.
 
 format_assertion_option_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{format => <<"email">>},
+  {ok, {schema, S}} = glazer_schema:compile(#{format => <<"email">>},
                                                   [{format_assertion, true}]),
   ok = glazer_schema:validate(S, <<"joe.bloggs@example.com">>),
   ?assertMatch({error, {path, [], {format_invalid, _}}},
@@ -726,7 +726,7 @@ format_assertion_option_test() ->
 
 format_assertion_checks_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   true  = Check(<<"date-time">>, <<"1990-12-31T15:59:60-08:00">>),   % leap second
@@ -748,7 +748,7 @@ format_assertion_checks_test() ->
 
 format_assertion_extended_checks_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   % duration (ISO 8601, RFC 3339 appendix A)
@@ -788,7 +788,7 @@ format_assertion_extended_checks_test() ->
 
 format_nfc_and_idn_email_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   % idn-hostname: UTS 46 maps and NFC-normalizes the input before IDNA2008
@@ -816,7 +816,7 @@ format_nfc_and_idn_email_test() ->
 
 format_uts46_mapping_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   % UTS 46 mapping before the IDNA2008 rules
@@ -842,14 +842,14 @@ format_uts46_mapping_test() ->
 timeout_is_never_reported_as_valid_test() ->
   % A large array cannot be validated within 1 ms, so the walk is cut short
   Big = lists:seq(1, 2000000),
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{<<"items">> => #{<<"type">> => <<"integer">>}}),
+  {ok, {schema, S}} = glazer_schema:compile(#{<<"items">> => #{<<"type">> => <<"integer">>}}),
   ?assertMatch({error, {path, [], {timeout, 1}}},
                glazer_schema:validate(S, Big, [{timeout_ms, 1}])),
   % collect mode: the timeout is among the reported errors
   ?assertMatch({error, [{path, [], {timeout, 1}}]},
                glazer_schema:validate(S, Big, [collect_all_errors, {timeout_ms, 1}])),
   % inside not: the deadline applies there too, and a cut-short branch is not a match
-  {ok, {schema, N}} = glazer_schema:compile_schema(
+  {ok, {schema, N}} = glazer_schema:compile(
       #{<<"not">> => #{<<"items">> => #{<<"type">> => <<"string">>}}}),
   ?assertMatch({error, {path, [], {timeout, 1}}},
                glazer_schema:validate(N, Big, [{timeout_ms, 1}])),
@@ -859,7 +859,7 @@ timeout_is_never_reported_as_valid_test() ->
 
 format_ipv4_and_date_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   % ipv4 (RFC 2673, dotted quad, no leading zeros)
@@ -880,7 +880,7 @@ format_ipv4_and_date_test() ->
 
 bidi_rule_applies_across_the_domain_test() ->
   Check = fun(Format, Value) ->
-    {ok, {schema, S}} = glazer_schema:compile_schema(#{format => Format}, [{format_assertion, true}]),
+    {ok, {schema, S}} = glazer_schema:compile(#{format => Format}, [{format_assertion, true}]),
     glazer_schema:validate(S, Value) =:= ok
   end,
   % RFC 5893: a domain with an RTL label must satisfy the rules for every label
@@ -891,13 +891,13 @@ bidi_rule_applies_across_the_domain_test() ->
   ok.
 
 integer_accepts_integral_float_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{type => <<"integer">>}),
+  {ok, {schema, S}} = glazer_schema:compile(#{type => <<"integer">>}),
   ok = glazer_schema:validate(S, 1.0),
   ?assertMatch({error, _}, glazer_schema:validate(S, 1.5)),
   ok.
 
 float_bounds_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{minimum => 0.5}),
+  {ok, {schema, S}} = glazer_schema:compile(#{minimum => 0.5}),
   ?assertMatch({error, {path, [], {value_too_small, 0.5}}}, glazer_schema:validate(S, 0.2)),
   ok = glazer_schema:validate(S, 0.7),
   ok.
@@ -912,7 +912,7 @@ nested_defs_pointer_test() ->
                <<"a/b">> => #{'$ref' => <<"#/properties/x~1y/$defs/s">>},
                <<"x/y">> => #{'$defs' => #{s => #{type => <<"integer">>}}}
              }},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{<<"a/b">> => 3}),
   ?assertMatch({error, {path, [<<"a/b">>], {type_mismatch, _}}},
                glazer_schema:validate(S, #{<<"a/b">> => <<"x">>})),
@@ -921,7 +921,7 @@ nested_defs_pointer_test() ->
 anchor_ref_test() ->
   Schema = #{'$defs' => #{t => #{'$anchor' => <<"thing">>, type => <<"string">>}},
              type => <<"array">>, items => #{'$ref' => <<"#thing">>}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, [<<"x">>]),
   ?assertMatch({error, {path, [0], {type_mismatch, 1}}}, glazer_schema:validate(S, [1])),
   ok.
@@ -930,18 +930,18 @@ external_document_test() ->
   Ext = #{<<"http://ex.com/addr">> => #{type => <<"object">>, required => [<<"zip">>]}},
   Root = #{type => <<"object">>,
            properties => #{home => #{'$ref' => <<"http://ex.com/addr">>}}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Root, [{refs, Ext}]),
+  {ok, {schema, S}} = glazer_schema:compile(Root, [{refs, Ext}]),
   ok = glazer_schema:validate(S, #{home => #{zip => 1}}),
   ?assertMatch({error, {path, [<<"home">>], {missing_required, <<"zip">>}}},
                glazer_schema:validate(S, #{home => #{}})),
   % Without the document, compilation fails with a clear message
   ?assertMatch({error, <<"unresolved $ref (document not provided)", _/binary>>},
-               glazer_schema:compile_schema(Root)),
+               glazer_schema:compile(Root)),
   ok.
 
 unevaluated_properties_test() ->
   Schema = #{properties => #{a => #{type => <<"integer">>}}, unevaluatedProperties => false},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{a => 1}),
   ?assertMatch({error, {path, [], {extra_properties, <<"z">>}}},
                glazer_schema:validate(S, #{a => 1, z => 2})),
@@ -950,11 +950,11 @@ unevaluated_properties_test() ->
 unevaluated_properties_through_applicators_test() ->
   % Properties evaluated by allOf and by a passing anyOf branch count as evaluated
   AllOf = #{allOf => [#{properties => #{a => #{}}}], unevaluatedProperties => false},
-  {ok, {schema, S1}} = glazer_schema:compile_schema(AllOf),
+  {ok, {schema, S1}} = glazer_schema:compile(AllOf),
   ok = glazer_schema:validate(S1, #{a => 1}),
   AnyOf = #{anyOf => [#{properties => #{a => #{}}}, #{properties => #{b => #{}}}],
             unevaluatedProperties => false},
-  {ok, {schema, S2}} = glazer_schema:compile_schema(AnyOf),
+  {ok, {schema, S2}} = glazer_schema:compile(AnyOf),
   ok = glazer_schema:validate(S2, #{a => 1}),
   ?assertMatch({error, {path, [], {extra_properties, <<"c">>}}},
                glazer_schema:validate(S2, #{a => 1, c => 2})),
@@ -963,7 +963,7 @@ unevaluated_properties_through_applicators_test() ->
 unevaluated_items_test() ->
   Schema = #{prefixItems => [#{type => <<"string">>}],
              unevaluatedItems => #{type => <<"integer">>}},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, [<<"a">>, 1, 2]),
   ?assertMatch({error, {path, [1], {type_mismatch, <<"b">>}}},
                glazer_schema:validate(S, [<<"a">>, <<"b">>])),
@@ -977,8 +977,8 @@ dynamic_ref_override_test() ->
   Ext = #{<<"$id">> => <<"http://ex.com/ext">>, '$ref' => <<"http://ex.com/list">>,
           '$defs' => #{item => #{'$dynamicAnchor' => <<"item">>, type => <<"integer">>}}},
   Opts = [{refs, #{<<"http://ex.com/list">> => List}}],
-  {ok, {schema, E}} = glazer_schema:compile_schema(Ext, Opts),
-  {ok, {schema, L}} = glazer_schema:compile_schema(List, Opts),
+  {ok, {schema, E}} = glazer_schema:compile(Ext, Opts),
+  {ok, {schema, L}} = glazer_schema:compile(List, Opts),
   ok = glazer_schema:validate(E, [1]),
   ?assertMatch({error, {path, [0], {type_mismatch, _}}}, glazer_schema:validate(E, [<<"a">>])),
   % Used alone, the base list keeps its own default item schema
@@ -988,41 +988,41 @@ dynamic_ref_override_test() ->
 
 json_pointer_errors_test() ->
   ?assertMatch({error, <<"unresolved $ref", _/binary>>},
-               glazer_schema:compile_schema(#{'$ref' => <<"#/nope/x">>})),
+               glazer_schema:compile(#{'$ref' => <<"#/nope/x">>})),
   ok.
 
 %% ===== Official-suite gaps closed: boolean schemas, values, arrays, patterns =====
 
 boolean_schemas_test() ->
-  {ok, {schema, T}} = glazer_schema:compile_schema(true),
+  {ok, {schema, T}} = glazer_schema:compile(true),
   ok = glazer_schema:validate(T, 42),
-  {ok, {schema, F}} = glazer_schema:compile_schema(false),
+  {ok, {schema, F}} = glazer_schema:compile(false),
   ?assertMatch({error, _}, glazer_schema:validate(F, 42)),
   % boolean subschemas in a composition
-  {ok, {schema, A}} = glazer_schema:compile_schema(#{properties => #{x => false}}),
+  {ok, {schema, A}} = glazer_schema:compile(#{properties => #{x => false}}),
   ok = glazer_schema:validate(A, #{}),
   ?assertMatch({error, _}, glazer_schema:validate(A, #{x => 1})),
   ok.
 
 type_array_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{type => [<<"string">>, <<"null">>]}),
+  {ok, {schema, S}} = glazer_schema:compile(#{type => [<<"string">>, <<"null">>]}),
   ok = glazer_schema:validate(S, <<"x">>),
   ok = glazer_schema:validate(S, null),
   ?assertMatch({error, _}, glazer_schema:validate(S, 1)),
   ok.
 
 const_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{const => #{a => [1, <<"x">>]}}),
+  {ok, {schema, S}} = glazer_schema:compile(#{const => #{a => [1, <<"x">>]}}),
   ok = glazer_schema:validate(S, #{a => [1, <<"x">>]}),
   ok = glazer_schema:validate(S, #{a => [1.0, <<"x">>]}),   % 1 and 1.0 are equal
   ?assertMatch({error, {path, [], {not_const, _}}}, glazer_schema:validate(S, #{a => [0, <<"x">>]})),
-  {ok, {schema, Z}} = glazer_schema:compile_schema(#{const => 0}),
+  {ok, {schema, Z}} = glazer_schema:compile(#{const => 0}),
   ?assertMatch({error, _}, glazer_schema:validate(Z, false)),   % false is not 0
   ?assertMatch({error, _}, glazer_schema:validate(Z, <<>>)),
   ok.
 
 enum_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{enum => [1, <<"two">>, null]}),
+  {ok, {schema, S}} = glazer_schema:compile(#{enum => [1, <<"two">>, null]}),
   ok = glazer_schema:validate(S, 1.0),
   ok = glazer_schema:validate(S, <<"two">>),
   ok = glazer_schema:validate(S, null),
@@ -1030,13 +1030,13 @@ enum_test() ->
   ok.
 
 unique_items_deep_equality_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{uniqueItems => true}),
+  {ok, {schema, S}} = glazer_schema:compile(#{uniqueItems => true}),
   ?assertMatch({error, _}, glazer_schema:validate(S, [#{a => 1}, #{a => 1.0}])),
   ok = glazer_schema:validate(S, [#{a => 1}, #{a => 2}, [1], [2]]),
   ok.
 
 contains_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(
+  {ok, {schema, S}} = glazer_schema:compile(
     #{contains => #{type => <<"integer">>}, minContains => 2.0, maxContains => 3}),
   ok = glazer_schema:validate(S, [1, <<"x">>, 2]),
   ?assertMatch({error, {path, [], {contains_failed, 1}}}, glazer_schema:validate(S, [1, <<"x">>])),
@@ -1046,20 +1046,20 @@ contains_test() ->
 pattern_properties_test() ->
   Schema = #{patternProperties => #{<<"^v">> => #{type => <<"integer">>}},
              additionalProperties => false},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{vx => 1}),        % matched by pattern, not additional
   ?assertMatch({error, {path, [<<"vx">>], {type_mismatch, _}}}, glazer_schema:validate(S, #{vx => <<"s">>})),
   ?assertMatch({error, {path, [<<"other">>], {extra_properties, <<"other">>}}}, glazer_schema:validate(S, #{other => 1})),
   ok.
 
 property_names_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{propertyNames => #{maxLength => 3}}),
+  {ok, {schema, S}} = glazer_schema:compile(#{propertyNames => #{maxLength => 3}}),
   ok = glazer_schema:validate(S, #{abc => 1}),
   ?assertMatch({error, _}, glazer_schema:validate(S, #{abcd => 1})),
   ok.
 
 min_length_ignores_non_strings_test() ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{minLength => 2}),
+  {ok, {schema, S}} = glazer_schema:compile(#{minLength => 2}),
   ok = glazer_schema:validate(S, 1),
   ok = glazer_schema:validate(S, [1]),
   ok.
@@ -1067,7 +1067,7 @@ min_length_ignores_non_strings_test() ->
 additional_properties_true_evaluates_test() ->
   Schema = #{properties => #{foo => #{}}, additionalProperties => true,
              unevaluatedProperties => false},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{foo => 1, bar => 2}),
   ok.
 
@@ -1075,26 +1075,26 @@ id_in_enum_is_data_test() ->
   % An $id inside an enum value is not a real identifier
   Schema = #{'$defs' => #{a => #{enum => [#{<<"$id">> => <<"http://ex.com/x">>}]}},
              '$ref' => <<"#/$defs/a">>},
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema),
+  {ok, {schema, S}} = glazer_schema:compile(Schema),
   ok = glazer_schema:validate(S, #{<<"$id">> => <<"http://ex.com/x">>}),
   ok.
 
 %% ===== Schema regular expressions (PCRE2 or SRELL) =====
 
 regex_engine_basics_test() ->
-  {ok, {schema, S1}} = glazer_schema:compile_schema(#{pattern => <<"^\\d{3}-\\d{2}-\\d{4}$">>}),
+  {ok, {schema, S1}} = glazer_schema:compile(#{pattern => <<"^\\d{3}-\\d{2}-\\d{4}$">>}),
   ok = glazer_schema:validate(S1, <<"123-45-6789">>),
   ?assertMatch({error, _}, glazer_schema:validate(S1, <<"123-45-678">>)),
-  {ok, {schema, S2}} = glazer_schema:compile_schema(#{pattern => <<"\\cJ">>}),
+  {ok, {schema, S2}} = glazer_schema:compile(#{pattern => <<"\\cJ">>}),
   ok = glazer_schema:validate(S2, <<"a\nb">>),
-  {ok, {schema, S3}} = glazer_schema:compile_schema(#{pattern => <<"^\\p{Lu}\\p{Ll}+$">>}),
+  {ok, {schema, S3}} = glazer_schema:compile(#{pattern => <<"^\\p{Lu}\\p{Ll}+$">>}),
   ok = glazer_schema:validate(S3, <<"Ωmega"/utf8>>),
   ?assertMatch({error, _}, glazer_schema:validate(S3, <<"omega">>)),
   ok.
 
 regex_lookaround_test() ->
   % Lookahead is supported by both PCRE2 and SRELL
-  {ok, {schema, S}} = glazer_schema:compile_schema(#{pattern => <<"^(?=a)a">>}),
+  {ok, {schema, S}} = glazer_schema:compile(#{pattern => <<"^(?=a)a">>}),
   ok = glazer_schema:validate(S, <<"abc">>),
   ?assertMatch({error, _}, glazer_schema:validate(S, <<"bc">>)),
   ok.
@@ -1102,8 +1102,8 @@ regex_lookaround_test() ->
 %% Nested quantifiers such as "(a+)+" can run for an unbounded time on engines
 %% without a match limit. The SRELL build refuses them; PCRE2 bounds them.
 nested_quantifier_policy_test() ->
-  Nested = glazer_schema:compile_schema(#{pattern => <<"^(a+)+$">>}),
-  Flat = glazer_schema:compile_schema(#{pattern => <<"^(ab)+$">>}),
+  Nested = glazer_schema:compile(#{pattern => <<"^(a+)+$">>}),
+  Flat = glazer_schema:compile(#{pattern => <<"^(ab)+$">>}),
   {ok, {schema, S}} = Flat,
   ok = glazer_schema:validate(S, <<"abab">>),
   case maps:get(regex_engine, glazer:info()) of

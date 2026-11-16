@@ -5,7 +5,7 @@
 %% strings, arrays, objects). Each test is named after the item it covers.
 
 ok(Schema, Data) ->
-  {ok, {schema, S}} = glazer_schema:compile_schema(Schema, [{registry, false}]),
+  {ok, {schema, S}} = glazer_schema:compile(Schema, [{registry, false}]),
   glazer_schema:validate(S, Data).
 
 valid(Schema, Data)   -> ?assertEqual(ok, ok(Schema, Data)).
@@ -40,8 +40,8 @@ type_list_test() ->
   invalid(#{~"type" => [~"string", ~"null"]}, 1).
 
 type_invalid_schema_test() ->
-  ?assertMatch({error, _}, glazer_schema:compile_schema(#{~"type" => ~"nonsense"}, [{registry, false}])),
-  ?assertMatch({error, _}, glazer_schema:compile_schema(#{~"type" => 42}, [{registry, false}])).
+  ?assertMatch({error, _}, glazer_schema:compile(#{~"type" => ~"nonsense"}, [{registry, false}])),
+  ?assertMatch({error, _}, glazer_schema:compile(#{~"type" => 42}, [{registry, false}])).
 
 number_is_float_or_integer_test() ->
   valid(#{~"type" => ~"number"}, 1),
@@ -94,7 +94,7 @@ pattern_edge_cases_test() ->
   invalid(#{~"pattern" => ~"^\\d+$"}, ~"abc123").
 
 pattern_error_in_schema_test() ->
-  ?assertMatch({error, _}, glazer_schema:compile_schema(#{~"pattern" => ~"(unclosed"}, [{registry, false}])).
+  ?assertMatch({error, _}, glazer_schema:compile(#{~"pattern" => ~"(unclosed"}, [{registry, false}])).
 
 %% Task 6: arrays
 
@@ -158,7 +158,7 @@ nested_objects_test() ->
 
 custom_format_test() ->
   Schema = #{~"format" => ~"sku"},
-  {ok, C} = glazer_schema:compile_schema(Schema,
+  {ok, C} = glazer_schema:compile(Schema,
               [{registry, false}, {formats, #{~"sku" => ~"^[A-Z]{3}-[0-9]{4}$"}}]),
   ok = glazer_schema:validate(C, ~"ABC-1234"),
   ?assertEqual({error, {path, [], {format_invalid, ~"abc-1"}}},
@@ -167,32 +167,32 @@ custom_format_test() ->
 
 custom_format_overrides_builtin_test() ->
   % a name in the formats option replaces the built-in format of the same name
-  {ok, S} = glazer_schema:compile_schema(#{~"format" => ~"email"},
+  {ok, S} = glazer_schema:compile(#{~"format" => ~"email"},
               [{registry, false}, {formats, #{~"email" => ~"^x"}}]),
   ok = glazer_schema:validate(S, ~"xyz"),
   ?assertMatch({error, _}, glazer_schema:validate(S, ~"joe@example.com")).
 
 custom_format_respects_format_assertion_off_test() ->
-  {ok, S} = glazer_schema:compile_schema(#{~"format" => ~"sku"},
+  {ok, S} = glazer_schema:compile(#{~"format" => ~"sku"},
               [{registry, false}, {format_assertion, false},
                {formats, #{~"sku" => ~"^[A-Z]{3}$"}}]),
   ok = glazer_schema:validate(S, ~"abc").
 
 custom_format_invalid_pattern_test() ->
   ?assertMatch({error, _},
-               glazer_schema:compile_schema(#{~"format" => ~"sku"},
+               glazer_schema:compile(#{~"format" => ~"sku"},
                  [{registry, false}, {formats, #{~"sku" => ~"(unclosed"}}])).
 
 custom_format_invalid_options_test() ->
   ?assertEqual({error, ~"formats must be a map of name to pattern"},
-               glazer_schema:compile_schema(#{}, [{registry, false}, {formats, [1]}])),
+               glazer_schema:compile(#{}, [{registry, false}, {formats, [1]}])),
   ?assertEqual({error, ~"formats must map binary names to binary patterns"},
-               glazer_schema:compile_schema(#{}, [{registry, false}, {formats, #{1 => ~"x"}}])).
+               glazer_schema:compile(#{}, [{registry, false}, {formats, #{1 => ~"x"}}])).
 
 custom_format_is_part_of_the_registry_key_test() ->
   S = #{~"format" => ~"sku"},
-  {ok, A} = glazer_schema:compile_schema(S, [{formats, #{~"sku" => ~"^A"}}]),
-  {ok, B} = glazer_schema:compile_schema(S, [{formats, #{~"sku" => ~"^B"}}]),
+  {ok, A} = glazer_schema:compile(S, [{formats, #{~"sku" => ~"^A"}}]),
+  {ok, B} = glazer_schema:compile(S, [{formats, #{~"sku" => ~"^B"}}]),
   ?assertNotEqual(A, B),
   ok = glazer_schema:validate(A, ~"Ax"),
   ?assertMatch({error, _}, glazer_schema:validate(B, ~"Ax")),
@@ -238,7 +238,7 @@ regex_engine_error_is_reported_test() ->
   % (used on Windows) has no match limit and rejects nested quantifiers
   % when the schema is compiled.
   Pattern = #{~"pattern" => ~"^(a+)+$"},
-  case glazer_schema:compile_schema(Pattern, [{registry, false}]) of
+  case glazer_schema:compile(Pattern, [{registry, false}]) of
     {error, Msg} ->
       ?assertMatch(<<"invalid regex pattern", _/binary>>, Msg);
     {ok, {schema, S}} ->

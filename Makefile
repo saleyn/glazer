@@ -5,14 +5,18 @@ endif
 PRIV_DIR ?= $(if $(REBAR_BARE_COMPILER_OUTPUT_DIR),$(REBAR_BARE_COMPILER_OUTPUT_DIR)/priv,$(abspath priv))
 REBAR    ?= rebar3
 APP      := $(shell sed -nE 's/^\{application, ([a-zA-Z0-9_]+),.*/\1/p' src/*.app.src | head -n1)
-OPTIMIZE ?= 0
+# OPTIMIZE: 1 forces the PGO build, 0 forces no PGO, empty (default) picks
+# PGO for a prod profile or GLAZER_PGO=1 (see c_src/Makefile).
+OPTIMIZE ?=
 ASAN     ?= 0
 MIX_ENV  ?= default
 
 ifneq ($(filter $(OPTIMIZE),1 true),)
 OPTIMIZE := 1
-else
+else ifneq ($(filter $(OPTIMIZE),0 false),)
 OPTIMIZE := 0
+else
+OPTIMIZE :=
 endif
 
 export ASAN
@@ -26,6 +30,7 @@ help:
 	@echo "  all          Build NIF and compile Erlang (default)"
 	@echo "  nif          Build only the C NIF shared library"
 	@echo "  compile      Build NIF + run rebar3 compile"
+	@echo "  release      Build NIF + run rebar3 as prod compile"
 	@echo "  optimize     PGO build: instrument → benchmark → rebuild (fastest binary)"
 	@echo "  clean        Remove build artifacts"
 	@echo "  distclean    Remove all generated files including deps"
@@ -49,10 +54,15 @@ help:
 	@echo "  ASAN=1       Build with AddressSanitizer (implied by memcheck)"
 	@echo "  leak=1       Enable LeakSanitizer during memcheck (off by default)"
 	@echo "  VERBOSE=1    Show full compiler command lines"
-	@echo "  OPTIMIZE=1   Make all/compile run the PGO 'optimize' build (same as 'make optimize')"
+	@echo "  OPTIMIZE=1   Force the PGO 'optimize' build (same as 'make optimize')"
+	@echo "  OPTIMIZE=0   Never use PGO"
+	@echo "  GLAZER_PGO=1 Use PGO (CI); unset, PGO is used for a prod profile only (MIX_ENV=prod / rebar3 as prod)"
 
 compile: deps
 	@$(REBAR) as $(MIX_ENV) $@
+
+release: deps
+	@$(REBAR) as prod compile
 
 info:
 	@$(MAKE) -C c_src $@
@@ -70,8 +80,8 @@ distclean: clean
 
 test:
 	@#rm -rf _build/test obj priv/glazer.so
-	@OPTIMIZE=1 mix test
-	@OPTIMIZE=1 $(REBAR) as test eunit
+	@mix test
+	@$(REBAR) as test eunit
 	@$(MAKE) test-jsts
 
 # Official JSON Schema test suite (2020-12 scope), see test/json_schema_suite.es.
@@ -144,7 +154,7 @@ deprecate:
 	  echo "Usage: $(MAKE) $@ vsn=X.Y.Z      - Deprecate version X.Y.Z"; \
 	  exit 1; \
 	fi
-	$(REBAR) hex retire $(APP) $(vsn) deprecated --message Deprecated
+	$(REBAR) hex retire $(APP) $(vsn) deprecated --message $(if $(message),"$(message)",Deprecated)
 
 cover:
 	mix test --cover
