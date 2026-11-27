@@ -1,6 +1,6 @@
 {application, glazer,
  [{description, "Erlang and Elixir NIF library for JSON, YAML and CSV, with JSON Schema 2020-12 validation"},
-  {vsn, "1.2.2"},
+  {vsn, "1.2.3"},
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, [
