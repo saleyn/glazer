@@ -29,12 +29,9 @@ inline bool is_hex(char c) {
   return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 inline bool is_unreserved(char c) { return is_alpha(c) || is_digit(c) || c == '-' || c == '.' || c == '_' || c == '~'; }
-inline bool is_sub_delim(char c) {
-  switch (c) {
-    case '!': case '$': case '&': case '\'': case '(': case ')':
-    case '*': case '+': case ',': case ';': case '=': return true;
-    default: return false;
-  }
+inline bool is_sub_delim(char c)  {
+  return c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' ||
+         c == '*' || c == '+' || c == ',' || c == ';' || c == '=';
 }
 
 // Fixed-width decimal field: exactly `n` digits, value in [lo, hi]
@@ -301,13 +298,11 @@ inline bool is_uuid(std::string_view s) {
 // ---- email -----------------------------------------------------------------
 
 inline bool is_atext(char c) {
-  if (is_alpha(c) || is_digit(c)) return true;
-  switch (c) {
-    case '!': case '#': case '$': case '%': case '&': case '\'': case '*': case '+':
-    case '-': case '/': case '=': case '?': case '^': case '_': case '`': case '{':
-    case '|': case '}': case '~': return true;
-    default: return false;
-  }
+  return is_alpha(c) || is_digit(c) ||
+         c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' ||
+         c == '*' || c == '+' || c == '-' || c == '/' || c == '=' || c == '?'  ||
+         c == '^' || c == '_' || c == '`' || c == '{' || c == '|' || c == '}'  ||
+         c == '~';
 }
 
 inline bool printable_ascii(char c) { return c >= 0x20 && c <= 0x7E; }
@@ -385,7 +380,7 @@ inline bool is_idn_email(std::string_view s) { return is_mailbox(s, true); }
 
 // RFC 3987 ucschar and iprivate code points
 inline bool is_ucschar(uint32_t c) {
-  return (c >= 0xA0 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFEF) ||
+  return (c >= 0xA0    && c <= 0xD7FF)  || (c >= 0xF900  && c <= 0xFDCF)  || (c >= 0xFDF0  && c <= 0xFFEF)  ||
          (c >= 0x10000 && c <= 0x1FFFD) || (c >= 0x20000 && c <= 0x2FFFD) || (c >= 0x30000 && c <= 0x3FFFD) ||
          (c >= 0x40000 && c <= 0x4FFFD) || (c >= 0x50000 && c <= 0x5FFFD) || (c >= 0x60000 && c <= 0x6FFFD) ||
          (c >= 0x70000 && c <= 0x7FFFD) || (c >= 0x80000 && c <= 0x8FFFD) || (c >= 0x90000 && c <= 0x9FFFD) ||
@@ -403,11 +398,11 @@ enum class UriPart { Userinfo, RegName, Path, Query, Fragment };
 // private-use characters only in query and fragment). Percent-encoding is checked.
 inline bool uri_component(std::string_view s, UriPart part, bool iri, bool allow_question) {
   for (size_t i = 0; i < s.size();) {
-    unsigned char c = static_cast<unsigned char>(s[i]);
+    auto c = static_cast<unsigned char>(s[i]);
     if (c >= 0x80) {
       if (!iri) return false;
-      const char* p = s.data() + i;
-      const char* e = s.data() + s.size();
+      auto p = s.data() + i;
+      auto e = s.data() + s.size();
       uint32_t cp = glz::decode_utf8(p, e);
       if (cp == 0xFFFD) return false;
       bool private_ok = (part == UriPart::Query || part == UriPart::Fragment) && is_iprivate(cp);
