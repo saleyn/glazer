@@ -54,7 +54,7 @@ struct BigInt {
       for (int i = 0; i < 10000; ++i) {
         t[4 * i]     = char('0' + i / 1000);
         t[4 * i + 1] = char('0' + i / 100 % 10);
-        t[4 * i + 2] = char('0' + i / 10 % 10);
+        t[4 * i + 2] = char('0' + i / 10  % 10);
         t[4 * i + 3] = char('0' + i % 10);
       }
       return t;

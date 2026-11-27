@@ -817,6 +817,51 @@ The registry holds schemas only for the life of the VM. Persist the source schem
 - **Bound the input.** `max_depth` (default 128) protects against deeply nested documents; limit request sizes before decoding.
 - **Avoid unbounded `pattern`s** on large strings; a regular expression is linear only for the simple patterns, and the SRELL build rejects nested quantifiers for that reason.
 
+- **Measure before you tune.** `make benchmark-sv` compares glazer with other Elixir JSON Schema libraries. See [Benchmarking schema validation](#benchmarking-schema-validation).
+
+---
+
+## Benchmarking schema validation
+
+```sh
+$ make benchmark-sv
+```
+
+The target builds the NIF with `-O3` and without PGO. Do not pass `OPTIMIZE=1` with it, because a command-line `OPTIMIZE` overrides the target's setting.
+
+The benchmark (`mix benchmark-sv`, in `lib/mix/tasks/bench_schema_validator.ex`) runs in the `bench` environment. It compares glazer with these libraries:
+
+- [ex_json_schema](https://github.com/jonasschmidt/ex_json_schema)
+- [json_xema](https://github.com/hrzndhrn/json_xema)
+- [jsv](https://github.com/larshesel/jsv)
+- [Exonerate](https://github.com/E-xyza/Exonerate)
+
+The [elixir-europe/json-schema-validator](https://github.com/elixir-europe/json-schema-validator) is not included. It is a JavaScript (npm) package, and the repository is archived.
+
+Method:
+
+- **Two timings per library.** `compile` is the average time to build a validator from the schema. `validate` is the average time to check one document against the built validator. Decoding the schema and the document is not timed.
+- **Same input for every library.** Each library gets the same decoded schema and document, from `test/data/openrtb.json`, `small.json` and `twitter.json`, with the schemas in `test/data/schemas/`.
+- **Common keyword subset.** The schemas use keywords every library supports (`type`, `properties`, `required`, `items`, `enum`, `minimum`, `maximum`, `minLength`, `maxLength`, `minItems`). They do not use `$schema`, `$defs` or `format`, so each library checks the same rules.
+- **Valid documents only.** Each library must accept the document before it is timed. Error paths are not measured.
+- **Exonerate compiles to a module.** Its `compile` time includes compiling a new Elixir module, so it is much higher than the other libraries.
+- **Fewer compile runs for large input.** The schema is compiled 10 times for `twitter.json` and 200 times for the smaller files. Validation runs 100 times for `twitter.json` and 5000 times for the smaller files.
+
+Output from one run (`optimization: O3`, no PGO), in µs:
+
+```
+library              twitter (616.7K)         openrtb (1.2K)           small (0.1K)
+                    compile   validate      compile   validate      compile   validate
+----------------------------------------------------------------------------------------
+glazer                884.8     2506.9        238.1       43.2         18.3        2.7
+ex_json_schema       5007.0    20349.2       4183.8      124.0       6179.0       73.2
+json_xema           34331.7     4744.7      14944.5       34.6       2947.1        7.5
+exonerate          518740.1     6088.7     591185.3      123.1      67092.4       10.7
+jsv                   354.9     4239.7        810.1       57.0         55.3        5.0
+```
+
+Results depend on the machine and on the build (see [Benchmarking](performance.md#benchmarking)). Run the benchmark on your own hardware before you rely on these numbers.
+
 ---
 
 ## Troubleshooting

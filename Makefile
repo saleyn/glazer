@@ -58,6 +58,7 @@ help:
 	@echo "  dialyzer     Run dialyzer"
 	@echo "  memcheck     Build with ASan (-fsanitize=address) and run eunit (leak=1 adds LSan)"
 	@echo "  benchmark    Run benchmarks via mix bench"
+	@echo "  benchmark-sv Benchmark schema validation against other Elixir JSON Schema libraries"
 	@echo "  deps         Fetch mix dependencies"
 	@echo "  doc          Generate documentation"
 	@echo "  idna-tables  Regenerate c_src/glazer_idna_tables.hpp from ICU (needs icu-uc)"
@@ -207,7 +208,13 @@ bench-deps: deps
 # PRIORITY=N runs the target as: sudo -E nice -N bash -c 'make <target>'.
 # The inner make has PRIORITY cleared and BENCH_PREPARED set, so it skips the
 # deps prerequisites (already done by this make) and runs the mix command below.
-bench-json bench-yaml bench-csv: export ELIXIR_ERL_OPTIONS = -logger level warning
+bench-json bench-yaml bench-csv benchmark-sv: export ELIXIR_ERL_OPTIONS = -logger level warning
+
+# benchmark-sv runs on an O3 NIF without PGO. c_src/Makefile selects O3 for the prod
+# profile (MIX_ENV=prod), and OPTIMIZE=0 turns PGO off. Target-specific variables
+# reach the prerequisites, and bench-nif passes MIX_ENV on to the NIF build.
+benchmark-sv: MIX_ENV := prod
+benchmark-sv: OPTIMIZE := 0
 
 # The NIF is built once, here, before mix runs (OPTIMIZE picks PGO or not), into
 # the directory the bench env loads from. Mix runs with SKIP_NIF_RECOMPILE=1, so
@@ -225,7 +232,7 @@ bench-nif: bench-deps
 	@# build_structure / Mix.Utils.symlink_or_copy). A non-PGO priv/glazer.so left by `make
 	@# compile` would then replace the PGO build, so remove it before mix runs.
 	@rm -f "$(CURDIR)/priv/glazer.so"
-	@$(MAKE) PRIV_DIR="$(CURDIR)/_build/bench/lib/glazer/priv" REBAR_BARE_COMPILER_OUTPUT_DIR="$(CURDIR)/_build/bench/lib/glazer" nif
+	@$(MAKE) MIX_ENV=$(MIX_ENV) OPTIMIZE=$(OPTIMIZE) PRIV_DIR="$(CURDIR)/_build/bench/lib/glazer/priv" REBAR_BARE_COMPILER_OUTPUT_DIR="$(CURDIR)/_build/bench/lib/glazer" nif
 
 bench-compile: bench-nif
 	@SKIP_NIF_RECOMPILE=1 MIX_ENV=bench mix compile
@@ -234,7 +241,7 @@ bench-compile: bench-nif
 	  echo "error: OPTIMIZE=1 but _build/bench/lib/glazer/priv/glazer.so is not PGO-optimized" >&2; exit 1; \
 	fi
 
-bench-json bench-yaml bench-csv: $(if $(BENCH_PREPARED),,bench-compile)
+bench-json bench-yaml bench-csv benchmark-sv: $(if $(BENCH_PREPARED),,bench-compile)
 # N=k runs the benchmark k times and prints one table with the minimum of each
 # column over the runs (bin/bench-min.awk).
 ifdef N
@@ -303,4 +310,4 @@ bump-version:
 
 .PHONY: all help doc compile clean distclean test cover check dialyzer memcheck nif \
         optimize benchmark bench publish deprecate bump-version \
-        bench-yaml bench-json bench-csv bench-deps bench-nif bench-compile do-bench
+        bench-yaml bench-json bench-csv benchmark-sv bench-deps bench-nif bench-compile do-bench

@@ -180,6 +180,11 @@ runs the EUnit test suite via `rebar3 eunit`.
 - **[CSV](guides/csv.md#benchmarking-csv)**: 4–12× faster than `nimble_csv`, and tens to
   hundreds of times faster than `csv` and `erl_csv` (which time out on
   large inputs).
+- **[JSON Schema validation](guides/json-validation.md#benchmarking-schema-validation)**: the
+  fastest of the Elixir JSON Schema validators benchmarked (`ex_json_schema`, `json_xema`,
+  `jsv`, and `Exonerate`). Validation is 1.3–1.9× faster than `jsv`, the next fastest, and
+  3–27× faster than `ex_json_schema`. Schema compilation is about 3× faster than `jsv` for
+  the openrtb and small schemas, but `jsv` compiles the twitter schema about 2.5× faster.
 
 <img src="assets/bench_small.svg" width="100%" alt="Small file benchmarks (JSON/YAML/CSV)"/>
 <img src="assets/bench_medium.svg" width="100%" alt="Medium file benchmarks (JSON/YAML/CSV)"/>

@@ -61,32 +61,38 @@ defmodule Glazer.MixProject do
   defp deps do
     [
       # mix docs
-      {:ex_doc,              "~> 0.34",  only: :dev, runtime: false},
+      {:ex_doc,              "~> 0.34",   only: :dev, runtime: false},
       # Benchmarking dependencies
-      {:jason,               "~> 1.4",   only: :bench},
-      {:jiffy,               "~> 2.0.2", only: :bench},
-      {:thoas,               "~> 1.2",   only: :bench},
-      {:euneus,              "~> 2.0",   only: :bench},
-      {:torque,              "~> 0.4.5", only: :bench},
-      {:yamerl,              "~> 0.10",  only: :bench},
-      {:fast_yaml,           "~> 1.0",   only: :bench},
-      {:ymlr,                "~> 5.1",   only: :bench},
-      {:csv,                 "~> 3.2",   only: :bench},
-      {:nimble_csv,          "~> 1.3",   only: :bench},
-      {:erl_csv,             "~> 0.6.0", only: :bench},
-      {:yaml_rustler,        "~> 0.1.6", only: :bench},
-      {:rusty_csv,           "~> 0.4.6", only: :bench},
-      {:rustler,             "~> 0.38",  only: :bench, override: true, runtime: false},
-      {:rustler_precompiled, "~> 0.9",   only: :bench, override: true},
+      {:jason,               "~> 1.4",    only: :bench},
+      {:jiffy,               "~> 2.1",    only: :bench},
+      {:thoas,               "~> 1.2",    only: :bench},
+      {:euneus,              "~> 2.0",    only: :bench},
+      {:torque,              "~> 0.5",    only: :bench},
+      {:yamerl,              "~> 0.10",   only: :bench},
+      {:fast_yaml,           "~> 1.0",    only: :bench},
+      {:ymlr,                "~> 5.1",    only: :bench},
+      {:csv,                 "~> 3.2",    only: :bench},
+      {:nimble_csv,          "~> 1.3",    only: :bench},
+      {:erl_csv,             "~> 0.6.0",  only: :bench},
+      {:yaml_rustler,        "~> 0.2",    only: :bench},
+      {:rusty_csv,           "~> 0.4.6",  only: :bench},
+      {:rustler,             "~> 0.38",   only: :bench, override: true, runtime: false},
+      {:rustler_precompiled, "~> 0.9",    only: :bench, override: true},
+      # Schema validator benchmark (mix benchmark-sv)
+      {:ex_json_schema,      "~> 0.11.5", only: :bench},
+      {:json_xema,           "~> 0.6.5",  only: :bench},
+      {:jsv,                 "~> 0.28.1", only: :bench},
+      {:exonerate,           "~> 1.3",    only: :bench},
     ]
   end
 
   def aliases do
     [
-      bench:        ["bench-json", "bench-yaml", "bench-csv"],
-      "bench-json": "bench_json --only bench",
-      "bench-yaml": "bench_yaml --only bench",
-      "bench-csv":  "bench_csv  --only bench"
+      bench:         ["bench-json", "bench-yaml", "bench-csv"],
+      "bench-json":   "bench_json --only bench",
+      "bench-yaml":   "bench_yaml --only bench",
+      "bench-csv":    "bench_csv  --only bench",
+      "benchmark-sv": "bench_schema_validator --only bench"
     ]
   end
 

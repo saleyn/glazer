@@ -1,0 +1,13 @@
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["a", "b", "c", "d"],
+    "properties": {
+      "a": {"type": "integer"},
+      "b": {"type": "number"},
+      "c": {"type": "boolean"},
+      "d": {"type": "string", "minLength": 1, "maxLength": 100}
+    }
+  }
+}

@@ -119,3 +119,4 @@ Benchmarking:
 - [Benchmarking JSON](json.md#benchmarking-json)
 - [Benchmarking YAML](yaml.md#benchmarking-yaml)
 - [Benchmarking CSV](csv.md#benchmarking-csv)
+- [Benchmarking schema validation](json-validation.md#benchmarking-schema-validation)

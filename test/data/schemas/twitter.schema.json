@@ -1,0 +1,98 @@
+{
+  "type": "object",
+  "required": ["statuses"],
+  "properties": {
+    "statuses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "id_str", "text", "created_at", "user", "retweet_count", "favorite_count", "lang"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 0},
+          "id_str": {"type": "string"},
+          "text": {"type": "string"},
+          "created_at": {"type": "string", "minLength": 1},
+          "source": {"type": "string"},
+          "lang": {"type": "string"},
+          "truncated": {"type": "boolean"},
+          "favorited": {"type": "boolean"},
+          "retweeted": {"type": "boolean"},
+          "retweet_count": {"type": "integer", "minimum": 0},
+          "favorite_count": {"type": "integer", "minimum": 0},
+          "entities": {
+            "type": "object",
+            "properties": {
+              "hashtags": {"type": "array"},
+              "media": {"type": "array"},
+              "symbols": {"type": "array"},
+              "urls": {"type": "array"},
+              "user_mentions": {"type": "array"}
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "iso_language_code": {"type": "string"},
+              "result_type": {"type": "string"}
+            }
+          },
+          "user": {
+            "type": "object",
+            "required": ["id", "id_str", "screen_name", "name"],
+            "properties": {
+              "id": {"type": "integer", "minimum": 0},
+              "id_str": {"type": "string"},
+              "name": {"type": "string"},
+              "screen_name": {"type": "string"},
+              "created_at": {"type": "string"},
+              "description": {"type": "string"},
+              "location": {"type": "string"},
+              "followers_count": {"type": "integer", "minimum": 0},
+              "friends_count": {"type": "integer", "minimum": 0},
+              "favourites_count": {"type": "integer", "minimum": 0},
+              "listed_count": {"type": "integer", "minimum": 0},
+              "statuses_count": {"type": "integer", "minimum": 0},
+              "verified": {"type": "boolean"},
+              "protected": {"type": "boolean"}
+            }
+          },
+          "retweeted_status": {
+            "type": "object",
+            "required": ["id", "id_str", "text"],
+            "properties": {
+              "id": {"type": "integer", "minimum": 0},
+              "id_str": {"type": "string"},
+              "text": {"type": "string"},
+              "retweet_count": {"type": "integer", "minimum": 0},
+              "favorite_count": {"type": "integer", "minimum": 0},
+              "retweeted": {"type": "boolean"},
+              "favorited": {"type": "boolean"},
+              "truncated": {"type": "boolean"},
+              "lang": {"type": "string"},
+              "user": {
+                "type": "object",
+                "required": ["id", "id_str", "screen_name"],
+                "properties": {
+                  "id": {"type": "integer", "minimum": 0},
+                  "id_str": {"type": "string"},
+                  "screen_name": {"type": "string"},
+                  "followers_count": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "search_metadata": {
+      "type": "object",
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "completed_in": {"type": "number", "minimum": 0},
+        "query": {"type": "string"},
+        "since_id": {"type": "integer", "minimum": 0},
+        "max_id": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
