@@ -24,7 +24,7 @@
 #  include <immintrin.h>
 #elif defined(__SSE2__)
 #  include <emmintrin.h>
-#elif defined(__ARM_NEON__)
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
 #  include <arm_neon.h>
 #endif
 
@@ -47,6 +47,32 @@
 #      define GLAZER_TAIL_BOUNDED 1
 #    endif
 #  endif
+#endif
+
+// NEON movemask: returns a 16-bit mask where bit i is set if byte i is nonzero.
+// Equivalent to SSE2 _mm_movemask_epi8 when applied to comparison results (0x00/0xFF).
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+static inline uint16_t neon_movemask(uint8x16_t v) {
+  static const uint8_t pows[16] = {1,2,4,8,16,32,64,128, 1,2,4,8,16,32,64,128};
+  uint8x16_t pw     = vld1q_u8(pows);
+  uint8x16_t masked = vandq_u8(v, pw);
+  uint8x8_t  lo     = vpadd_u8(vget_low_u8(masked), vget_high_u8(masked));
+  lo = vpadd_u8(lo, lo);
+  lo = vpadd_u8(lo, lo);
+  return vget_lane_u16(vreinterpret_u16_u8(lo), 0);
+}
+
+// neon_movemask_highbit: extracts bit 7 of each byte (like SSE2 _mm_movemask_epi8
+// on raw data, not comparison results). Used for ASCII detection.
+static inline uint16_t neon_movemask_highbit(uint8x16_t v) {
+  return neon_movemask(vshrq_n_u8(v, 7));
+}
+
+// Quick check: returns true if any byte in v has bit 7 set.
+static inline bool neon_any_highbit(uint8x16_t v) {
+  uint64x2_t h = vreinterpretq_u64_u8(vshrq_n_u8(v, 7));
+  return (vgetq_lane_u64(h, 0) | vgetq_lane_u64(h, 1)) != 0;
+}
 #endif
 
 namespace glz {
@@ -265,7 +291,22 @@ private:
     if (m_p >= m_end) return;
     const unsigned char c = static_cast<unsigned char>(*m_p);
     if (c > 0x20 || !is_ws(static_cast<char>(c))) return;
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    {
+      const uint8x16_t vsp = vdupq_n_u8(' ');
+      const uint8x16_t vnl = vdupq_n_u8('\n');
+      const uint8x16_t vtb = vdupq_n_u8('\t');
+      const uint8x16_t vcr = vdupq_n_u8('\r');
+      while (m_p + 16 <= m_end) {
+        uint8x16_t v  = vld1q_u8(reinterpret_cast<const uint8_t*>(m_p));
+        uint8x16_t ws = vorrq_u8(vorrq_u8(vceqq_u8(v, vsp), vceqq_u8(v, vnl)),
+                                  vorrq_u8(vceqq_u8(v, vtb), vceqq_u8(v, vcr)));
+        uint16_t mask = neon_movemask(ws);
+        if (mask != 0xFFFF) { m_p += __builtin_ctz(~mask); return; }
+        m_p += 16;
+      }
+    }
+#elif defined(__SSE2__)
     const __m128i vsp = _mm_set1_epi8(' ');
     const __m128i vnl = _mm_set1_epi8('\n');
     const __m128i vtb = _mm_set1_epi8('\t');
@@ -299,7 +340,7 @@ private:
   // On return m_p is at the first potential special byte or in the scalar
   // cleanup zone (fewer than one chunk-width from m_end).
   void bulk_skip_to_special() noexcept {
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
     // NEON (16 B/iter), same tier as find_escape_pos on Apple Silicon/ARM64.
     {
       const uint8x16_t vq = vdupq_n_u8('"');
@@ -380,7 +421,24 @@ private:
       }
     }
 #endif
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    {
+      const uint8x16_t vq = vdupq_n_u8('"');
+      const uint8x16_t vb = vdupq_n_u8('\\');
+      while (m_p + 16 <= m_end) {
+        uint8x16_t v  = vld1q_u8(reinterpret_cast<const uint8_t*>(m_p));
+        uint16_t   mq = neon_movemask(vceqq_u8(v, vq));
+        uint16_t   mb = neon_movemask(vceqq_u8(v, vb));
+        uint16_t   m  = mq | mb;
+        if (m) {
+          unsigned i = __builtin_ctz(m);
+          m_p += i;
+          return ((mq >> i) & 1u) ? 1 : 2;
+        }
+        m_p += 16;
+      }
+    }
+#elif defined(__SSE2__)
     {
       const __m128i vq = _mm_set1_epi8('"');
       const __m128i vb = _mm_set1_epi8('\\');
@@ -446,7 +504,35 @@ private:
         m_last_string_ascii = (_mm256_movemask_epi8(vacc) == 0);
       }
 #endif
-#if defined(__SSE2__) && !defined(__AVX2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+      {
+        const uint8x16_t vq = vdupq_n_u8('"');
+        const uint8x16_t vb = vdupq_n_u8('\\');
+        uint8x16_t     vacc = vdupq_n_u8(0);
+        while (m_p + 16 <= m_end) {
+          uint8x16_t v  = vld1q_u8(reinterpret_cast<const uint8_t*>(m_p));
+          uint16_t   mq = neon_movemask(vceqq_u8(v, vq));
+          uint16_t   mb = neon_movemask(vceqq_u8(v, vb));
+          uint16_t   m  = mq | mb;
+          if (m) {
+            unsigned i = __builtin_ctz(m);
+            m_p += i;
+            if ((mq >> i) & 1u) {
+              vacc = vorrq_u8(vacc, v);
+              m_last_string_ascii = !neon_any_highbit(vacc);
+              begin_out = s;
+              len_out = static_cast<size_t>(m_p - s);
+              ++m_p;
+              return true;
+            }
+            break;
+          }
+          vacc = vorrq_u8(vacc, v);
+          m_p += 16;
+        }
+        m_last_string_ascii = !neon_any_highbit(vacc);
+      }
+#elif defined(__SSE2__) && !defined(__AVX2__)
       {
         const __m128i vq = _mm_set1_epi8('"');
         const __m128i vb = _mm_set1_epi8('\\');
@@ -1192,7 +1278,34 @@ inline void json_escape_string(std::string_view sv, OutBuf& out)
       p += 32;
     }
 #endif
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    while (p + 16 <= end) {
+      const uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      const uint8x16_t vq     = vdupq_n_u8('"');
+      const uint8x16_t vbs    = vdupq_n_u8('\\');
+      const uint8x16_t vbias  = vdupq_n_u8(0x80);
+      const int8x16_t  vcmp   = vdupq_n_s8(-96);
+      const uint8x16_t biased = veorq_u8(v, vbias);
+      const uint8x16_t hit    = vorrq_u8(
+        vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vcmp, vreinterpretq_s8_u8(biased))),
+                 vceqq_u8(v, vq)),
+        vceqq_u8(v, vbs));
+      const uint16_t mask = neon_movemask(hit);
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        vst1q_u8(reinterpret_cast<uint8_t*>(dst), v);
+        dst += skip;
+        p   += skip;
+        const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+        memcpy(dst, e.seq, e.len);
+        dst += e.len;
+        continue;
+      }
+      vst1q_u8(reinterpret_cast<uint8_t*>(dst), v);
+      dst += 16;
+      p   += 16;
+    }
+#elif defined(__SSE2__)
     while (p + 16 <= end) {
       const __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
       const __m128i  vq     = _mm_set1_epi8('"');
@@ -1271,7 +1384,32 @@ inline int json_scan_validate(const char* data, size_t len)
     p += 32;
   }
 #endif
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  while (p + 16 <= end) {
+    const uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+    const uint8x16_t vq     = vdupq_n_u8('"');
+    const uint8x16_t vbs    = vdupq_n_u8('\\');
+    const uint8x16_t vbias  = vdupq_n_u8(0x80);
+    const int8x16_t  vcmp   = vdupq_n_s8(-96);
+    const uint8x16_t biased = veorq_u8(v, vbias);
+    const uint16_t esc_mask = neon_movemask(vorrq_u8(
+      vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vcmp, vreinterpretq_s8_u8(biased))),
+               vceqq_u8(v, vq)),
+      vceqq_u8(v, vbs)));
+    const bool hi = neon_any_highbit(v);
+
+    if (hi && !validated) {
+      if (first_invalid_utf8(data, len) != UTF8_OK)
+        return -1;
+      validated = true;
+    }
+    if (esc_mask) {
+      if (validated) return 0;
+      has_escape = true;
+    }
+    p += 16;
+  }
+#elif defined(__SSE2__)
   while (p + 16 <= end) {
     const __m128i v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
     const __m128i vq     = _mm_set1_epi8('"');
@@ -1349,7 +1487,33 @@ inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
       p += 32;
     }
 #endif
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    while (p + 16 <= end) {
+      const uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      const uint8x16_t vq     = vdupq_n_u8('"');
+      const uint8x16_t vbs    = vdupq_n_u8('\\');
+      const uint8x16_t vslash = vdupq_n_u8('/');
+      const uint8x16_t vbias  = vdupq_n_u8(0x80);
+      const int8x16_t  vcmp   = vdupq_n_s8(-96);
+      const uint8x16_t biased = veorq_u8(v, vbias);
+      const uint8x16_t need   = vorrq_u8(
+        vorrq_u8(vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vcmp, vreinterpretq_s8_u8(biased))),
+                           vceqq_u8(v, vq)),
+                 vceqq_u8(v, vbs)),
+        escape_fwd_slash ? vceqq_u8(v, vslash) : vdupq_n_u8(0));
+      const uint16_t mask = neon_movemask(need);
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        memcpy(dst, p, skip);
+        dst += skip;
+        p   += skip;
+        goto fwd_escape_one;
+      }
+      vst1q_u8(reinterpret_cast<uint8_t*>(dst), v);
+      dst += 16;
+      p += 16;
+    }
+#elif defined(__SSE2__)
     while (p + 16 <= end) {
       const __m128i v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
       const __m128i vq     = _mm_set1_epi8('"');
@@ -1571,10 +1735,29 @@ struct JSONEncoder {
   {
     if (n == 0 || m_opts.uescape || m_opts.escape_fwd_slash) return false;
     if (n <= 16) {
-#if defined(__SSE2__)
-      // One 16-byte check and copy for a short string, when the load stays inside
-      // one 4 KiB block (same guard and sanitizer switch as the tail below). The
-      // bytes past n are masked out of the check and are overwritten by the quote.
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(GLAZER_TAIL_BOUNDED)
+      constexpr bool short_wide_ok = false;
+#else
+      constexpr bool short_wide_ok = true;
+#endif
+      if (short_wide_ok && (reinterpret_cast<uintptr_t>(data) & 4095) <= 4096 - 16) {
+        const uint8x16_t v = vld1q_u8(reinterpret_cast<const uint8_t*>(data));
+        const uint8x16_t special = vorrq_u8(
+          vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vdupq_n_s8(-96),
+                     vreinterpretq_s8_u8(veorq_u8(v, vdupq_n_u8(0x80))))),
+                   vceqq_u8(v, vdupq_n_u8('"'))),
+          vorrq_u8(vceqq_u8(v, vdupq_n_u8('\\')), v));
+        if (neon_movemask_highbit(special) & ((1u << n) - 1)) return false;
+        m_out.ensure(n + 18);
+        char* const base = m_out.tail();
+        base[0] = '"';
+        vst1q_u8(reinterpret_cast<uint8_t*>(base + 1), v);
+        base[n + 1] = '"';
+        m_out.commit(n + 2);
+        return true;
+      }
+#elif defined(__SSE2__)
 #if defined(GLAZER_TAIL_BOUNDED)
       constexpr bool short_wide_ok = false;
 #else
@@ -1603,7 +1786,49 @@ struct JSONEncoder {
       m_out.unsafe_push('"');
       return true;
     }
-#if defined(__AVX2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    m_out.ensure(n + 2 + 16);
+    char* const base = m_out.tail();
+    const uint8x16_t vq    = vdupq_n_u8('"');
+    const uint8x16_t vbs   = vdupq_n_u8('\\');
+    const uint8x16_t vbias = vdupq_n_u8(0x80);
+    const int8x16_t  vcmp  = vdupq_n_s8(-96);
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+      const uint8x16_t v = vld1q_u8(reinterpret_cast<const uint8_t*>(data + i));
+      const uint8x16_t special = vorrq_u8(
+        vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vcmp, vreinterpretq_s8_u8(veorq_u8(v, vbias)))),
+                 vceqq_u8(v, vq)),
+        vorrq_u8(vceqq_u8(v, vbs), v));
+      if (neon_movemask_highbit(special) != 0) return false;
+      vst1q_u8(reinterpret_cast<uint8_t*>(base + 1 + i), v);
+    }
+    const size_t r = n - i;
+    if (r > 0) {
+#if defined(GLAZER_TAIL_BOUNDED)
+      constexpr bool wide_tail_ok = false;
+#else
+      constexpr bool wide_tail_ok = true;
+#endif
+      if (wide_tail_ok && (reinterpret_cast<uintptr_t>(data + i) & 4095) <= 4096 - 16) {
+        const uint8x16_t v = vld1q_u8(reinterpret_cast<const uint8_t*>(data + i));
+        const uint8x16_t special = vorrq_u8(
+          vorrq_u8(vreinterpretq_u8_s8(vcgtq_s8(vdupq_n_s8(-96),
+                     vreinterpretq_s8_u8(veorq_u8(v, vdupq_n_u8(0x80))))),
+                   vceqq_u8(v, vdupq_n_u8('"'))),
+          vorrq_u8(vceqq_u8(v, vdupq_n_u8('\\')), v));
+        if (neon_movemask_highbit(special) & ((1u << r) - 1)) return false;
+        vst1q_u8(reinterpret_cast<uint8_t*>(base + 1 + i), v);
+      } else {
+        if (short_needs_escape(data + i, r) || glz::utf8::short_any_high_bit(data + i, r)) return false;
+        short_copy(base + 1 + i, data + i, r);
+      }
+    }
+    base[0] = '"';
+    base[n + 1] = '"';
+    m_out.commit(n + 2);
+    return true;
+#elif defined(__AVX2__)
     m_out.ensure(n + 2 + 32);
     char* const base = m_out.tail();
     const __m256i vq    = _mm256_set1_epi8('"');
@@ -1655,7 +1880,9 @@ struct JSONEncoder {
     }
     const size_t r = n - i;
 #endif
-#if defined(__SSE2__) || defined(__AVX2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    // already handled above
+#elif defined(__SSE2__) || defined(__AVX2__)
     if (r > 0) {
 #if defined(GLAZER_TAIL_BOUNDED)
       constexpr bool wide_tail_ok = false;

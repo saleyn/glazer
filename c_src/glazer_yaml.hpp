@@ -25,15 +25,15 @@
 #include <vector>
 
 #include <erl_nif.h>
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #  include <arm_neon.h>
 #endif
 
 #include "vendors/glazer_atof.hpp"
-#include "glazer_atoms.hpp"
-#include "glazer_bigint.hpp"
 #include "vendors/glazer_ftoa.hpp"
 #include "glazer_common.hpp"
+#include "glazer_atoms.hpp"
+#include "glazer_bigint.hpp"
 
 namespace glz {
 
@@ -49,7 +49,7 @@ namespace glz {
 
 inline const char* find_break(const char* p, const char* end) noexcept
 {
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   {
     const uint8x16_t vn = vdupq_n_u8('\n');
     const uint8x16_t vr = vdupq_n_u8('\r');
@@ -102,7 +102,7 @@ inline const char* find_break(const char* p, const char* end) noexcept
 // double-quoted YAML scalar.
 inline const char* find_dq_special(const char* p, const char* end) noexcept
 {
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   {
     const uint8x16_t vq  = vdupq_n_u8('"');
     const uint8x16_t vbs = vdupq_n_u8('\\');
@@ -1671,7 +1671,19 @@ private:
       }
     }
 #endif
-#if defined(__SSE2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    {
+      const uint8x16_t vbias = vdupq_n_u8(0x80);
+      const int8x16_t  vcmp  = vdupq_n_s8(-96);
+      while (p + 16 <= end) {
+        uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+        uint8x16_t hit = vreinterpretq_u8_s8(vcgtq_s8(vcmp, vreinterpretq_s8_u8(veorq_u8(v, vbias))));
+        uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+        if (vgetq_lane_u64(h64, 0) | vgetq_lane_u64(h64, 1)) return true;
+        p += 16;
+      }
+    }
+#elif defined(__SSE2__)
     {
       const __m128i vbias = _mm_set1_epi8(-128);
       const __m128i vcmp  = _mm_set1_epi8(-96);

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Release 1.2.3
 
 ### Breaking changes
 

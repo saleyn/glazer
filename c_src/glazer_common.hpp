@@ -20,7 +20,7 @@
 #if defined(__SSE2__)
 #  include <immintrin.h>
 #endif
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #  include <arm_neon.h>
 #endif
 
@@ -856,7 +856,23 @@ static constexpr auto NEEDS_ESCAPE_TAB = [] {
 
 inline const char* find_byte(const char* p, const char* end, char c) noexcept
 {
-#if defined(__AVX2__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  {
+    const uint8x16_t vc = vdupq_n_u8(static_cast<uint8_t>(c));
+    while (p + 16 <= end) {
+      uint8x16_t v   = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+      uint8x16_t hit = vceqq_u8(v, vc);
+      uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+      uint64_t   lo  = vgetq_lane_u64(h64, 0);
+      uint64_t   hi  = vgetq_lane_u64(h64, 1);
+      if (lo | hi) {
+        if (lo) return p + (__builtin_ctzll(lo) >> 3);
+        return p + 8 + (__builtin_ctzll(hi) >> 3);
+      }
+      p += 16;
+    }
+  }
+#elif defined(__AVX2__)
   {
     const __m256i vc = _mm256_set1_epi8(c);
     while (p + 32 <= end) {
@@ -867,7 +883,7 @@ inline const char* find_byte(const char* p, const char* end, char c) noexcept
     }
   }
 #endif
-#if defined(__SSE2__)
+#if !defined(__ARM_NEON) && !defined(__ARM_NEON__) && defined(__SSE2__)
   {
     const __m128i vc = _mm_set1_epi8(c);
     while (p + 16 <= end) {
@@ -890,7 +906,7 @@ inline const char* find_byte(const char* p, const char* end, char c) noexcept
 inline const char* find_escape_pos(const char* p, const char* end) noexcept
 {
   [[maybe_unused]] const char* const start = p;  // used only by the SSE2 tail below
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   {
     const uint8x16_t vq    = vdupq_n_u8('"');
     const uint8x16_t vbs   = vdupq_n_u8('\\');
@@ -951,10 +967,31 @@ inline const char* find_escape_pos(const char* p, const char* end) noexcept
     }
   }
 #endif
-#if defined(__SSE2__)
-  // Under 16 bytes left: one 16-byte window that ends at end. The bytes before p
-  // were already scanned clean, so the first flagged byte in the window is at p
-  // or later.
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (end - start >= 16 && p < end) {
+    const uint8x16_t vq    = vdupq_n_u8('"');
+    const uint8x16_t vbs   = vdupq_n_u8('\\');
+    const uint8x16_t vbias = vdupq_n_u8(0x80);
+    const uint8x16_t vcmp  = vdupq_n_u8(0xA0);
+    const char* w = end - 16;
+    uint8x16_t v      = vld1q_u8(reinterpret_cast<const uint8_t*>(w));
+    uint8x16_t biased = veorq_u8(v, vbias);
+    uint8x16_t hit    = vorrq_u8(vorrq_u8(
+      vreinterpretq_u8_s8(vcgtq_s8(vreinterpretq_s8_u8(vcmp),
+                                   vreinterpretq_s8_u8(biased))),
+      vceqq_u8(v, vq)),
+      vceqq_u8(v, vbs));
+    uint64x2_t h64 = vreinterpretq_u64_u8(hit);
+    uint64_t   lo  = vgetq_lane_u64(h64, 0);
+    uint64_t   hi  = vgetq_lane_u64(h64, 1);
+    if (lo | hi) {
+      const char* found = lo ? w + (__builtin_ctzll(lo) >> 3)
+                             : w + 8 + (__builtin_ctzll(hi) >> 3);
+      return found >= p ? found : end;
+    }
+    return end;
+  }
+#elif defined(__SSE2__)
   if (end - start >= 16 && p < end) {
     const __m128i vq    = _mm_set1_epi8('"');
     const __m128i vbs   = _mm_set1_epi8('\\');

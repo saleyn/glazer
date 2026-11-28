@@ -316,7 +316,7 @@ inline bool parse_csv_encode_opts(ErlNifEnv* env, ERL_NIF_TERM list, CSVEncodeOp
 
 inline const char* find_field_end(const char* p, const char* end, char delim) noexcept
 {
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   {
     const uint8x16_t vd = vdupq_n_u8(static_cast<uint8_t>(delim));
     const uint8x16_t vn = vdupq_n_u8('\n');
@@ -373,7 +373,7 @@ inline const char* find_field_end(const char* p, const char* end, char delim) no
 // the delimiter, a double-quote, a newline, or a carriage return.
 inline const char* find_csv_special(const char* p, const char* end, char delim) noexcept
 {
-#if defined(__ARM_NEON__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   {
     const uint8x16_t vd = vdupq_n_u8(static_cast<uint8_t>(delim));
     const uint8x16_t vq = vdupq_n_u8('"');
