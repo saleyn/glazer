@@ -141,7 +141,7 @@ jobs:
         run:  make test
       - name: Benchmark
         run: |
-          echo -e "### Benchmark Results (OTP ${{ matrix.otp }} ${{ matrix.os }}.${{ matrix.compiler.compiler }})\n" >> $GITHUB_STEP_SUMMARY
+          echo -e "### Benchmark Results (OTP ${{ matrix.otp }} macos.${{ matrix.compiler.compiler }})\n" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           set -o pipefail
           make OPTIMIZE=1 PRIORITY=-20 N=5 bench-json 2>&1 | tee bench.txt

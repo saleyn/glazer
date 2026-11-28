@@ -67,23 +67,35 @@ defmodule Glazer.MixProject do
       {:jiffy,               "~> 2.1",    only: :bench},
       {:thoas,               "~> 1.2",    only: :bench},
       {:euneus,              "~> 2.0",    only: :bench},
-      {:torque,              "~> 0.5",    only: :bench},
       {:yamerl,              "~> 0.10",   only: :bench},
-      {:fast_yaml,           "~> 1.0",    only: :bench},
       {:ymlr,                "~> 5.1",    only: :bench},
       {:csv,                 "~> 3.2",    only: :bench},
       {:nimble_csv,          "~> 1.3",    only: :bench},
       {:erl_csv,             "~> 0.6.0",  only: :bench},
-      {:yaml_rustler,        "~> 0.2",    only: :bench},
-      {:rusty_csv,           "~> 0.4.6",  only: :bench},
-      {:rustler,             "~> 0.38",   only: :bench, override: true, runtime: false},
-      {:rustler_precompiled, "~> 0.9",    only: :bench, override: true},
       # Schema validator benchmark (mix benchmark-sv)
       {:ex_json_schema,      "~> 0.11.5", only: :bench},
       {:json_xema,           "~> 0.6.5",  only: :bench},
       {:jsv,                 "~> 0.28.1", only: :bench},
       {:exonerate,           "~> 1.3",    only: :bench},
-    ]
+    ] ++ nif_bench_deps()
+  end
+
+  # Rust/C NIF benchmark deps that don't build on Windows (no precompiled
+  # binaries and no Rust/libyaml toolchain in MSYS2 CI).  The bench tasks
+  # already skip unavailable modules at runtime via module_available?/1.
+  defp nif_bench_deps do
+    if :os.type() == {:win32, :nt} do
+      []
+    else
+      [
+        {:torque,              "~> 0.5",    only: :bench},
+        {:fast_yaml,           "~> 1.0",    only: :bench},
+        {:yaml_rustler,        "~> 0.2",    only: :bench},
+        {:rusty_csv,           "~> 0.4.6",  only: :bench},
+        {:rustler,             "~> 0.38",   only: :bench, override: true, runtime: false},
+        {:rustler_precompiled, "~> 0.9",    only: :bench, override: true},
+      ]
+    end
   end
 
   def aliases do
