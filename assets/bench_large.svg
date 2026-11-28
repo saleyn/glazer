@@ -45,34 +45,34 @@
 <line x1="50.0" y1="148.0" x2="370.0" y2="148.0" class="grid" stroke-width="1"/>
 <text x="44.0" y="151.0" text-anchor="end" font-size="9" class="muted">0</text>
 <line x1="50.0" y1="128.0" x2="370.0" y2="128.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="131.0" text-anchor="end" font-size="9" class="muted">2000</text>
+<text x="44.0" y="131.0" text-anchor="end" font-size="9" class="muted">1000</text>
 <line x1="50.0" y1="108.0" x2="370.0" y2="108.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="111.0" text-anchor="end" font-size="9" class="muted">4000</text>
+<text x="44.0" y="111.0" text-anchor="end" font-size="9" class="muted">2000</text>
 <line x1="50.0" y1="88.0" x2="370.0" y2="88.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="91.0" text-anchor="end" font-size="9" class="muted">6000</text>
+<text x="44.0" y="91.0" text-anchor="end" font-size="9" class="muted">3000</text>
 <line x1="50.0" y1="68.0" x2="370.0" y2="68.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="71.0" text-anchor="end" font-size="9" class="muted">8000</text>
-<rect x="56.0" y="130.2" width="28.9" height="17.8" class="bar-glazer"><title>glazer: 1784.7 (decode)</title></rect>
-<text x="70.4" y="127.2" text-anchor="middle" font-size="8" class="muted">1784.7</text>
+<text x="44.0" y="71.0" text-anchor="end" font-size="9" class="muted">4000</text>
+<rect x="56.0" y="131.3" width="28.9" height="16.7" class="bar-glazer"><title>glazer: 833.5 (decode)</title></rect>
+<text x="70.4" y="128.3" text-anchor="middle" font-size="8" class="muted">833.5</text>
 <text x="70.4" y="158.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 70.4,158.0)">glazer</text>
-<rect x="90.9" y="135.7" width="28.9" height="12.3" class="bar-1"><title>torque: 1228.6 (decode)</title></rect>
-<text x="105.3" y="132.7" text-anchor="middle" font-size="8" class="muted">1228.6</text>
+<rect x="90.9" y="132.6" width="28.9" height="15.4" class="bar-1"><title>torque: 771.7 (decode)</title></rect>
+<text x="105.3" y="129.6" text-anchor="middle" font-size="8" class="muted">771.7</text>
 <text x="105.3" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 105.3,158.0)">torque</text>
-<rect x="125.8" y="108.9" width="28.9" height="39.1" class="bar-2"><title>jiffy: 3910.3 (decode)</title></rect>
-<text x="140.2" y="105.9" text-anchor="middle" font-size="8" class="muted">3910.3</text>
+<rect x="125.8" y="107.9" width="28.9" height="40.1" class="bar-2"><title>jiffy: 2004.8 (decode)</title></rect>
+<text x="140.2" y="104.9" text-anchor="middle" font-size="8" class="muted">2004.8</text>
 <text x="140.2" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 140.2,158.0)">jiffy</text>
-<rect x="160.7" y="84.1" width="28.9" height="63.9" class="bar-3"><title>jason: 6392.7 (decode)</title></rect>
-<text x="175.1" y="81.1" text-anchor="middle" font-size="8" class="muted">6392.7</text>
-<text x="175.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 175.1,158.0)">jason</text>
-<rect x="195.6" y="102.1" width="28.9" height="45.9" class="bar-4"><title>json: 4585.6 (decode)</title></rect>
-<text x="210.0" y="99.1" text-anchor="middle" font-size="8" class="muted">4585.6</text>
-<text x="210.0" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 210.0,158.0)">json</text>
-<rect x="230.4" y="87.6" width="28.9" height="60.4" class="bar-5"><title>thoas: 6041.2 (decode)</title></rect>
-<text x="244.9" y="84.6" text-anchor="middle" font-size="8" class="muted">6041.2</text>
+<rect x="160.7" y="92.9" width="28.9" height="55.1" class="bar-3"><title>json: 2753.8 (decode)</title></rect>
+<text x="175.1" y="89.9" text-anchor="middle" font-size="8" class="muted">2753.8</text>
+<text x="175.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 175.1,158.0)">json</text>
+<rect x="195.6" y="89.7" width="28.9" height="58.3" class="bar-4"><title>euneus: 2914.6 (decode)</title></rect>
+<text x="210.0" y="86.7" text-anchor="middle" font-size="8" class="muted">2914.6</text>
+<text x="210.0" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 210.0,158.0)">euneus</text>
+<rect x="230.4" y="74.3" width="28.9" height="73.7" class="bar-5"><title>thoas: 3686.2 (decode)</title></rect>
+<text x="244.9" y="71.3" text-anchor="middle" font-size="8" class="muted">3686.2</text>
 <text x="244.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 244.9,158.0)">thoas</text>
-<rect x="265.3" y="100.2" width="28.9" height="47.8" class="bar-6"><title>euneus: 4777 (decode)</title></rect>
-<text x="279.8" y="97.2" text-anchor="middle" font-size="8" class="muted">4777</text>
-<text x="279.8" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 279.8,158.0)">euneus</text>
+<rect x="265.3" y="69.8" width="28.9" height="78.2" class="bar-6"><title>jason: 3911.8 (decode)</title></rect>
+<text x="279.8" y="66.8" text-anchor="middle" font-size="8" class="muted">3911.8</text>
+<text x="279.8" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 279.8,158.0)">jason</text>
 <text x="314.7" y="144.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="314.7" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 314.7,158.0)">===></text>
 <text x="349.6" y="144.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
@@ -81,33 +81,35 @@
 <text x="570.0" y="66.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">JSON encode — 616.7K</text>
 <line x1="430.0" y1="148.0" x2="750.0" y2="148.0" class="grid" stroke-width="1"/>
 <text x="424.0" y="151.0" text-anchor="end" font-size="9" class="muted">0</text>
-<line x1="430.0" y1="121.3" x2="750.0" y2="121.3" class="grid" stroke-width="1"/>
-<text x="424.0" y="124.3" text-anchor="end" font-size="9" class="muted">2000</text>
-<line x1="430.0" y1="94.7" x2="750.0" y2="94.7" class="grid" stroke-width="1"/>
-<text x="424.0" y="97.7" text-anchor="end" font-size="9" class="muted">4000</text>
+<line x1="430.0" y1="128.0" x2="750.0" y2="128.0" class="grid" stroke-width="1"/>
+<text x="424.0" y="131.0" text-anchor="end" font-size="9" class="muted">1000</text>
+<line x1="430.0" y1="108.0" x2="750.0" y2="108.0" class="grid" stroke-width="1"/>
+<text x="424.0" y="111.0" text-anchor="end" font-size="9" class="muted">2000</text>
+<line x1="430.0" y1="88.0" x2="750.0" y2="88.0" class="grid" stroke-width="1"/>
+<text x="424.0" y="91.0" text-anchor="end" font-size="9" class="muted">3000</text>
 <line x1="430.0" y1="68.0" x2="750.0" y2="68.0" class="grid" stroke-width="1"/>
-<text x="424.0" y="71.0" text-anchor="end" font-size="9" class="muted">6000</text>
-<rect x="436.0" y="139.0" width="28.9" height="9.0" class="bar-glazer"><title>glazer: 677.8 (encode)</title></rect>
-<text x="450.4" y="136.0" text-anchor="middle" font-size="8" class="muted">677.8</text>
+<text x="424.0" y="71.0" text-anchor="end" font-size="9" class="muted">4000</text>
+<rect x="436.0" y="141.5" width="28.9" height="6.5" class="bar-glazer"><title>glazer: 326.7 (encode)</title></rect>
+<text x="450.4" y="138.5" text-anchor="middle" font-size="8" class="muted">326.7</text>
 <text x="450.4" y="158.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 450.4,158.0)">glazer</text>
-<rect x="470.9" y="139.6" width="28.9" height="8.4" class="bar-1"><title>torque: 631.8 (encode)</title></rect>
-<text x="485.3" y="136.6" text-anchor="middle" font-size="8" class="muted">631.8</text>
+<rect x="470.9" y="141.8" width="28.9" height="6.2" class="bar-1"><title>torque: 310.2 (encode)</title></rect>
+<text x="485.3" y="138.8" text-anchor="middle" font-size="8" class="muted">310.2</text>
 <text x="485.3" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 485.3,158.0)">torque</text>
-<rect x="505.8" y="125.2" width="28.9" height="22.8" class="bar-2"><title>jiffy: 1712.1 (encode)</title></rect>
-<text x="520.2" y="122.2" text-anchor="middle" font-size="8" class="muted">1712.1</text>
+<rect x="505.8" y="133.9" width="28.9" height="14.1" class="bar-2"><title>jiffy: 706.8 (encode)</title></rect>
+<text x="520.2" y="130.9" text-anchor="middle" font-size="8" class="muted">706.8</text>
 <text x="520.2" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 520.2,158.0)">jiffy</text>
-<rect x="540.7" y="81.6" width="28.9" height="66.4" class="bar-3"><title>jason: 4980.6 (encode)</title></rect>
-<text x="555.1" y="78.6" text-anchor="middle" font-size="8" class="muted">4980.6</text>
-<text x="555.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 555.1,158.0)">jason</text>
-<rect x="575.6" y="102.9" width="28.9" height="45.1" class="bar-4"><title>json: 3380.5 (encode)</title></rect>
-<text x="590.0" y="99.9" text-anchor="middle" font-size="8" class="muted">3380.5</text>
-<text x="590.0" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 590.0,158.0)">json</text>
-<rect x="610.4" y="75.9" width="28.9" height="72.1" class="bar-5"><title>thoas: 5410.3 (encode)</title></rect>
-<text x="624.9" y="72.9" text-anchor="middle" font-size="8" class="muted">5410.3</text>
+<rect x="540.7" y="95.3" width="28.9" height="52.7" class="bar-3"><title>json: 2636.3 (encode)</title></rect>
+<text x="555.1" y="92.3" text-anchor="middle" font-size="8" class="muted">2636.3</text>
+<text x="555.1" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 555.1,158.0)">json</text>
+<rect x="575.6" y="97.5" width="28.9" height="50.5" class="bar-4"><title>euneus: 2523.7 (encode)</title></rect>
+<text x="590.0" y="94.5" text-anchor="middle" font-size="8" class="muted">2523.7</text>
+<text x="590.0" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 590.0,158.0)">euneus</text>
+<rect x="610.4" y="69.6" width="28.9" height="78.4" class="bar-5"><title>thoas: 3919.1 (encode)</title></rect>
+<text x="624.9" y="66.6" text-anchor="middle" font-size="8" class="muted">3919.1</text>
 <text x="624.9" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 624.9,158.0)">thoas</text>
-<rect x="645.3" y="101.8" width="28.9" height="46.2" class="bar-6"><title>euneus: 3463.8 (encode)</title></rect>
-<text x="659.8" y="98.8" text-anchor="middle" font-size="8" class="muted">3463.8</text>
-<text x="659.8" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 659.8,158.0)">euneus</text>
+<rect x="645.3" y="76.9" width="28.9" height="71.1" class="bar-6"><title>jason: 3553.4 (encode)</title></rect>
+<text x="659.8" y="73.9" text-anchor="middle" font-size="8" class="muted">3553.4</text>
+<text x="659.8" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 659.8,158.0)">jason</text>
 <text x="694.7" y="144.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="694.7" y="158.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 694.7,158.0)">===></text>
 <text x="729.6" y="144.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
@@ -116,23 +118,25 @@
 <text x="190.0" y="204.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">YAML decode — 1.3K</text>
 <line x1="50.0" y1="286.0" x2="370.0" y2="286.0" class="grid" stroke-width="1"/>
 <text x="44.0" y="289.0" text-anchor="end" font-size="9" class="muted">0</text>
-<line x1="50.0" y1="259.3" x2="370.0" y2="259.3" class="grid" stroke-width="1"/>
-<text x="44.0" y="262.3" text-anchor="end" font-size="9" class="muted">1000</text>
-<line x1="50.0" y1="232.7" x2="370.0" y2="232.7" class="grid" stroke-width="1"/>
-<text x="44.0" y="235.7" text-anchor="end" font-size="9" class="muted">2000</text>
+<line x1="50.0" y1="266.0" x2="370.0" y2="266.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="269.0" text-anchor="end" font-size="9" class="muted">200</text>
+<line x1="50.0" y1="246.0" x2="370.0" y2="246.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="249.0" text-anchor="end" font-size="9" class="muted">400</text>
+<line x1="50.0" y1="226.0" x2="370.0" y2="226.0" class="grid" stroke-width="1"/>
+<text x="44.0" y="229.0" text-anchor="end" font-size="9" class="muted">600</text>
 <line x1="50.0" y1="206.0" x2="370.0" y2="206.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="209.0" text-anchor="end" font-size="9" class="muted">3000</text>
-<rect x="56.0" y="284.5" width="38.9" height="1.5" class="bar-glazer"><title>glazer: 57.8 (decode)</title></rect>
-<text x="75.4" y="281.5" text-anchor="middle" font-size="8" class="muted">57.8</text>
+<text x="44.0" y="209.0" text-anchor="end" font-size="9" class="muted">800</text>
+<rect x="56.0" y="285.1" width="38.9" height="0.9" class="bar-glazer"><title>glazer: 8.8 (decode)</title></rect>
+<text x="75.4" y="282.1" text-anchor="middle" font-size="8" class="muted">8.8</text>
 <text x="75.4" y="296.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 75.4,296.0)">glazer</text>
-<rect x="100.9" y="281.4" width="38.9" height="4.6" class="bar-1"><title>yaml_rustler: 170.9 (decode)</title></rect>
-<text x="120.3" y="278.4" text-anchor="middle" font-size="8" class="muted">170.9</text>
+<rect x="100.9" y="281.6" width="38.9" height="4.4" class="bar-1"><title>yaml_rustler: 44.3 (decode)</title></rect>
+<text x="120.3" y="278.6" text-anchor="middle" font-size="8" class="muted">44.3</text>
 <text x="120.3" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 120.3,296.0)">yaml_rustler</text>
-<rect x="145.7" y="277.5" width="38.9" height="8.5" class="bar-2"><title>fast_yaml: 320.2 (decode)</title></rect>
-<text x="165.1" y="274.5" text-anchor="middle" font-size="8" class="muted">320.2</text>
+<rect x="145.7" y="279.7" width="38.9" height="6.3" class="bar-2"><title>fast_yaml: 63.1 (decode)</title></rect>
+<text x="165.1" y="276.7" text-anchor="middle" font-size="8" class="muted">63.1</text>
 <text x="165.1" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 165.1,296.0)">fast_yaml</text>
-<rect x="190.6" y="216.4" width="38.9" height="69.6" class="bar-3"><title>yamerl: 2609.6 (decode)</title></rect>
-<text x="210.0" y="213.4" text-anchor="middle" font-size="8" class="muted">2609.6</text>
+<rect x="190.6" y="221.5" width="38.9" height="64.5" class="bar-3"><title>yamerl: 645 (decode)</title></rect>
+<text x="210.0" y="218.5" text-anchor="middle" font-size="8" class="muted">645</text>
 <text x="210.0" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 210.0,296.0)">yamerl</text>
 <text x="254.9" y="282.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="254.9" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 254.9,296.0)">ymlr</text>
@@ -144,26 +148,24 @@
 <text x="570.0" y="204.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">YAML encode — 1.3K</text>
 <line x1="430.0" y1="286.0" x2="750.0" y2="286.0" class="grid" stroke-width="1"/>
 <text x="424.0" y="289.0" text-anchor="end" font-size="9" class="muted">0</text>
-<line x1="430.0" y1="266.0" x2="750.0" y2="266.0" class="grid" stroke-width="1"/>
-<text x="424.0" y="269.0" text-anchor="end" font-size="9" class="muted">20</text>
-<line x1="430.0" y1="246.0" x2="750.0" y2="246.0" class="grid" stroke-width="1"/>
-<text x="424.0" y="249.0" text-anchor="end" font-size="9" class="muted">40</text>
-<line x1="430.0" y1="226.0" x2="750.0" y2="226.0" class="grid" stroke-width="1"/>
-<text x="424.0" y="229.0" text-anchor="end" font-size="9" class="muted">60</text>
+<line x1="430.0" y1="259.3" x2="750.0" y2="259.3" class="grid" stroke-width="1"/>
+<text x="424.0" y="262.3" text-anchor="end" font-size="9" class="muted">10</text>
+<line x1="430.0" y1="232.7" x2="750.0" y2="232.7" class="grid" stroke-width="1"/>
+<text x="424.0" y="235.7" text-anchor="end" font-size="9" class="muted">20</text>
 <line x1="430.0" y1="206.0" x2="750.0" y2="206.0" class="grid" stroke-width="1"/>
-<text x="424.0" y="209.0" text-anchor="end" font-size="9" class="muted">80</text>
-<rect x="436.0" y="266.4" width="38.9" height="19.6" class="bar-glazer"><title>glazer: 19.6 (encode)</title></rect>
-<text x="455.4" y="263.4" text-anchor="middle" font-size="8" class="muted">19.6</text>
+<text x="424.0" y="209.0" text-anchor="end" font-size="9" class="muted">30</text>
+<rect x="436.0" y="278.8" width="38.9" height="7.2" class="bar-glazer"><title>glazer: 2.7 (encode)</title></rect>
+<text x="455.4" y="275.8" text-anchor="middle" font-size="8" class="muted">2.7</text>
 <text x="455.4" y="296.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 455.4,296.0)">glazer</text>
 <text x="500.3" y="282.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="500.3" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 500.3,296.0)">yaml_rustler</text>
-<rect x="525.7" y="208.4" width="38.9" height="77.6" class="bar-2"><title>fast_yaml: 77.6 (encode)</title></rect>
-<text x="545.1" y="205.4" text-anchor="middle" font-size="8" class="muted">77.6</text>
+<rect x="525.7" y="227.1" width="38.9" height="58.9" class="bar-2"><title>fast_yaml: 22.1 (encode)</title></rect>
+<text x="545.1" y="224.1" text-anchor="middle" font-size="8" class="muted">22.1</text>
 <text x="545.1" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 545.1,296.0)">fast_yaml</text>
 <text x="590.0" y="282.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="590.0" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 590.0,296.0)">yamerl</text>
-<rect x="615.4" y="206.5" width="38.9" height="79.5" class="bar-4"><title>ymlr: 79.5 (encode)</title></rect>
-<text x="634.9" y="203.5" text-anchor="middle" font-size="8" class="muted">79.5</text>
+<rect x="615.4" y="235.6" width="38.9" height="50.4" class="bar-4"><title>ymlr: 18.9 (encode)</title></rect>
+<text x="634.9" y="232.6" text-anchor="middle" font-size="8" class="muted">18.9</text>
 <text x="634.9" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 634.9,296.0)">ymlr</text>
 <text x="679.7" y="282.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
 <text x="679.7" y="296.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 679.7,296.0)">===></text>
@@ -173,28 +175,27 @@
 <text x="190.0" y="342.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">CSV decode — 3433.1K</text>
 <line x1="50.0" y1="424.0" x2="370.0" y2="424.0" class="grid" stroke-width="1"/>
 <text x="44.0" y="427.0" text-anchor="end" font-size="9" class="muted">0</text>
-<line x1="50.0" y1="404.0" x2="370.0" y2="404.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="407.0" text-anchor="end" font-size="9" class="muted">100000</text>
-<line x1="50.0" y1="384.0" x2="370.0" y2="384.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="387.0" text-anchor="end" font-size="9" class="muted">200000</text>
-<line x1="50.0" y1="364.0" x2="370.0" y2="364.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="367.0" text-anchor="end" font-size="9" class="muted">300000</text>
+<line x1="50.0" y1="397.3" x2="370.0" y2="397.3" class="grid" stroke-width="1"/>
+<text x="44.0" y="400.3" text-anchor="end" font-size="9" class="muted">50000</text>
+<line x1="50.0" y1="370.7" x2="370.0" y2="370.7" class="grid" stroke-width="1"/>
+<text x="44.0" y="373.7" text-anchor="end" font-size="9" class="muted">100000</text>
 <line x1="50.0" y1="344.0" x2="370.0" y2="344.0" class="grid" stroke-width="1"/>
-<text x="44.0" y="347.0" text-anchor="end" font-size="9" class="muted">400000</text>
-<rect x="56.0" y="414.9" width="56.8" height="9.1" class="bar-glazer"><title>glazer: 45725.1 (decode)</title></rect>
-<text x="84.4" y="411.9" text-anchor="middle" font-size="8" class="muted">45725.1</text>
+<text x="44.0" y="347.0" text-anchor="end" font-size="9" class="muted">150000</text>
+<rect x="56.0" y="418.1" width="56.8" height="5.9" class="bar-glazer"><title>glazer: 11003.4 (decode)</title></rect>
+<text x="84.4" y="415.1" text-anchor="middle" font-size="8" class="muted">11003.4</text>
 <text x="84.4" y="434.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 84.4,434.0)">glazer</text>
-<rect x="118.8" y="414.5" width="56.8" height="9.5" class="bar-1"><title>rusty_csv: 47439.2 (decode)</title></rect>
-<text x="147.2" y="411.5" text-anchor="middle" font-size="8" class="muted">47439.2</text>
-<text x="147.2" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 147.2,434.0)">rusty_csv</text>
-<rect x="181.6" y="348.9" width="56.8" height="75.1" class="bar-2"><title>nimble_csv: 375516 (decode)</title></rect>
-<text x="210.0" y="345.9" text-anchor="middle" font-size="8" class="muted">375516</text>
-<text x="210.0" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 210.0,434.0)">nimble_csv</text>
-<text x="272.8" y="420.0" text-anchor="middle" font-size="8" class="faint">TIMEOUT</text>
-<text x="272.8" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 272.8,434.0)">csv</text>
-<rect x="307.2" y="401.0" width="56.8" height="23.0" class="bar-4"><title>erl_csv: 115075 (decode)</title></rect>
-<text x="335.6" y="398.0" text-anchor="middle" font-size="8" class="muted">115075</text>
-<text x="335.6" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 335.6,434.0)">erl_csv</text>
+<rect x="118.8" y="412.4" width="56.8" height="11.6" class="bar-1"><title>erl_csv: 21834.3 (decode)</title></rect>
+<text x="147.2" y="409.4" text-anchor="middle" font-size="8" class="muted">21834.3</text>
+<text x="147.2" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 147.2,434.0)">erl_csv</text>
+<rect x="181.6" y="418.0" width="56.8" height="6.0" class="bar-2"><title>rusty_csv: 11216.3 (decode)</title></rect>
+<text x="210.0" y="415.0" text-anchor="middle" font-size="8" class="muted">11216.3</text>
+<text x="210.0" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 210.0,434.0)">rusty_csv</text>
+<rect x="244.4" y="382.0" width="56.8" height="42.0" class="bar-3"><title>nimble_csv: 78670.6 (decode)</title></rect>
+<text x="272.8" y="379.0" text-anchor="middle" font-size="8" class="muted">78670.6</text>
+<text x="272.8" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 272.8,434.0)">nimble_csv</text>
+<rect x="307.2" y="351.9" width="56.8" height="72.1" class="bar-4"><title>csv: 135194 (decode)</title></rect>
+<text x="335.6" y="348.9" text-anchor="middle" font-size="8" class="muted">135194</text>
+<text x="335.6" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 335.6,434.0)">csv</text>
 <line x1="50.0" y1="424.0" x2="370.0" y2="424.0" class="axis" stroke-width="1"/>
 <text x="570.0" y="342.0" text-anchor="middle" font-size="13" font-weight="bold" class="fg">CSV encode — 3433.1K</text>
 <line x1="430.0" y1="424.0" x2="750.0" y2="424.0" class="grid" stroke-width="1"/>
@@ -205,18 +206,19 @@
 <text x="424.0" y="373.7" text-anchor="end" font-size="9" class="muted">200000</text>
 <line x1="430.0" y1="344.0" x2="750.0" y2="344.0" class="grid" stroke-width="1"/>
 <text x="424.0" y="347.0" text-anchor="end" font-size="9" class="muted">300000</text>
-<rect x="436.0" y="419.2" width="56.8" height="4.8" class="bar-glazer"><title>glazer: 18175.5 (encode)</title></rect>
-<text x="464.4" y="416.2" text-anchor="middle" font-size="8" class="muted">18175.5</text>
+<rect x="436.0" y="422.9" width="56.8" height="1.1" class="bar-glazer"><title>glazer: 4221.9 (encode)</title></rect>
+<text x="464.4" y="419.9" text-anchor="middle" font-size="8" class="muted">4221.9</text>
 <text x="464.4" y="434.0" text-anchor="end" font-size="9" class="fg" font-weight="bold" transform="rotate(-35 464.4,434.0)">glazer</text>
-<text x="527.2" y="420.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
-<text x="527.2" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 527.2,434.0)">rusty_csv</text>
-<rect x="561.6" y="357.9" width="56.8" height="66.1" class="bar-2"><title>nimble_csv: 247815 (encode)</title></rect>
-<text x="590.0" y="354.9" text-anchor="middle" font-size="8" class="muted">247815</text>
-<text x="590.0" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 590.0,434.0)">nimble_csv</text>
-<text x="652.8" y="420.0" text-anchor="middle" font-size="8" class="faint">TIMEOUT</text>
-<text x="652.8" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 652.8,434.0)">csv</text>
-<rect x="687.2" y="385.8" width="56.8" height="38.2" class="bar-4"><title>erl_csv: 143284 (encode)</title></rect>
-<text x="715.6" y="382.8" text-anchor="middle" font-size="8" class="muted">143284</text>
-<text x="715.6" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 715.6,434.0)">erl_csv</text>
+<rect x="498.8" y="416.5" width="56.8" height="7.5" class="bar-1"><title>erl_csv: 28220.5 (encode)</title></rect>
+<text x="527.2" y="413.5" text-anchor="middle" font-size="8" class="muted">28220.5</text>
+<text x="527.2" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 527.2,434.0)">erl_csv</text>
+<text x="590.0" y="420.0" text-anchor="middle" font-size="8" class="faint">N/A</text>
+<text x="590.0" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 590.0,434.0)">rusty_csv</text>
+<rect x="624.4" y="409.8" width="56.8" height="14.2" class="bar-3"><title>nimble_csv: 53205.8 (encode)</title></rect>
+<text x="652.8" y="406.8" text-anchor="middle" font-size="8" class="muted">53205.8</text>
+<text x="652.8" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 652.8,434.0)">nimble_csv</text>
+<rect x="687.2" y="363.6" width="56.8" height="60.4" class="bar-4"><title>csv: 226439 (encode)</title></rect>
+<text x="715.6" y="360.6" text-anchor="middle" font-size="8" class="muted">226439</text>
+<text x="715.6" y="434.0" text-anchor="end" font-size="9" class="fg" transform="rotate(-35 715.6,434.0)">csv</text>
 <line x1="430.0" y1="424.0" x2="750.0" y2="424.0" class="axis" stroke-width="1"/>
 </svg>

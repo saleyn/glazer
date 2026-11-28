@@ -103,6 +103,7 @@ int enif_make_map_put(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM, ERL_
 int enif_get_tuple(ErlNifEnv*, ERL_NIF_TERM, int*, const ERL_NIF_TERM**) { return 0; }
 int enif_compare(ERL_NIF_TERM lhs, ERL_NIF_TERM rhs) { return lhs == rhs ? 0 : (lhs < rhs ? -1 : 1); }
 size_t enif_binary_to_term(ErlNifEnv*, const unsigned char*, size_t, ERL_NIF_TERM*, unsigned int) { return 0; }
+int enif_inspect_binary(ErlNifEnv*, ERL_NIF_TERM, ErlNifBinary*) { return 0; }
 
 }  // extern "C"
 

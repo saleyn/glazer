@@ -26,6 +26,92 @@
 
 namespace glz {
 
+//-----------------------------------------------------------------------------
+// Inline term-type dispatch via BEAM tag bits (avoids indirect NIF API call).
+// Falls back to enif_term_type for types not in the fast path.
+//
+// OTP term tagging (64-bit, stable since OTP 26):
+//   Primary tag (bits 0–1): 0b01=list, 0b10=boxed, 0b11=immediate
+//   Immediate1 (bits 0–3): 0xF=small_int, 0xB=immed2, 0x3=pid, 0x7=port
+//   Immediate2 (bits 0–5): 0x0B=atom, 0x3B=nil (empty list)
+//   Boxed header (low 6 bits of *ptr): 0x20/0x24=bitstring, 0x2C=map,
+//     0x00=tuple, 0x08/0x0C=bigint, 0x18=float
+//
+// Boxed pointer extraction uses (x & ~7) rather than (x - 2) to strip both
+// the primary tag (bit 1) and the literal tag (bit 2). The literal tag is
+// active on platforms without ERTS_HAVE_OS_PHYSICAL_MEMORY_RESERVATION
+// (notably Windows), where constant terms carry bit 2 set.
+//-----------------------------------------------------------------------------
+inline ErlNifTermType fast_term_type(ErlNifEnv* env, ERL_NIF_TERM term)
+{
+  auto x = static_cast<uintptr_t>(term);
+  switch (x & 0x3) {
+    case 0x1:
+      return ERL_NIF_TERM_TYPE_LIST;
+    case 0x3:
+      switch (x & 0xF) {
+        case 0xF: return ERL_NIF_TERM_TYPE_INTEGER;
+        default:
+          switch (x & 0x3F) {
+            case 0x0B: return ERL_NIF_TERM_TYPE_ATOM;
+            case 0x3B: return ERL_NIF_TERM_TYPE_LIST;
+          }
+      }
+      break;
+    case 0x2: {
+      auto* ptr = reinterpret_cast<const uintptr_t*>(x & ~static_cast<uintptr_t>(0x7));
+      switch (*ptr & 0x3F) {
+        case 0x20: case 0x24: return ERL_NIF_TERM_TYPE_BITSTRING;
+        case 0x2C:            return ERL_NIF_TERM_TYPE_MAP;
+        case 0x00:            return ERL_NIF_TERM_TYPE_TUPLE;
+        case 0x08: case 0x0C: return ERL_NIF_TERM_TYPE_INTEGER;
+        case 0x18:            return ERL_NIF_TERM_TYPE_FLOAT;
+      }
+      break;
+    }
+  }
+  return enif_term_type(env, term);
+}
+
+// Called from nif_load to verify fast_term_type tag-bit assumptions match
+// the running OTP version. All terms allocated here live on the nif_load
+// env and are garbage-collected when BEAM disposes of it after load returns.
+inline bool verify_fast_term_type(ErlNifEnv* env)
+{
+  ERL_NIF_TERM atom   = enif_make_atom(env, "test");
+  ERL_NIF_TERM small  = enif_make_int(env, 42);
+  ERL_NIF_TERM nil    = enif_make_list(env, 0);
+  ERL_NIF_TERM list   = enif_make_list(env, 1, small);
+  ERL_NIF_TERM map    = enif_make_new_map(env);
+  ERL_NIF_TERM flt    = enif_make_double(env, 3.14);
+  ERL_NIF_TERM tup    = enif_make_tuple(env, 1, small);
+  ERL_NIF_TERM bin;     enif_make_new_binary(env, 1, &bin);
+
+  // Also test a non-empty map — literals from BEAM code may carry the
+  // TAG_LITERAL_PTR bit (0x4) on platforms without
+  // ERTS_HAVE_OS_PHYSICAL_MEMORY_RESERVATION (e.g. Windows).
+  ERL_NIF_TERM map1;
+  enif_make_map_put(env, map, atom, small, &map1);
+
+  struct { ERL_NIF_TERM term; const char* name; } checks[] = {
+    {atom,  "atom"},  {small, "small"}, {nil,  "nil"},  {list, "list"},
+    {map,   "map"},   {map1,  "map1"},  {flt,  "float"},{tup,  "tuple"},
+    {bin,   "binary"},
+  };
+  for (auto& c : checks) {
+    auto expected = enif_term_type(env, c.term);
+    auto got      = fast_term_type(env, c.term);
+    if (got != expected) {
+      fprintf(stderr, "glazer: fast_term_type mismatch for %s: "
+              "expected %d, got %d (term=0x%llx)\n",
+              c.name, (int)expected, (int)got,
+              (unsigned long long)c.term);
+      return false;
+    }
+  }
+  return true;
+}
+
 // Switch key for a name: its first 8 bytes packed into an integer. Names that
 // share their first 8 bytes share a key, so a case must still compare the full
 // name when it matters (see the keyword and format dispatch).
@@ -502,21 +588,33 @@ struct KeyCache {
     }
   }
 
-  static uint32_t hash_of(const char* s, size_t len) {
+  static inline uint32_t hash_of(const char* s, size_t len) {
     uint64_t pre, tail;
     key_words(s, len, pre, tail);
     uint64_t h = pre * 0x9E3779B97F4A7C15ull ^ (tail + len) * 0xC2B2AE3D27D4EB4Full;
     return static_cast<uint32_t>(h >> 32);
   }
 
+  // Compute hash + word pair in one call, avoiding double key_words().
+  static inline uint32_t hash_and_words(const char* s, size_t len, uint64_t& pre_out, uint64_t& tail_out) {
+    key_words(s, len, pre_out, tail_out);
+    uint64_t h = pre_out * 0x9E3779B97F4A7C15ull ^ (tail_out + len) * 0xC2B2AE3D27D4EB4Full;
+    return static_cast<uint32_t>(h >> 32);
+  }
+
   // Returns 0 if not cached. Keys of up to 16 bytes are matched by their word
   // pair alone; longer keys are confirmed with memcmp.
-  ERL_NIF_TERM lookup(const char* s, size_t len, uint32_t hash) const {
+  inline ERL_NIF_TERM lookup(const char* s, size_t len, uint32_t hash) const {
     uint64_t pre, tail;
     key_words(s, len, pre, tail);
+    return lookup_with_words(s, len, hash, pre, tail);
+  }
+
+  inline ERL_NIF_TERM lookup_with_words(const char* s, size_t len, uint32_t hash,
+                                        uint64_t pre, uint64_t tail) const {
     for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       const Entry& e = m_entries[i];
-      if (e.epoch != m_epoch) [[unlikely]] return 0; // empty slot — key was never inserted
+      if (e.epoch != m_epoch) [[unlikely]] return 0;
       if (e.hash == hash && e.len == len && e.pre == pre && e.tail == tail &&
           (len <= 16 || memcmp(e.s, s, len) == 0)) [[likely]]
         return e.term;
@@ -528,12 +626,74 @@ struct KeyCache {
     if (m_count >= CAP) return;
     uint64_t pre, tail;
     key_words(s, len, pre, tail);
+    insert_with_words(s, len, hash, pre, tail, term);
+  }
+
+  void insert_with_words(const char* s, size_t len, uint32_t hash,
+                          uint64_t pre, uint64_t tail, ERL_NIF_TERM term) {
+    if (m_count >= CAP) return;
     for (size_t i = hash & MASK, probes = 0; probes < CAP; ++probes, i = (i + 1) & MASK) {
       if (m_entries[i].epoch != m_epoch) {
         m_entries[i] = {pre, tail, s, len, hash, m_epoch, term};
         ++m_count;
         return;
       }
+    }
+  }
+};
+
+//-----------------------------------------------------------------------------
+// Atom-name cache for the JSON encoder — caches the escaped, quoted
+// representation of atom keys (including the trailing ':') so that
+// repeated atom keys cost a single memcpy instead of two NIF calls
+// plus escaping.  Atoms are never GC'd, so the raw term value is a
+// stable key.  The cache is designed to be thread_local and reused
+// across encode calls.
+//-----------------------------------------------------------------------------
+
+struct AtomNameCache {
+  static constexpr size_t CAP  = 512;
+  static constexpr size_t MASK = CAP - 1;
+  static constexpr size_t MAX_CACHED_LEN = 72; // "quoted_key": + NUL
+
+  struct Entry {
+    ERL_NIF_TERM atom;      // raw term value (atoms are immediates)
+    uint16_t     len;       // length of cached escaped string
+    char         buf[MAX_CACHED_LEN];
+  };
+
+  Entry  m_entries[CAP]{};  // zero-initialized: atom == 0 means empty
+  size_t m_count = 0;
+
+  static_assert((CAP & MASK) == 0, "CAP must be a power of two");
+
+  // Returns the cached escaped key+colon string, or nullptr on miss.
+  const char* lookup(ERL_NIF_TERM atom, size_t& len) const {
+    size_t idx = (static_cast<size_t>(atom) >> 6) & MASK;
+    for (size_t probes = 0; probes < 8; ++probes) {
+      const Entry& e = m_entries[idx];
+      if (e.atom == atom) { len = e.len; return e.buf; }
+      if (e.atom == 0) return nullptr;
+      idx = (idx + 1) & MASK;
+    }
+    return nullptr;
+  }
+
+  // Insert a cached escaped key+colon.  `data` must include quotes and colon.
+  void insert(ERL_NIF_TERM atom, const char* data, size_t len) {
+    if (m_count >= CAP / 2 || len >= MAX_CACHED_LEN) return;
+    size_t idx = (static_cast<size_t>(atom) >> 6) & MASK;
+    for (size_t probes = 0; probes < 8; ++probes) {
+      Entry& e = m_entries[idx];
+      if (e.atom == 0) {
+        e.atom = atom;
+        e.len  = static_cast<uint16_t>(len);
+        memcpy(e.buf, data, len);
+        ++m_count;
+        return;
+      }
+      if (e.atom == atom) return; // already inserted
+      idx = (idx + 1) & MASK;
     }
   }
 };

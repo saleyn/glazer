@@ -848,7 +848,7 @@ struct CSVEncoder {
         // Determine column order from the first row's map keys.
         ERL_NIF_TERM head, tail = term;
         enif_get_list_cell(m_env, tail, &head, &tail);
-        if (enif_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+        if (fast_term_type(m_env, head) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
           return error("headers option requires rows to be maps", head);
 
         ERL_NIF_TERM key, val;
@@ -871,7 +871,7 @@ struct CSVEncoder {
 
       ERL_NIF_TERM row, rest = term;
       while (enif_get_list_cell(m_env, rest, &row, &rest)) {
-        if (enif_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
+        if (fast_term_type(m_env, row) != ERL_NIF_TERM_TYPE_MAP) [[unlikely]]
           return error("headers option requires rows to be maps", row);
         if (!encode_map_row(row, header)) [[unlikely]]
           return false;
@@ -931,7 +931,7 @@ private:
   bool encode_field(ERL_NIF_TERM term)
   {
     if (over_budget(0)) [[unlikely]] return error("output budget exceeded", term);
-    switch (enif_term_type(m_env, term)) {
+    switch (fast_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) [[unlikely]]

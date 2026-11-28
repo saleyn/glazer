@@ -5,7 +5,7 @@ build (`c_src/Makefile` does not compile them), and none are needed to use the
 library.
 
 They fall into three groups: benchmarks that run without the BEAM, correctness
-tests, and a generator.
+tests, and a code generator.
 
 ## Benchmarks without the BEAM
 
@@ -27,21 +27,6 @@ per operation (minimum of 7 rounds).
 - **`json_parse_bench.cpp`** — decodes the same files with glazer's decoder. Term
   construction is stubbed, so the time is spent in the parser, the key cache and
   the value bookkeeping.
-- **`sonic_port_bench.cpp`** — a C++ port of the parts of sonic-rs's parser that
-  differ from glazer's decoder. It is used to find which algorithms explain the
-  difference. Parse only.
-- **`bench_nif_vs_sonic.sh`** — builds the three C++ harnesses above, and the
-  Rust crate in `sonic_parse_bench/`, then prints wall-clock and instruction
-  tables side by side. Set `IR=1` to add the instruction table, and `PAYLOADS`
-  to choose the files.
-- **`sonic_parse_bench/`** — a Cargo crate with three binaries that run sonic-rs
-  from the vendored `deps/torque` tree:
-  - `sonic_parse_bench` (`src/main.rs`): parse only, with a counting visitor.
-  - `sonic_decode_tree` (`src/bin/sonic_decode_tree.rs`): builds a `Value` tree,
-    comparable to glazer's decode.
-  - `sonic_encode` (`src/bin/sonic_encode.rs`): serialises a `Value` tree with
-    `to_vec`, comparable to glazer's encode.
-
 ## Correctness tests
 
 - **`utf8_check.cpp`** — checks `glz::utf8::valid` and `first_invalid` against a
@@ -69,5 +54,4 @@ g++ -std=c++2b -O3 -march=native -DNDEBUG -fPIC -Ic_src -I"$ERTS_INCLUDE" \
     c_src/tools/json_encode_bench.cpp c_src/glazer_atoms.cpp -o json_encode_bench
 ```
 
-Each file's header comment gives its exact build line. `bench_nif_vs_sonic.sh`
-builds everything it needs.
+Each file's header comment gives its exact build line.

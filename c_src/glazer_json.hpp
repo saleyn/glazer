@@ -199,11 +199,10 @@ struct JSONDecoder {
   // Raising vs. non-raising behaviour is the Erlang caller's responsibility.
   std::tuple<bool, ERL_NIF_TERM> decode(const char* data, size_t size)
   {
-    if (m_opts.validate_utf8) [[unlikely]] {
-      const size_t bad = first_invalid_utf8(data, size);
-      if (bad != UTF8_OK)
-        return std::make_tuple(false, make_binary(m_env, "invalid UTF-8 in JSON string at offset " + std::to_string(bad)));
-    }
+    // UTF-8 validation is done per-string instead of upfront to avoid
+    // scanning the entire input twice.  Unescaped strings are validated in
+    // make_string_term / make_key_term; escaped strings are validated
+    // after unescape().
     m_p = data; m_end = data + size; m_beg = data;
     std::string scratch;
     ERL_NIF_TERM result = parse_value(scratch);
@@ -236,6 +235,7 @@ private:
   SmallTermVec<64>  m_stk_keys;
   SmallTermVec<64>  m_stk_vals;
   unsigned          m_depth = 0;
+  bool              m_last_string_ascii = true;
   std::string       m_err;
 
   // Increments the shared depth counter for the lifetime of a parse_array /
@@ -262,36 +262,23 @@ private:
   static inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
   void skip_ws() {
-    // Fast path: minified JSON has structural whitespace only rarely (often
-    // none at all). Check the first byte before paying for an 8-byte load
-    // and SWAR bit-twiddling — avoids that cost on the overwhelmingly common
-    // "no whitespace here" case.
-    // One test for the common case: end of input, or a byte above 0x20 (never
-    // whitespace), or a control byte that is not whitespace.
     if (m_p >= m_end) return;
     const unsigned char c = static_cast<unsigned char>(*m_p);
     if (c > 0x20 || !is_ws(static_cast<char>(c))) return;
-    while (m_p + 8 <= m_end) {
-      uint64_t w;
-      memcpy(&w, m_p, 8);
-      // Any byte that is not one of ' ' \t \r \n stops the run.
-      uint64_t non_ws = has_byte(w, ' ') | has_byte(w, '\t') | has_byte(w, '\r') | has_byte(w, '\n');
-      // non_ws has a set high-bit at each position that *matches* one of the WS chars.
-      // We want the first byte that does NOT match any — invert per-byte "is whitespace" mask.
-      // Build the set of matched positions, then find first unmatched byte.
-      uint64_t matched = non_ws;
-      // A byte fully matches iff its top bit is set in `matched`. Find first byte where it's clear.
-      uint64_t cleared = ~matched & 0x8080808080808080ULL;
-      if (cleared) {
-#if defined(__GNUC__) || defined(__clang__)
-        m_p += __builtin_ctzll(cleared) >> 3;
-#else
-        while (is_ws(*m_p)) ++m_p;
-#endif
-        return;
-      }
-      m_p += 8;
+#if defined(__SSE2__)
+    const __m128i vsp = _mm_set1_epi8(' ');
+    const __m128i vnl = _mm_set1_epi8('\n');
+    const __m128i vtb = _mm_set1_epi8('\t');
+    const __m128i vcr = _mm_set1_epi8('\r');
+    while (m_p + 16 <= m_end) {
+      __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_p));
+      __m128i ws = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(v, vsp), _mm_cmpeq_epi8(v, vnl)),
+                                _mm_or_si128(_mm_cmpeq_epi8(v, vtb), _mm_cmpeq_epi8(v, vcr)));
+      int mask = _mm_movemask_epi8(ws);
+      if (mask != 0xFFFF) { m_p += __builtin_ctz(~mask); return; }
+      m_p += 16;
     }
+#endif
     while (m_p < m_end && is_ws(*m_p)) ++m_p;
   }
 
@@ -428,11 +415,84 @@ private:
     ++m_p;  // skip opening quote
     const char* s = m_p;
     has_escape = false;
+    m_last_string_ascii = true;
     for (;;) {
-      int k = scan_special();
-      if (k == 1) { begin_out = s; len_out = static_cast<size_t>(m_p - s); ++m_p; return true; }
-      if (k == 2) [[unlikely]] { has_escape = true; ++m_p; if (m_p < m_end) ++m_p; continue; }
-      return false;  // unterminated string
+#if defined(__AVX2__)
+      {
+        const __m256i vq = _mm256_set1_epi8('"');
+        const __m256i vb = _mm256_set1_epi8('\\');
+        __m256i vacc = _mm256_setzero_si256();
+        while (m_p + 32 <= m_end) {
+          __m256i  v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(m_p));
+          uint32_t mq = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vq));
+          uint32_t mb = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vb));
+          uint32_t m  = mq | mb;
+          if (m) {
+            unsigned i = __builtin_ctz(m);
+            m_p += i;
+            if ((mq >> i) & 1u) {
+              vacc = _mm256_or_si256(vacc, v);
+              m_last_string_ascii = (_mm256_movemask_epi8(vacc) == 0);
+              begin_out = s;
+              len_out = static_cast<size_t>(m_p - s);
+              ++m_p;
+              return true;
+            }
+            break;
+          }
+          vacc = _mm256_or_si256(vacc, v);
+          m_p += 32;
+        }
+        m_last_string_ascii = (_mm256_movemask_epi8(vacc) == 0);
+      }
+#endif
+#if defined(__SSE2__) && !defined(__AVX2__)
+      {
+        const __m128i vq = _mm_set1_epi8('"');
+        const __m128i vb = _mm_set1_epi8('\\');
+        __m128i     vacc = _mm_setzero_si128();
+        while (m_p + 16 <= m_end) {
+          __m128i  v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_p));
+          unsigned mq = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, vq));
+          unsigned mb = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, vb));
+          unsigned m  = mq | mb;
+          if (m) {
+            unsigned i = __builtin_ctz(m);
+            m_p += i;
+            if ((mq >> i) & 1u) {
+              vacc = _mm_or_si128(vacc, v);
+              m_last_string_ascii = (_mm_movemask_epi8(vacc) == 0);
+              begin_out = s;
+              len_out = static_cast<size_t>(m_p - s);
+              ++m_p;
+              return true;
+            }
+            break;
+          }
+          vacc = _mm_or_si128(vacc, v);
+          m_p += 16;
+        }
+        m_last_string_ascii = (_mm_movemask_epi8(vacc) == 0);
+      }
+#endif
+      while (m_p < m_end) {
+        char c = *m_p;
+        if (c == '"') {
+          begin_out = s;
+          len_out = static_cast<size_t>(m_p - s);
+          ++m_p;
+          return true;
+        }
+        if (c == '\\') break;
+        if (static_cast<unsigned char>(c) > 0x7F) m_last_string_ascii = false;
+        ++m_p;
+      }
+
+      if (m_p >= m_end) return false;
+      if (*m_p != '\\') return false;
+      has_escape = true;
+      ++m_p;
+      if (m_p < m_end) ++m_p;
     }
   }
 
@@ -447,46 +507,52 @@ private:
     buf.clear();
     buf.reserve(len);
     const char* end = s + len;
+    auto hex4 = [](const char* p) {
+      int v = 0;
+      for (int i = 0; i < 4; ++i) {
+        int d = hex_digit_value(static_cast<unsigned char>(p[i]));
+        if (d < 0) return -1;
+        v = v * 16 + d;
+      }
+      return v;
+    };
     while (s < end) {
-      char c = *s++;
-      if (c != '\\') { buf += c; continue; }
+      // Bulk-copy clean bytes up to the next backslash
+      auto bs = static_cast<const char*>(memchr(s, '\\', static_cast<size_t>(end - s)));
+      if (!bs) { buf.append(s, static_cast<size_t>(end - s)); break; }
+      if (bs > s) buf.append(s, static_cast<size_t>(bs - s));
+      s = bs + 1;
       if (s >= end) break;
       char ec = *s++;
       if (ec != 'u') {
         char rep = JSON_ESCAPE_CHAR_TABLE[static_cast<unsigned char>(ec)];
-        buf += rep ? rep : ec; // rep == 0: unrecognized escape, pass through verbatim
+        buf += rep ? rep : ec;
         continue;
       }
       if (s + 4 > end) continue;
-      auto hex4 = [](const char* p) {
-        int v = 0;
-        for (int i = 0; i < 4; ++i) {
-          int d = hex_digit_value(static_cast<unsigned char>(p[i]));
-          if (d < 0) return -1;
-          v = v * 16 + d;
-        }
-        return v;
-      };
       int cp = hex4(s); s += 4;
       if (cp >= 0xD800 && cp <= 0xDBFF && s + 6 <= end && s[0] == '\\' && s[1] == 'u') {
         int lo = hex4(s + 2); s += 6;
         if (lo >= 0xDC00 && lo <= 0xDFFF)
           cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
       }
-      // Encode cp as UTF-8
-      if (cp < 0x80) { buf += (char)cp; }
-      else if (cp < 0x800) { buf += (char)(0xC0|(cp>>6)); buf += (char)(0x80|(cp&0x3F)); }
+      if      (cp < 0x80)    { buf += (char)cp; }
+      else if (cp < 0x800)   { buf += (char)(0xC0|(cp>>6)); buf += (char)(0x80|(cp&0x3F)); }
       else if (cp < 0x10000) {
-        buf += (char)(0xE0|(cp>>12)); buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
+        buf += (char)(0xE0|(cp>>12));
+        buf += (char)(0x80|((cp>>6)&0x3F));
+        buf += (char)(0x80|(cp&0x3F));
       } else {
-        buf += (char)(0xF0|(cp>>18)); buf += (char)(0x80|((cp>>12)&0x3F));
-        buf += (char)(0x80|((cp>>6)&0x3F)); buf += (char)(0x80|(cp&0x3F));
+        buf += (char)(0xF0|(cp>>18));
+        buf += (char)(0x80|((cp>>12)&0x3F));
+        buf += (char)(0x80|((cp>>6)&0x3F));
+        buf += (char)(0x80|(cp&0x3F));
       }
     }
     return buf;
   }
 
-  static bool is_valid_utf8(const char* s, size_t len) { return glz::utf8::valid(s, len); }
+  inline bool is_valid_utf8(const char* s, size_t len) { return glz::utf8::valid(s, len); }
 
   // Make an Erlang binary from a JSON string span (handles escapes).
   // Default (copy_strings == false): unescaped strings are returned as
@@ -494,35 +560,63 @@ private:
   // binary stays alive as long as any sub-binary referencing it does.
   // With copy_strings == true: always allocates a fresh binary, allowing the
   // GC to reclaim the input buffer independently of the decoded results.
+  bool check_utf8(const char* s, size_t len) {
+    if (!m_opts.validate_utf8) [[likely]] return true;
+    if (m_last_string_ascii) [[likely]] return true;
+    return first_invalid_utf8(s, len) == UTF8_OK;
+  }
+
+  __attribute__((always_inline))
   ERL_NIF_TERM make_string_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    if (!has_escape) [[likely]]
+    if (!has_escape) [[likely]] {
+      if (!check_utf8(s, len)) [[unlikely]] {
+        m_err = "invalid UTF-8 in JSON string";
+        return 0;
+      }
       return make_span_term(m_env, m_input_bin, m_beg, m_end, std::string_view(s, len), m_opts.copy_strings);
+    }
 
-    // For escaped strings, unescape first then validate the result
     std::string_view unescaped = unescape(s, len, buf);
-    if (m_opts.validate_utf8 && !is_valid_utf8(unescaped.data(), unescaped.size())) {
+    // m_last_string_ascii reflects the raw (escaped) bytes, not unescaped output
+    if (m_opts.validate_utf8 && first_invalid_utf8(unescaped.data(), unescaped.size()) != UTF8_OK) {
       m_err = "invalid UTF-8 in JSON string";
       return 0;
     }
     return make_binary(m_env, unescaped);
   }
 
-  // Make a key term (binary / atom / existing_atom).
+  __attribute__((always_inline))
   ERL_NIF_TERM make_key_term(const char* s, size_t len, bool has_escape, std::string& buf)
   {
-    // Get the unescaped string view for validation
+    if (!has_escape && m_use_key_cache) {
+      uint64_t pre, tail;
+      uint32_t h = KeyCache::hash_and_words(s, len, pre, tail);
+      if (ERL_NIF_TERM cached = m_key_cache.lookup_with_words(s, len, h, pre, tail))
+        return cached;
+      if (!check_utf8(s, len)) {
+        m_err = "invalid UTF-8 in JSON string";
+        return 0;
+      }
+      std::string_view sv(s, len);
+      auto term = make_binary(m_env, sv);
+      m_key_cache.insert_with_words(s, len, h, pre, tail, term);
+      return term;
+    }
+
     std::string_view sv;
     if (has_escape) {
       sv = unescape(s, len, buf);
+      if (m_opts.validate_utf8 && first_invalid_utf8(sv.data(), sv.size()) != UTF8_OK) {
+        m_err = "invalid UTF-8 in JSON string";
+        return 0;
+      }
     } else {
       sv = std::string_view(s, len);
-    }
-
-    // Raw key bytes were checked with the whole input; escaped keys are checked here.
-    if (has_escape && m_opts.validate_utf8 && first_invalid_utf8(sv.data(), sv.size()) != UTF8_OK) {
-      m_err = "invalid UTF-8 in JSON string";
-      return 0;
+      if (!check_utf8(sv.data(), sv.size())) {
+        m_err = "invalid UTF-8 in JSON string";
+        return 0;
+      }
     }
 
     if (m_opts.hdr_atom) {
@@ -530,20 +624,8 @@ private:
     }
     if (m_opts.hdr_existing_atom) {
       ERL_NIF_TERM t;
-      // enif_make_existing_atom_len avoids the std::string copy the old code paid
       return enif_make_existing_atom_len(m_env, sv.data(), sv.size(), &t, ERL_NIF_LATIN1)
            ? t : make_binary(m_env, sv);
-    }
-    // Binary keys: reuse cached terms for repeated keys (raw, unescaped only —
-    // escapes are rare for keys and not worth complicating the cache for).
-    // Only worthwhile for larger documents — see KEY_CACHE_MIN_SIZE.
-    if (!has_escape && m_use_key_cache) {
-      uint32_t h = KeyCache::hash_of(s, len);
-      if (ERL_NIF_TERM cached = m_key_cache.lookup(s, len, h))
-        return cached;
-      auto term = make_binary(m_env, sv);
-      m_key_cache.insert(s, len, h, term);
-      return term;
     }
     return make_binary(m_env, sv);
   }
@@ -594,45 +676,73 @@ private:
     return r ? r : (ERL_NIF_TERM)0;
   }
 
+  // ---- value-type dispatch table ----
+  enum ValueAction : uint8_t {
+    VA_ERR = 0, VA_STR, VA_OBJ, VA_ARR,
+    VA_TRUE, VA_FALSE, VA_NULL, VA_NUM
+  };
+
+  static constexpr auto make_value_action_table() {
+    struct Table { uint8_t data[256] = {}; };
+    Table t{};
+    t.data[(unsigned char)'"'] = VA_STR;
+    t.data[(unsigned char)'{'] = VA_OBJ;
+    t.data[(unsigned char)'['] = VA_ARR;
+    t.data[(unsigned char)'t'] = VA_TRUE;
+    t.data[(unsigned char)'f'] = VA_FALSE;
+    t.data[(unsigned char)'n'] = VA_NULL;
+    t.data[(unsigned char)'-'] = VA_NUM;
+    for (unsigned char c = '0'; c <= '9'; ++c) t.data[c] = VA_NUM;
+    return t;
+  };
+
   // ---- core value parser ----
+  // A table lookup maps the first byte to a dense 0-7 enum, which the
+  // compiler lowers to a jump table.  A direct switch on the char produced
+  // a long branch chain (range 0x22-0x7B = 89 slots, too sparse for a
+  // jump table) — the table indirection cuts ~24% of decode instructions.
+  __attribute__((always_inline))
   ERL_NIF_TERM parse_value(std::string& scratch)
   {
     skip_ws();
     if (m_p >= m_end) [[unlikely]]
       return 0;
-    auto c = *m_p;
-    switch (c) {
-      case '"': {
+
+    static constexpr auto tbl = make_value_action_table();
+    switch (tbl.data[(unsigned char)*m_p]) {
+      case VA_STR: {
         const char* s; size_t len; bool has_escape;
         if (!read_string_raw(s, len, has_escape)) return 0;
         return make_string_term(s, len, has_escape, scratch);
       }
 
-      case '{': return parse_object(scratch);
-      case '[': return parse_array(scratch);
+      case VA_OBJ: return parse_object(scratch);
+      case VA_ARR: return parse_array(scratch);
 
-      case 't':
-        if (m_p + 4 <= m_end && memcmp(m_p, "true", 4) == 0) {
+      case VA_TRUE:
+        if (m_p + 4 <= m_end && memcmp(m_p+1, "rue", 3) == 0) {
           m_p += 4;
           return AM_TRUE;
         }
         return 0;
-      case 'f':
-        if (m_p + 5 <= m_end && memcmp(m_p, "false", 5) == 0) {
+      case VA_FALSE:
+        if (m_p + 5 <= m_end && memcmp(m_p+1, "alse", 4) == 0) {
           m_p += 5;
           return AM_FALSE;
         }
         return 0;
-      case 'n':
-        if (m_p + 4 <= m_end && memcmp(m_p, "null", 4) == 0) {
+      case VA_NULL:
+        if (m_p + 4 <= m_end && memcmp(m_p+1, "ull", 3) == 0) {
           m_p += 4;
           return m_opts.null_term;
         }
         return 0;
 
+      case VA_NUM:
+        return parse_number();
+
       default:
-        // The expression checks if the number is in []'-','0'-'9'] range:
-        return ((unsigned char)(c - '0') <= 9 || c == '-') ? parse_number() : 0;
+        return 0;
     }
   }
 
@@ -689,14 +799,81 @@ private:
     pairs.set_size(out);
   }
 
+  static constexpr size_t FLATMAP_LIMIT       = 32;
+  static constexpr size_t MIN_ORDERED_MEMBERS = 4;
+
+  // Pre-sort keys into Erlang binary term order so ERTS's
+  // erts_validate_and_sort_flatmap does a linear pass instead of insertion sort.
+  // Returns true if the permutation was applied (keys/vals reordered in-place).
+  static bool presort_binary_keys(ErlNifEnv* env,
+                                  ERL_NIF_TERM* keys, ERL_NIF_TERM* vals, size_t n)
+  {
+    struct KeyOrd { uint64_t prefix; const unsigned char* ptr; size_t len; };
+    KeyOrd ords[FLATMAP_LIMIT];
+
+    for (size_t i = 0; i < n; ++i) {
+      ErlNifBinary bin;
+      if (!enif_inspect_binary(env, keys[i], &bin)) return false;
+      uint64_t pre = 0;
+      size_t   cp  = bin.size < 8 ? bin.size : 8;
+      memcpy(&pre, bin.data, cp);
+      pre = __builtin_bswap64(pre);
+      ords[i] = {pre, bin.data, bin.size};
+    }
+
+    // Check if already sorted.
+    bool sorted = true;
+    for (size_t i = 1; i < n; ++i) {
+      auto& a = ords[i - 1];
+      auto& b = ords[i];
+      if (a.prefix < b.prefix) continue;
+      if (a.prefix > b.prefix) { sorted = false; break; }
+      int cmp = memcmp(a.ptr, b.ptr, a.len < b.len ? a.len : b.len);
+      if (cmp < 0) continue;
+      if (cmp > 0 || a.len > b.len) { sorted = false; break; }
+    }
+    if (sorted) return false;
+
+    // Insertion sort on a permutation index.
+    uint8_t perm[FLATMAP_LIMIT];
+    for (size_t i = 0; i < n; ++i) {
+      size_t j = i;
+      while (j > 0) {
+        auto& a = ords[perm[j - 1]];
+        auto& b = ords[i];
+        if (a.prefix < b.prefix) break;
+        if (a.prefix == b.prefix) {
+          int cmp = memcmp(a.ptr, b.ptr, a.len < b.len ? a.len : b.len);
+          if (cmp < 0 || (cmp == 0 && a.len <= b.len)) break;
+        }
+        perm[j] = perm[j - 1];
+        --j;
+      }
+      perm[j] = uint8_t(i);
+    }
+
+    ERL_NIF_TERM sk[FLATMAP_LIMIT], sv[FLATMAP_LIMIT];
+    for (size_t i = 0; i < n; ++i) {
+      sk[i] = keys[perm[i]];
+      sv[i] = vals[perm[i]];
+    }
+    memcpy(keys, sk, n * sizeof(ERL_NIF_TERM));
+    memcpy(vals, sv, n * sizeof(ERL_NIF_TERM));
+    return true;
+  }
+
   // Build a map from n parallel key/value terms. Same result as
   // SmallTermVec::to_erl_map: duplicate keys fall back to put-in-order (last wins),
   // and dedupe_keys rebuilds the map through put.
-  ERL_NIF_TERM make_map(const ERL_NIF_TERM* keys, const ERL_NIF_TERM* vals, size_t n)
+  ERL_NIF_TERM make_map(ERL_NIF_TERM* keys, ERL_NIF_TERM* vals, size_t n)
   {
+    if (n >= MIN_ORDERED_MEMBERS && n <= FLATMAP_LIMIT &&
+        !m_opts.hdr_atom && !m_opts.hdr_existing_atom) {
+      presort_binary_keys(m_env, keys, vals, n);
+    }
+
     ERL_NIF_TERM map = 0;
-    if (!enif_make_map_from_arrays(m_env, const_cast<ERL_NIF_TERM*>(keys),
-                                   const_cast<ERL_NIF_TERM*>(vals), unsigned(n), &map)) [[unlikely]] {
+    if (!enif_make_map_from_arrays(m_env, keys, vals, unsigned(n), &map)) [[unlikely]] {
       map = enif_make_new_map(m_env);
       for (size_t i = 0; i < n; ++i) {
         ERL_NIF_TERM next;
@@ -739,10 +916,14 @@ private:
 
         auto key = make_key_term(ks, kl, ke, scratch);
         if (!key) [[unlikely]] return 0;
-        skip_ws();
 
-        if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
-        ++m_p;
+        if (m_p < m_end && *m_p == ':')
+          ++m_p;
+        else {
+          skip_ws();
+          if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
+          ++m_p;
+        }
 
         auto val = parse_value(scratch);
         if (!val) [[unlikely]] return 0;
@@ -763,10 +944,7 @@ private:
       return enif_make_tuple1(m_env, pairs.to_erl_list(m_env));
     }
 
-    // Map path: build the key/value arrays once and hand them to the native
-    // `enif_make_map_from_arrays` fast path, which avoids the repeated map
-    // rehash / mutation cost of `enif_make_map_put` in a per-entry loop.
-    const size_t base = m_stk_keys.size();   // members of this object start here
+    const size_t base = m_stk_keys.size();
     const size_t vbase = m_stk_vals.size();
 
     if (m_p < m_end && *m_p == '}') {
@@ -775,7 +953,6 @@ private:
     }
 
     for (;;) {
-      // read_string_raw checks for end of input and the opening quote itself.
       const char* kstr;
       size_t      klen;
       bool        kesc;
@@ -786,10 +963,14 @@ private:
       auto key = make_key_term(kstr, klen, kesc, scratch);
       if (!key) [[unlikely]] return 0;
       m_stk_keys.push_back(key);
-      skip_ws();
 
-      if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
-      ++m_p;
+      if (m_p < m_end && *m_p == ':')
+        ++m_p;
+      else {
+        skip_ws();
+        if (m_p >= m_end || *m_p != ':') [[unlikely]] return 0;
+        ++m_p;
+      }
 
       auto val = parse_value(scratch);
       if (!val) [[unlikely]] return 0;
@@ -803,8 +984,6 @@ private:
       skip_ws();
     }
 
-    // Members are complete: build the map from this object's slice of each stack,
-    // then pop it. Nested containers have already popped back to these bases.
     const size_t n = m_stk_vals.size() - vbase;
     ERL_NIF_TERM map = make_map(m_stk_keys.data() + base, m_stk_vals.data() + vbase, n);
     m_stk_keys.set_size(base);
@@ -952,8 +1131,8 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
 
   ErlNifUInt64 pos;
   unsigned     depth;
-  if (!enif_get_uint64(env, tp[0], &pos))   return false;
-  if (!enif_get_uint(env, tp[1], &depth))   return false;
+  if (!enif_get_uint64(env, tp[0], &pos)) return false;
+  if (!enif_get_uint(env, tp[1], &depth)) return false;
   st.pos       = pos;
   st.depth     = depth;
   st.in_string = enif_is_identical(tp[2], AM_TRUE);
@@ -971,46 +1150,6 @@ inline bool scan_state_from_term(ErlNifEnv* env, ERL_NIF_TERM term, ScanState& s
 
 // find_escape_pos is defined in glazer_common.hpp and shared with glazer_yaml.hpp.
 
-
-// Fast valid-UTF8 escape path for the common case where there are no forced
-// unicode replacements or escapes beyond JSON's standard control-char quoting.
-inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
-{
-  // Valid UTF-8 strings only need escaping for control chars, quotes, backslashes,
-  // and optional slash; all non-ASCII bytes are already encoded as UTF-8 sequences.
-  out.ensure(sv.size() * 2 + 2);
-
-  char* dst = out.m_data + out.m_len;
-  *dst++ = '"';
-  const char* p = sv.data();
-  const char* end = p + sv.size();
-
-  while (p < end) {
-    const unsigned char c = static_cast<unsigned char>(*p++);
-    switch (c) {
-      case '"':  *dst++ = '\\'; *dst++ = '"';  break;
-      case '\\': *dst++ = '\\'; *dst++ = '\\'; break;
-      case '\n': *dst++ = '\\'; *dst++ = 'n';  break;
-      case '\r': *dst++ = '\\'; *dst++ = 'r';  break;
-      case '\t': *dst++ = '\\'; *dst++ = 't';  break;
-      case '\b': *dst++ = '\\'; *dst++ = 'b';  break;
-      case '\f': *dst++ = '\\'; *dst++ = 'f';  break;
-      default:
-        if (c < 0x20) {
-          *dst++ = '\\'; *dst++ = 'u'; *dst++ = '0'; *dst++ = '0';
-          *dst++ = "0123456789abcdef"[(c >> 4) & 0xF];
-          *dst++ = "0123456789abcdef"[c & 0xF];
-        } else {
-          *dst++ = static_cast<char>(c);
-        }
-        break;
-    }
-  }
-
-  *dst++ = '"';
-  out.m_len = static_cast<size_t>(dst - out.m_data);
-}
-
 // JSON-escape a UTF-8 byte sequence into out.
 // Pre-reserves worst-case space (6 bytes per input byte + 2 quotes) in one
 // shot, then writes into the already-reserved tail via raw pointer — no
@@ -1019,11 +1158,7 @@ inline void json_escape_string_fast(std::string_view sv, OutBuf& out)
 // single indexed load + memcpy instead of a switch branch.
 inline void json_escape_string(std::string_view sv, OutBuf& out)
 {
-  // Common case: long strings are mostly plain ASCII. Copy whole SIMD words
-  // directly into the output buffer until the first byte that requires escaping,
-  // then escape that byte and continue. This avoids the extra scan-only pass of
-  // find_escape_pos() on the highest-volume path.
-  out.ensure(sv.size() * 2 + 2);
+  out.ensure(sv.size() * 2 + 34);
 
   char* dst = out.m_data + out.m_len;
   *dst++ = '"';
@@ -1033,16 +1168,25 @@ inline void json_escape_string(std::string_view sv, OutBuf& out)
   while (p < end) {
 #if defined(__AVX2__)
     while (p + 32 <= end) {
-      const __m256i v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
-      const __m256i vq = _mm256_set1_epi8('"');
-      const __m256i vbs = _mm256_set1_epi8('\\');
-      const __m256i vbias = _mm256_set1_epi8(-128);
-      const __m256i vcmp = _mm256_set1_epi8(-96);
-      const __m256i biased = _mm256_xor_si256(v, vbias);
-      const uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
+      const __m256i  v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      const __m256i  vq     = _mm256_set1_epi8('"');
+      const __m256i  vbs    = _mm256_set1_epi8('\\');
+      const __m256i  vbias  = _mm256_set1_epi8(-128);
+      const __m256i  vcmp   = _mm256_set1_epi8(-96);
+      const __m256i  biased = _mm256_xor_si256(v, vbias);
+      const uint32_t mask   = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
         _mm256_or_si256(_mm256_cmpgt_epi8(vcmp, biased), _mm256_cmpeq_epi8(v, vq)),
         _mm256_cmpeq_epi8(v, vbs)));
-      if (mask) break;
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst), v);
+        dst += skip;
+        p   += skip;
+        const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+        memcpy(dst, e.seq, e.len);
+        dst += e.len;
+        continue;
+      }
       _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst), v);
       dst += 32;
       p += 32;
@@ -1050,16 +1194,25 @@ inline void json_escape_string(std::string_view sv, OutBuf& out)
 #endif
 #if defined(__SSE2__)
     while (p + 16 <= end) {
-      const __m128i v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
-      const __m128i vq = _mm_set1_epi8('"');
-      const __m128i vbs = _mm_set1_epi8('\\');
-      const __m128i vbias = _mm_set1_epi8(-128);
-      const __m128i vcmp = _mm_set1_epi8(-96);
-      const __m128i biased = _mm_xor_si128(v, vbias);
-      const unsigned mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(
+      const __m128i  v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      const __m128i  vq     = _mm_set1_epi8('"');
+      const __m128i  vbs    = _mm_set1_epi8('\\');
+      const __m128i  vbias  = _mm_set1_epi8(-128);
+      const __m128i  vcmp   = _mm_set1_epi8(-96);
+      const __m128i  biased = _mm_xor_si128(v, vbias);
+      const unsigned mask   = (unsigned)_mm_movemask_epi8(_mm_or_si128(
         _mm_or_si128(_mm_cmpgt_epi8(vcmp, biased), _mm_cmpeq_epi8(v, vq)),
         _mm_cmpeq_epi8(v, vbs)));
-      if (mask) break;
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), v);
+        dst += skip;
+        p   += skip;
+        const EscapeEntry& e = ESCAPE_TAB[(unsigned char)*p++];
+        memcpy(dst, e.seq, e.len);
+        dst += e.len;
+        continue;
+      }
       _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), v);
       dst += 16;
       p   += 16;
@@ -1080,6 +1233,85 @@ inline void json_escape_string(std::string_view sv, OutBuf& out)
   out.m_len = static_cast<size_t>(dst - out.m_data);
 }
 
+// Fused scan: validate UTF-8 + detect escape chars in one SIMD pass.
+// No copy — scan only. Returns:
+//  -1 = invalid UTF-8
+//   0 = valid UTF-8, has escape chars (needs json_escape_string)
+//   1 = valid UTF-8, no escape chars (safe for push_quoted)
+// Replaces the separate first_invalid_utf8() + find_escape_pos() two-pass scan.
+inline int json_scan_validate(const char* data, size_t len)
+{
+  const char* p   = data;
+  const char* end = p + len;
+  bool validated = false;
+  bool has_escape = false;
+
+#if defined(__AVX2__)
+  while (p + 32 <= end) {
+    const __m256i v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+    const __m256i vq     = _mm256_set1_epi8('"');
+    const __m256i vbs    = _mm256_set1_epi8('\\');
+    const __m256i vbias  = _mm256_set1_epi8(-128);
+    const __m256i vcmp   = _mm256_set1_epi8(-96);
+    const __m256i biased = _mm256_xor_si256(v, vbias);
+    const uint32_t esc_mask = (uint32_t)_mm256_movemask_epi8(_mm256_or_si256(
+      _mm256_or_si256(_mm256_cmpgt_epi8(vcmp, biased), _mm256_cmpeq_epi8(v, vq)),
+      _mm256_cmpeq_epi8(v, vbs)));
+    const uint32_t hi_mask  = (uint32_t)_mm256_movemask_epi8(v);
+
+    if (hi_mask && !validated) {
+      if (first_invalid_utf8(data, len) != UTF8_OK)
+        return -1;
+      validated = true;
+    }
+    if (esc_mask) {
+      if (validated) return 0;
+      has_escape = true;
+    }
+    p += 32;
+  }
+#endif
+#if defined(__SSE2__)
+  while (p + 16 <= end) {
+    const __m128i v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+    const __m128i vq     = _mm_set1_epi8('"');
+    const __m128i vbs    = _mm_set1_epi8('\\');
+    const __m128i vbias  = _mm_set1_epi8(-128);
+    const __m128i vcmp   = _mm_set1_epi8(-96);
+    const __m128i biased = _mm_xor_si128(v, vbias);
+    const unsigned esc_mask = (unsigned)_mm_movemask_epi8(_mm_or_si128(
+      _mm_or_si128(_mm_cmpgt_epi8(vcmp, biased), _mm_cmpeq_epi8(v, vq)),
+      _mm_cmpeq_epi8(v, vbs)));
+    const unsigned hi_mask  = (unsigned)_mm_movemask_epi8(v);
+
+    if (hi_mask && !validated) {
+      if (first_invalid_utf8(data, len) != UTF8_OK)
+        return -1;
+      validated = true;
+    }
+    if (esc_mask) {
+      if (validated) return 0;
+      has_escape = true;
+    }
+    p += 16;
+  }
+#endif
+  while (p < end) {
+    unsigned char c = static_cast<unsigned char>(*p);
+    if (c >= 0x80 && !validated) {
+      if (first_invalid_utf8(data, len) != UTF8_OK)
+        return -1;
+      validated = true;
+    }
+    if (NEEDS_ESCAPE_TAB[c]) {
+      if (validated) return 0;
+      has_escape = true;
+    }
+    ++p;
+  }
+  return has_escape ? 0 : 1;
+}
+
 // JSON-escape a UTF-8 byte sequence with optional forward slash escaping
 inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool escape_fwd_slash)
 {
@@ -1093,18 +1325,25 @@ inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
   while (p < end) {
 #if defined(__AVX2__)
     while (p + 32 <= end) {
-      const __m256i v  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
-      const __m256i vq = _mm256_set1_epi8('"');
-      const __m256i vbs = _mm256_set1_epi8('\\');
+      const __m256i v      = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+      const __m256i vq     = _mm256_set1_epi8('"');
+      const __m256i vbs    = _mm256_set1_epi8('\\');
       const __m256i vslash = _mm256_set1_epi8('/');
-      const __m256i vbias = _mm256_set1_epi8(-128);
-      const __m256i vcmp = _mm256_set1_epi8(-96);
+      const __m256i vbias  = _mm256_set1_epi8(-128);
+      const __m256i vcmp   = _mm256_set1_epi8(-96);
       const __m256i biased = _mm256_xor_si256(v, vbias);
-      const __m256i need = _mm256_or_si256(
+      const __m256i need   = _mm256_or_si256(
         _mm256_or_si256(_mm256_or_si256(_mm256_cmpgt_epi8(vcmp, biased), _mm256_cmpeq_epi8(v, vq)),
         _mm256_cmpeq_epi8(v, vbs)),
         escape_fwd_slash ? _mm256_cmpeq_epi8(v, vslash) : _mm256_setzero_si256());
-      if ((uint32_t)_mm256_movemask_epi8(need)) break;
+      const uint32_t mask = (uint32_t)_mm256_movemask_epi8(need);
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        memcpy(dst, p, skip);
+        dst += skip;
+        p   += skip;
+        goto fwd_escape_one;
+      }
       _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst), v);
       dst += 32;
       p += 32;
@@ -1112,18 +1351,25 @@ inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
 #endif
 #if defined(__SSE2__)
     while (p + 16 <= end) {
-      const __m128i v  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
-      const __m128i vq = _mm_set1_epi8('"');
-      const __m128i vbs = _mm_set1_epi8('\\');
+      const __m128i v      = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+      const __m128i vq     = _mm_set1_epi8('"');
+      const __m128i vbs    = _mm_set1_epi8('\\');
       const __m128i vslash = _mm_set1_epi8('/');
-      const __m128i vbias = _mm_set1_epi8(-128);
-      const __m128i vcmp = _mm_set1_epi8(-96);
+      const __m128i vbias  = _mm_set1_epi8(-128);
+      const __m128i vcmp   = _mm_set1_epi8(-96);
       const __m128i biased = _mm_xor_si128(v, vbias);
-      const __m128i need = _mm_or_si128(
+      const __m128i need   = _mm_or_si128(
         _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, biased), _mm_cmpeq_epi8(v, vq)),
         _mm_cmpeq_epi8(v, vbs)),
         escape_fwd_slash ? _mm_cmpeq_epi8(v, vslash) : _mm_setzero_si128());
-      if ((unsigned)_mm_movemask_epi8(need)) break;
+      const unsigned mask = (unsigned)_mm_movemask_epi8(need);
+      if (mask) {
+        const unsigned skip = __builtin_ctz(mask);
+        memcpy(dst, p, skip);
+        dst += skip;
+        p   += skip;
+        goto fwd_escape_one;
+      }
       _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), v);
       dst += 16;
       p += 16;
@@ -1134,6 +1380,7 @@ inline void json_escape_string_fwd_slash(std::string_view sv, OutBuf& out, bool 
       *dst++ = *p++;
       continue;
     }
+  fwd_escape_one:
     if (escape_fwd_slash && *p == '/') {
       *dst++ = '\\';
       *dst++ = '/';
@@ -1299,7 +1546,10 @@ static inline void short_copy(char* dst, const char* src, size_t n) {
 struct JSONEncoder {
   JSONEncoder(ErlNifEnv* env, const JSONEncodeOpts& opts, OutBuf& out)
     : m_env(env), m_opts(opts), m_out(out), m_err(nullptr), m_err_term(0)
-  {}
+  {
+    thread_local AtomNameCache tl_atom_cache;
+    m_atom_cache = &tl_atom_cache;
+  }
 
   ErlNifEnv*   env()       const { return m_env;      }
   const char*  err()       const { return m_err;      }
@@ -1353,28 +1603,60 @@ struct JSONEncoder {
       m_out.unsafe_push('"');
       return true;
     }
-#if defined(__SSE2__)
-    m_out.ensure(n + 2 + 16);          // +16: the tail may store a full 16-byte block
-    char* const base = m_out.tail();   // base[0] is the opening quote
-    const __m128i vq    = _mm_set1_epi8('"');
-    const __m128i vbs   = _mm_set1_epi8('\\');
-    const __m128i vbias = _mm_set1_epi8(-128);
-    const __m128i vcmp  = _mm_set1_epi8(-96);   // control bytes after the bias trick
+#if defined(__AVX2__)
+    m_out.ensure(n + 2 + 32);
+    char* const base = m_out.tail();
+    const __m256i vq    = _mm256_set1_epi8('"');
+    const __m256i vbs   = _mm256_set1_epi8('\\');
+    const __m256i vbias = _mm256_set1_epi8(-128);
+    const __m256i vcmp  = _mm256_set1_epi8(-96);
     size_t i = 0;
-    for (; i + 16 <= n; i += 16) {
-      const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
-      const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)),
-                                                        _mm_cmpeq_epi8(v, vq)),
-                                           _mm_or_si128(_mm_cmpeq_epi8(v, vbs), v));  // v: high bits
-      if (_mm_movemask_epi8(special) != 0) return false;
-      _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
+    for (; i + 32 <= n; i += 32) {
+      const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
+      const __m256i special = _mm256_or_si256(_mm256_or_si256(_mm256_cmpgt_epi8(vcmp, _mm256_xor_si256(v, vbias)),
+                                                              _mm256_cmpeq_epi8(v, vq)),
+                                              _mm256_or_si256(_mm256_cmpeq_epi8(v, vbs), v));
+      if (_mm256_movemask_epi8(special) != 0) return false;
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(base + 1 + i), v);
+    }
+    // Handle remaining 16..31 bytes with SSE2
+    {
+      const __m128i vq16    = _mm_set1_epi8('"');
+      const __m128i vbs16   = _mm_set1_epi8('\\');
+      const __m128i vbias16 = _mm_set1_epi8(-128);
+      const __m128i vcmp16  = _mm_set1_epi8(-96);
+      for (; i + 16 <= n; i += 16) {
+        const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
+        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp16, _mm_xor_si128(v, vbias16)),
+                                                          _mm_cmpeq_epi8(v, vq16)),
+                                             _mm_or_si128(_mm_cmpeq_epi8(v, vbs16), v));
+        if (_mm_movemask_epi8(special) != 0) return false;
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
+      }
     }
     const size_t r = n - i;
+#elif defined(__SSE2__)
+    m_out.ensure(n + 2 + 16);
+    char* const base = m_out.tail();
+    size_t i = 0;
+    {
+      const __m128i vq    = _mm_set1_epi8('"');
+      const __m128i vbs   = _mm_set1_epi8('\\');
+      const __m128i vbias = _mm_set1_epi8(-128);
+      const __m128i vcmp  = _mm_set1_epi8(-96);
+      for (; i + 16 <= n; i += 16) {
+        const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
+        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)),
+                                                          _mm_cmpeq_epi8(v, vq)),
+                                             _mm_or_si128(_mm_cmpeq_epi8(v, vbs), v));
+        if (_mm_movemask_epi8(special) != 0) return false;
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
+      }
+    }
+    const size_t r = n - i;
+#endif
+#if defined(__SSE2__) || defined(__AVX2__)
     if (r > 0) {
-      // Tail of 1..15 bytes. When a 16-byte load from the tail start stays inside
-      // one 4 KiB block, it cannot leave the page holding the string, so one load
-      // checks and copies the tail (the bytes past r are masked out, and the store
-      // lands in reserved output space). Otherwise, the bounded word path.
 #if defined(GLAZER_TAIL_BOUNDED)
       constexpr bool wide_tail_ok = false;
 #else
@@ -1382,9 +1664,9 @@ struct JSONEncoder {
 #endif
       if (wide_tail_ok && (reinterpret_cast<uintptr_t>(data + i) & 4095) <= 4096 - 16) {
         const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
-        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(vcmp, _mm_xor_si128(v, vbias)),
-                                                          _mm_cmpeq_epi8(v, vq)),
-                                             _mm_or_si128(_mm_cmpeq_epi8(v, vbs), v));
+        const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpgt_epi8(_mm_set1_epi8(-96), _mm_xor_si128(v, _mm_set1_epi8(-128))),
+                                                          _mm_cmpeq_epi8(v, _mm_set1_epi8('"'))),
+                                             _mm_or_si128(_mm_cmpeq_epi8(v, _mm_set1_epi8('\\')), v));
         if (_mm_movemask_epi8(special) & ((1u << r) - 1)) return false;
         _mm_storeu_si128(reinterpret_cast<__m128i*>(base + 1 + i), v);
       } else {
@@ -1404,14 +1686,30 @@ struct JSONEncoder {
   bool encode(ERL_NIF_TERM term)
   {
     if (over_budget(0)) [[unlikely]] return budget_error(term);
-    switch (enif_term_type(m_env, term)) {
+    switch (fast_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
         if (over_budget(bin.size)) [[unlikely]] return budget_error(term);
         const char* data = reinterpret_cast<const char*>(bin.data);
         if (emit_plain(data, bin.size)) return true;
-        if (!m_opts.force_utf8 && first_invalid_utf8(data, bin.size) != UTF8_OK) [[unlikely]]
+        // emit_plain failed — string has high-bit bytes or escape chars.
+        // For the common case (no uescape, no force_utf8, no escape_fwd_slash):
+        // fused single-pass UTF-8 validation + escape detection.
+        if (!m_opts.uescape && !m_opts.escape_fwd_slash && !m_opts.force_utf8) {
+          int rc = json_scan_validate(data, bin.size);
+          if (rc < 0) [[unlikely]]
+            return error("invalid UTF-8 in string", term);
+          if (rc > 0) {
+            m_out.push_quoted({data, bin.size});
+            return true;
+          }
+          json_escape_string({data, bin.size}, m_out);
+          return true;
+        }
+        // Slow path for special options.
+        const bool valid_utf8 = first_invalid_utf8(data, bin.size) == UTF8_OK;
+        if (!m_opts.force_utf8 && !valid_utf8) [[unlikely]]
           return error("invalid UTF-8 in string", term);
         return escape_string({data, bin.size});
       }
@@ -1448,6 +1746,7 @@ private:
   ErlNifEnv*            m_env;
   const JSONEncodeOpts& m_opts;
   OutBuf&               m_out;
+  AtomNameCache*        m_atom_cache;
   char                  m_atom_buf[256]; // scratch for atom → string_view
   const char*           m_err;
   ERL_NIF_TERM          m_err_term;
@@ -1486,7 +1785,7 @@ private:
     // Short strings with the default options: decide with word tests and copy
     // with overlapping moves. No per-byte loop, no branch per byte, no libc call.
     if (sv.size() <= 16 && !m_opts.uescape && !m_opts.escape_fwd_slash) {
-      const char* p = sv.data();
+      const char*  p = sv.data();
       const size_t n = sv.size();
       // With force_utf8, a string with a non-ASCII byte is left to the validating path.
       if (!short_needs_escape(p, n) && !(m_opts.force_utf8 && short_any_high_bit(p, n))) {
@@ -1499,9 +1798,9 @@ private:
       }
     }
 
-    const char* p = sv.data();
-    const char* end = p + sv.size();
-    const bool force = m_opts.force_utf8 && first_invalid_utf8(p, sv.size()) != UTF8_OK;
+    auto p     = sv.data();
+    auto end   = p + sv.size();
+    auto force = m_opts.force_utf8 && first_invalid_utf8(p, sv.size()) != UTF8_OK;
     if (!m_opts.uescape && !force) {
       if (!m_opts.escape_fwd_slash) {
         if (find_escape_pos(p, end) == end) {
@@ -1633,15 +1932,43 @@ private:
   // Writes one object member key and its ':'.
   bool encode_member_key(ERL_NIF_TERM key)
   {
+    // Fast path: atom keys with cached escaped representation (key + colon).
+    if ((static_cast<uintptr_t>(key) & 0x3F) == 0x0B) {
+      size_t cached_len;
+      const char* cached = m_atom_cache->lookup(key, cached_len);
+      if (cached) {
+        m_out.push(cached, cached_len);
+        return true;
+      }
+      // Cache miss: encode normally, then capture the output for caching.
+      size_t before = m_out.view().size();
+      if (!encode_atom_key(key)) [[unlikely]] return false;
+      m_out.push(':');
+      size_t after = m_out.view().size();
+      size_t emitted = after - before;
+      if (emitted < AtomNameCache::MAX_CACHED_LEN)
+        m_atom_cache->insert(key, m_out.view().data() + before, emitted);
+      return true;
+    }
     if (!encode_key(key)) [[unlikely]] return false;
     m_out.push(':');
     return true;
   }
 
-  // A binary key, already inspected: the same output as encode_key's binary case.
   bool encode_binary_key(ERL_NIF_TERM key, const char* data, size_t n)
   {
     if (emit_plain(data, n)) return true;
+    if (!m_opts.uescape && !m_opts.escape_fwd_slash && !m_opts.force_utf8) {
+      int rc = json_scan_validate(data, n);
+      if (rc < 0) [[unlikely]]
+        return error("invalid UTF-8 in string", key);
+      if (rc > 0) {
+        m_out.push_quoted({data, n});
+        return true;
+      }
+      json_escape_string({data, n}, m_out);
+      return true;
+    }
     if (!m_opts.force_utf8 && first_invalid_utf8(data, n) != UTF8_OK) [[unlikely]]
       return error("invalid UTF-8 in string", key);
     return escape_string({data, n});
@@ -1649,7 +1976,7 @@ private:
 
   bool encode_key(ERL_NIF_TERM key)
   {
-    switch (enif_term_type(m_env, key)) {
+    switch (fast_term_type(m_env, key)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, key, &bin))

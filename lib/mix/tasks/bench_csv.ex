@@ -74,6 +74,16 @@ defmodule Mix.Tasks.BenchCsv do
     ]
 
     optional_candidates = [
+      {"erl_csv",
+       fn b ->
+         case :erl_csv.decode(b, %{delimiter: "\r\n"}) do
+           {:ok, rows}              -> rows
+           {:has_trailer, rows, _t} -> rows
+         end
+       end,
+       fn rows -> IO.iodata_to_binary(:erl_csv.encode(rows)) end,
+       :erl_csv},
+
       {"rusty_csv",
        fn b -> RustyCSV.RFC4180.parse_string(b) end,
        nil,
@@ -100,16 +110,6 @@ defmodule Mix.Tasks.BenchCsv do
          |> IO.iodata_to_binary()
        end,
        CSV},
-
-      {"erl_csv",
-       fn b ->
-         case :erl_csv.decode(b, %{delimiter: "\r\n"}) do
-           {:ok, rows}              -> rows
-           {:has_trailer, rows, _t} -> rows
-         end
-       end,
-       fn rows -> IO.iodata_to_binary(:erl_csv.encode(rows)) end,
-       :erl_csv},
     ]
 
     optional = Enum.flat_map(optional_candidates, fn {name, dec, enc, mod} ->

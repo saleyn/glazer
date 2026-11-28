@@ -100,25 +100,25 @@ defmodule Mix.Tasks.BenchJson do
        fn t -> IO.iodata_to_binary(:jiffy.encode(t)) end,
        :jiffy},
 
-      {"jason",
-       &Jason.decode!/1,
-       &Jason.encode!/1,
-       Jason},
-
       {"json",
        fn b -> :json.decode(b) end,
        fn t -> IO.iodata_to_binary(:json.encode(t)) end,
        :json},
+
+      {"euneus",
+       &:euneus.decode/1,
+       &:euneus.encode/1,
+       :euneus},
 
       {"thoas",
        fn b -> {:ok, r} = :thoas.decode(b); r end,
        &:thoas.encode/1,
        :thoas},
 
-      {"euneus",
-       &:euneus.decode/1,
-       &:euneus.encode/1,
-       :euneus},
+      {"jason",
+       &Jason.decode!/1,
+       &Jason.encode!/1,
+       Jason},
     ]
 
     optional = Enum.flat_map(optional_candidates, fn {name, dec, enc, mod} ->

@@ -6,6 +6,7 @@
 #include "glazer_nif_api.hpp"
 #include "glazer_atoms.hpp"
 #include "glazer_bigint.hpp"
+#include "glazer_common.hpp"
 #include "glazer_regex.hpp"
 
 namespace glz {
@@ -101,6 +102,11 @@ ERL_NIF_TERM nif_try_decode_integer(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 static int nif_load(ErlNifEnv* env, void** /*priv_data*/, ERL_NIF_TERM load_info)
 {
   init_atoms(env);
+
+  if (!verify_fast_term_type(env)) {
+    fprintf(stderr, "glazer: fast_term_type tag assumptions invalid on this OTP version\n");
+    return -1;
+  }
 
   ERL_NIF_TERM head, tail = load_info;
   while (enif_get_list_cell(env, tail, &head, &tail)) {

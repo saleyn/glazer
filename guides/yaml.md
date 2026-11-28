@@ -126,11 +126,11 @@ $ make bench-yaml
 YAML             openrtb (1.3K)       esad (1.3K)         small (0.1K)
                 decode   encode     decode   encode     decode   encode
 -------------------------------------------------------------------------
-glazer           57.8     19.6       39.8      8.9        2.8      1.3
-yaml_rustler    170.9      n/a      102.8      n/a       12.0      n/a
-fast_yaml       320.2     77.6      159.0     49.2       23.2      8.3
-yamerl         2609.6      n/a     2063.7      n/a     1009.7      n/a
-ymlr              n/a     79.5        n/a     85.2        n/a     12.3
+glazer             8.8      2.7        6.1      2.1        0.9      0.4
+yaml_rustler      44.3      n/a       26.8      n/a        4.2      n/a
+fast_yaml         63.1     22.1       35.4     13.8        6.8      3.0
+yamerl           645.0      n/a      451.1      n/a      198.3      n/a
+ymlr               n/a     18.9        n/a     14.4        n/a      2.0
 ===> Running benchmarks (optimization: O3 - PGO)
 ===> Process niceness: 0 (lower is higher priority)
 ```

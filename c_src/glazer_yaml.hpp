@@ -1772,7 +1772,7 @@ private:
 
   bool encode_node(ERL_NIF_TERM term, size_t indent) {
     if (over_budget(0)) [[unlikely]] return error("output budget exceeded", term);
-    switch (enif_term_type(m_env, term)) {
+    switch (fast_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, term, &bin)) return false;
@@ -1860,7 +1860,7 @@ private:
   // start on the next line(s): nested mappings indent to indent+2, nested
   // sequences are placed at the same `indent` (same-indent convention).
   bool encode_map_value(ERL_NIF_TERM term, size_t indent) {
-    switch (enif_term_type(m_env, term)) {
+    switch (fast_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_MAP: {
         size_t size;
         enif_get_map_size(m_env, term, &size);
@@ -1935,7 +1935,7 @@ private:
   }
 
   bool encode_key(ERL_NIF_TERM k) {
-    switch (enif_term_type(m_env, k)) {
+    switch (fast_term_type(m_env, k)) {
       case ERL_NIF_TERM_TYPE_BITSTRING: {
         ErlNifBinary bin;
         if (!enif_inspect_binary(m_env, k, &bin)) return false;
@@ -1980,7 +1980,7 @@ private:
 
   // Encodes a sequence item, which sits right after "- " on the dash's line.
   bool encode_item(ERL_NIF_TERM term, size_t indent) {
-    switch (enif_term_type(m_env, term)) {
+    switch (fast_term_type(m_env, term)) {
       case ERL_NIF_TERM_TYPE_MAP: {
         size_t size;
         enif_get_map_size(m_env, term, &size);
